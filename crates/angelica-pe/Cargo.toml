@@ -1,0 +1,24 @@
+[package]
+name = "angelica-pe"
+description = "PE image model and signature scanning over bytes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Builds synthetic PE images and maps a file image for tests.
+testing = []
+
+[dependencies]
+memchr.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+angelica-pe = { path = ".", features = ["testing"] }
+
+[lints]
+workspace = true

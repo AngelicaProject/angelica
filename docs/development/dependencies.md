@@ -12,6 +12,10 @@ Angelica prefers a small set of mature dependencies over internal reinvention of
 
 Everything that runs in the game is Rust or WebAssembly. A dependency is added with the first change that uses it, after checking its current stable version and license.
 
+## Crate dependencies
+
+`angelica-pe` uses `memchr` (Unlicense OR MIT) to find the fixed bytes of a signature, and `thiserror` (MIT OR Apache-2.0) for its error types.
+
 ## Dependency checks
 
 `cargo deny` (`deny.toml`) enforces the policy: a known vulnerability or a yanked crate fails, every license must be on the allow list of licenses compatible with AGPL-3.0-only, and every crate comes from crates.io.

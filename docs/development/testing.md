@@ -9,9 +9,19 @@ Tests protect contracts, not implementation trivia. Tests must not depend on an 
 - **Plugin runtime**: test components built in the workspace exercise limits, traps, permission refusals, and hot reload.
 - **Plugins**: `angelica-fake-game` runs a plugin against recorded or scripted game data.
 
+## Synthetic images
+
+The `testing` feature of `angelica-pe` builds x64 PE images with chosen sections (`PeBuilder`) and lays out a file image as Windows maps it (`map_file`). Tests of anything that reads an image use it instead of real executables, and check the file and the mapped layout give the same answers.
+
 ## Tests against the real game executable
 
-Map resolution is also checked against a real executable with ignored tests that read `ANGELICA_GAME_PATH`. Run them after changing the resolver or the PE model; they are not part of CI, which has no game installation.
+The PE model and map resolution are also checked against the installed game with ignored tests that read `ANGELICA_GAME_PATH`, the game's `game` folder:
+
+```text
+cargo test -p angelica-pe --test game -- --ignored
+```
+
+Run them after changing the PE model or the resolver. They are not part of CI, which has no game installation.
 
 ## In-game checks
 

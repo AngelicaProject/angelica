@@ -6,15 +6,14 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 
 | Job | Runner | Guarantees |
 | --- | --- | --- |
-| `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests, including the hook engine tests. |
-| `plugins` | `windows-latest` | The SDK template and the test plugins build for `wasm32-wasip2` and pass under `angelica-fake-game`. |
+| `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests with all features. |
 | `supply-chain` | `ubuntu-latest` | `cargo deny` passes; workflows pass `actionlint` and `zizmor`. |
 | `ci` | `ubuntu-latest` | Every job above passed. |
 
 ```text
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked
+cargo test --workspace --all-features --locked
 cargo deny --locked check
 ```
 
