@@ -6,6 +6,11 @@ const COFF_HEADER_LEN: usize = 20;
 const SECTION_HEADER_LEN: usize = 40;
 const SCN_CNT_CODE: u32 = 0x0000_0020;
 const SCN_MEM_EXECUTE: u32 = 0x2000_0000;
+/// Offset of `NumberOfRvaAndSizes` in the PE32+ optional header; the data
+/// directories follow it.
+const DATA_DIRECTORY_COUNT: usize = 108;
+const EXCEPTION_DIRECTORY: usize = 3;
+const RUNTIME_FUNCTION_LEN: usize = 12;
 
 /// How the bytes of an image are laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +84,8 @@ pub struct Image<'a> {
     entry: u32,
     mapped_size: u32,
     sections: Vec<Section>,
+    /// Begin and end RVAs of the exception directory's entries, by begin.
+    functions: Vec<(u32, u32)>,
 }
 
 impl<'a> Image<'a> {
@@ -131,19 +138,35 @@ impl<'a> Image<'a> {
             .map(parse_section)
             .collect::<Vec<_>>();
 
-        let image = Self {
+        let mut image = Self {
             bytes,
             layout,
             preferred_base: image_base,
             entry: entry_point,
             mapped_size: size_of_image,
             sections,
+            functions: Vec::new(),
         };
         for section in &image.sections {
             let (start, len) = image.section_span(section);
             if start + len > bytes.len() {
                 return Err(ImageError::SectionOutOfBounds(section.name.clone()));
             }
+        }
+        if let Some((rva, size)) = data_directory(optional, EXCEPTION_DIRECTORY)
+            && size > 0
+        {
+            let table = image
+                .bytes_at(rva, size as usize)
+                .ok_or(ImageError::Truncated("exception directory"))?;
+            image.functions = table
+                .as_chunks::<RUNTIME_FUNCTION_LEN>()
+                .0
+                .iter()
+                .map(|entry| (u32_at(entry, 0), u32_at(entry, 4)))
+                .filter(|&(begin, end)| begin < end)
+                .collect();
+            image.functions.sort_unstable();
         }
         Ok(image)
     }
@@ -210,6 +233,34 @@ impl<'a> Image<'a> {
         self.bytes_at(rva, 4).map(|bytes| u32_at(bytes, 0))
     }
 
+    #[must_use]
+    pub fn read_u64(&self, rva: u32) -> Option<u64> {
+        self.bytes_at(rva, 8)
+            .map(|bytes| u64::from(u32_at(bytes, 0)) | (u64::from(u32_at(bytes, 4)) << 32))
+    }
+
+    /// Whether the RVA lies in the data of a code section.
+    #[must_use]
+    pub fn is_code(&self, rva: u32) -> bool {
+        self.section_at(rva).is_some_and(Section::is_code)
+    }
+
+    /// The begin and end RVAs of the exception directory entry that contains
+    /// the RVA: for a function start, the function's primary range.
+    #[must_use]
+    pub fn function_at(&self, rva: u32) -> Option<std::ops::Range<u32>> {
+        let index = self.functions.partition_point(|&(begin, _)| begin <= rva);
+        let &(begin, end) = self.functions.get(index.checked_sub(1)?)?;
+        (rva < end).then_some(begin..end)
+    }
+
+    /// The begin RVA of the first exception directory entry after the RVA.
+    #[must_use]
+    pub fn next_function_after(&self, rva: u32) -> Option<u32> {
+        let index = self.functions.partition_point(|&(begin, _)| begin <= rva);
+        self.functions.get(index).map(|&(begin, _)| begin)
+    }
+
     /// The target of a 32-bit relative operand at `rva`, as a call, a jump,
     /// or a RIP-relative access with no bytes after the operand computes it:
     /// the address after the operand plus the signed displacement. `None`
@@ -269,6 +320,16 @@ fn parse_section(header: &[u8; SECTION_HEADER_LEN]) -> Section {
         raw_offset: u32_at(header, 20),
         characteristics: u32_at(header, 36),
     }
+}
+
+/// The RVA and size of a data directory, when the optional header has it.
+fn data_directory(optional: &[u8], index: usize) -> Option<(u32, u32)> {
+    let count = read_u32(optional, DATA_DIRECTORY_COUNT)? as usize;
+    if index >= count {
+        return None;
+    }
+    let offset = DATA_DIRECTORY_COUNT + 4 + index * 8;
+    Some((read_u32(optional, offset)?, read_u32(optional, offset + 4)?))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {

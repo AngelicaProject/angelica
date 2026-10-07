@@ -18,6 +18,7 @@ pub struct PeBuilder {
     image_base: u64,
     entry_point: u32,
     sections: Vec<(String, u32, Vec<u8>)>,
+    functions: Vec<(u32, u32)>,
 }
 
 impl Default for PeBuilder {
@@ -26,6 +27,7 @@ impl Default for PeBuilder {
             image_base: 0x1_4000_0000,
             entry_point: SECTION_ALIGNMENT,
             sections: Vec::new(),
+            functions: Vec::new(),
         }
     }
 }
@@ -57,6 +59,14 @@ impl PeBuilder {
         self
     }
 
+    /// Adds an exception directory with these function ranges (begin and end
+    /// RVAs), in a `.pdata` section placed after the other sections.
+    #[must_use]
+    pub fn functions(mut self, ranges: &[(u32, u32)]) -> Self {
+        self.functions = ranges.to_vec();
+        self
+    }
+
     /// The RVA the section at `index` will have.
     #[must_use]
     pub fn section_rva(&self, index: usize) -> u32 {
@@ -74,7 +84,7 @@ impl PeBuilder {
             });
         let mut bytes = vec![0; file_len as usize];
         self.write_headers(&mut bytes, &placed, size_of_image);
-        for ((_, _, data), &(_, raw_offset, _)) in self.sections.iter().zip(&placed) {
+        for ((_, _, data), &(_, raw_offset, _)) in self.all_sections().iter().zip(&placed) {
             bytes[raw_offset as usize..raw_offset as usize + data.len()].copy_from_slice(data);
         }
         bytes
@@ -86,6 +96,21 @@ impl PeBuilder {
         map_file(&self.build_file())
     }
 
+    /// The sections, with the `.pdata` section when there are functions.
+    fn all_sections(&self) -> Vec<(String, u32, Vec<u8>)> {
+        let mut sections = self.sections.clone();
+        if !self.functions.is_empty() {
+            let data = self
+                .functions
+                .iter()
+                .flat_map(|&(begin, end)| [begin, end, 0].map(u32::to_le_bytes))
+                .flatten()
+                .collect();
+            sections.push((".pdata".to_owned(), RDATA, data));
+        }
+        sections
+    }
+
     /// RVA, file offset, and raw size of each section; the image size; and
     /// the aligned length of the headers.
     fn layout(&self) -> (Vec<(u32, u32, u32)>, u32, u32) {
@@ -93,12 +118,12 @@ impl PeBuilder {
             + 4
             + 20
             + u32::from(OPTIONAL_HEADER_LEN)
-            + 40 * u32::try_from(self.sections.len()).expect("few sections");
+            + 40 * u32::try_from(self.all_sections().len()).expect("few sections");
         let headers_len = align(section_table_end, FILE_ALIGNMENT);
         let mut rva = SECTION_ALIGNMENT;
         let mut raw_offset = headers_len;
         let mut placed = Vec::new();
-        for (_, _, data) in &self.sections {
+        for (_, _, data) in &self.all_sections() {
             let len = u32::try_from(data.len()).expect("test sections are small");
             let raw_size = align(len.max(1), FILE_ALIGNMENT);
             placed.push((rva, raw_offset, raw_size));
@@ -118,7 +143,7 @@ impl PeBuilder {
         put16(
             bytes,
             coff + 2,
-            u16::try_from(self.sections.len()).expect("few sections"),
+            u16::try_from(self.all_sections().len()).expect("few sections"),
         );
         put16(bytes, coff + 16, OPTIONAL_HEADER_LEN);
         put16(bytes, coff + 18, 0x0022);
@@ -136,9 +161,18 @@ impl PeBuilder {
                 .first()
                 .map_or(FILE_ALIGNMENT, |&(_, raw_offset, _)| raw_offset),
         );
+        put32(bytes, optional + 108, 16);
+        if let (false, Some(&(rva, _, _))) = (self.functions.is_empty(), placed.last()) {
+            put32(bytes, optional + 112 + 24, rva);
+            put32(
+                bytes,
+                optional + 112 + 28,
+                12 * u32::try_from(self.functions.len()).expect("few functions"),
+            );
+        }
         let table = optional + usize::from(OPTIONAL_HEADER_LEN);
         for (index, ((name, characteristics, data), &(rva, raw_offset, raw_size))) in
-            self.sections.iter().zip(placed).enumerate()
+            self.all_sections().iter().zip(placed).enumerate()
         {
             let header = table + index * 40;
             bytes[header..header + name.len()].copy_from_slice(name.as_bytes());

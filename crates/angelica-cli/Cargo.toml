@@ -1,0 +1,30 @@
+[package]
+name = "angelica-cli"
+description = "The `angelica` command: game map and plugin tools."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "angelica"
+path = "src/main.rs"
+
+[dependencies]
+angelica-map.workspace = true
+angelica-pe.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+angelica-pe = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

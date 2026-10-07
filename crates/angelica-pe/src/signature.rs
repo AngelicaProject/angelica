@@ -57,6 +57,22 @@ impl Signature {
         })
     }
 
+    /// A signature that matches exactly these bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SignatureError::Empty`] for no bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SignatureError> {
+        if bytes.is_empty() {
+            return Err(SignatureError::Empty);
+        }
+        Ok(Self {
+            pattern: bytes.iter().copied().map(Some).collect(),
+            anchor_start: 0,
+            anchor: bytes.to_vec(),
+        })
+    }
+
     /// The number of bytes the signature covers.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -175,6 +191,14 @@ mod tests {
             signature.to_string().parse::<Signature>().unwrap(),
             signature
         );
+    }
+
+    #[test]
+    fn matches_exact_bytes() {
+        let signature = Signature::from_bytes(&[0xAA, 0xAA]).unwrap();
+        assert_eq!(signature.to_string(), "AA AA");
+        assert_eq!(signature.find_in(&[0xAA, 0xAA, 0xAA]), vec![0, 1]);
+        assert_eq!(Signature::from_bytes(&[]), Err(SignatureError::Empty));
     }
 
     #[test]

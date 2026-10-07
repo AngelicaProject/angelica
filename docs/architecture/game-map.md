@@ -33,7 +33,7 @@ A field offset is preferably derived from code: "the displacement of the memory 
 
 ## Patch-day tools
 
-- `angelica map verify` resolves every entry against an executable and writes the report and the build record.
+- `angelica map verify --map <map> --game <game folder> [--write] [--json]` resolves every entry against `ffxiv_dx11.exe` and reports present and absent entries; `--write` writes the build record. It exits with 0 when every entry is present, 1 when an entry is absent or the map or the game cannot be read, and 2 on a usage error.
 - `angelica map recover` proposes locators for entries that no longer resolve, by matching each lost function's fingerprint (normalized instructions, calls, constants, referenced strings, vtable positions) from the previous build against the new one. Proposals are verified like any other change before they are accepted.
 - `angelica map diff` compares two builds' reports.
 - `angelica map import` converts externally maintained data into entries marked as imported; see the game map repository for its rules.

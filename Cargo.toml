@@ -2,6 +2,8 @@
 resolver = "3"
 members = [
   "crates/angelica-pe",
+  "crates/angelica-map",
+  "crates/angelica-cli",
 ]
 
 [workspace.package]
@@ -14,8 +16,17 @@ repository = "https://github.com/AngelicaProject/angelica"
 authors = ["AngelicaProject contributors"]
 
 [workspace.dependencies]
+angelica-map = { path = "crates/angelica-map" }
+angelica-pe = { path = "crates/angelica-pe" }
+clap = { version = "4.5", features = ["derive"] }
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder"] }
 memchr = "2.8.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10.9"
+tempfile = "3"
 thiserror = "2.0.20"
+toml = "1.1.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

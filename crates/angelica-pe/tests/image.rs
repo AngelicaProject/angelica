@@ -133,3 +133,29 @@ fn refuses_a_section_outside_the_bytes() {
         ImageError::SectionOutOfBounds(".text".to_owned())
     );
 }
+
+#[test]
+fn reads_function_ranges_from_the_exception_directory() {
+    let builder = sample().functions(&[(0x1020, 0x1030), (0x1000, 0x1010)]);
+    both_layouts(&builder, |image| {
+        assert_eq!(
+            image.section(".pdata").map(angelica_pe::Section::is_code),
+            Some(false)
+        );
+        assert_eq!(image.function_at(0x1000), Some(0x1000..0x1010));
+        assert_eq!(image.function_at(0x102F), Some(0x1020..0x1030));
+        assert_eq!(image.function_at(0x1010), None);
+        assert_eq!(image.function_at(0x0FFF), None);
+        assert!(image.is_code(0x1000));
+        assert!(!image.is_code(0x2000));
+    });
+}
+
+#[test]
+fn reads_little_endian_words() {
+    both_layouts(&sample(), |image| {
+        assert_eq!(image.read_u32(0x2000), Some(0x9905_8B48));
+        assert_eq!(image.read_u64(0x1020), Some(0xCCCC_CCCC_9905_8B48));
+        assert_eq!(image.read_u64(0x2000), None);
+    });
+}

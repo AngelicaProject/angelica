@@ -16,6 +16,12 @@ Everything that runs in the game is Rust or WebAssembly. A dependency is added w
 
 `angelica-pe` uses `memchr` (Unlicense OR MIT) to find the fixed bytes of a signature, and `thiserror` (MIT OR Apache-2.0) for its error types.
 
+`angelica-map` uses `toml` and `serde` (MIT OR Apache-2.0) to read map files, `iced-x86` (MIT) with only `std` and `decoder` to decode the instructions of code-anchored offsets and leaf functions, and `sha2` (MIT OR Apache-2.0) for `entries_sha256`.
+
+`angelica-cli` uses `clap` (MIT OR Apache-2.0) for its arguments, `serde_json` (MIT OR Apache-2.0) for `--json` output, and `sha2` for `exe_sha256`.
+
+Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
+
 ## Dependency checks
 
 `cargo deny` (`deny.toml`) enforces the policy: a known vulnerability or a yanked crate fails, every license must be on the allow list of licenses compatible with AGPL-3.0-only, and every crate comes from crates.io.
