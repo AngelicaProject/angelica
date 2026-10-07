@@ -1,0 +1,19 @@
+# Rust
+/target/
+/lcov.info
+
+# Compiled plugin artifacts
+*.cwasm
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local state
+*.local
+
+# Logs and dumps
+*.log
+*.dmp
