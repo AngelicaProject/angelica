@@ -1,5 +1,5 @@
-//! Modifications of code in the current process: entry detours, code
-//! patches, and vtable slot replacement.
+//! Modifications of code in the current process: entry detours, hooks
+//! inside functions, code patches, and vtable slot replacement.
 //!
 //! Relocation of the instructions a detour overwrites ([`relocate`]) is pure
 //! and runs anywhere. Installing anything is Windows-only: it allocates
@@ -19,7 +19,11 @@ mod detour;
 #[cfg(windows)]
 mod memory;
 #[cfg(windows)]
+mod mid;
+#[cfg(windows)]
 mod patch;
+#[cfg(windows)]
+mod splice;
 #[cfg(windows)]
 mod threads;
 #[cfg(windows)]
@@ -31,6 +35,8 @@ pub mod testing;
 #[cfg(windows)]
 pub use detour::Detour;
 pub use error::HookError;
+#[cfg(windows)]
+pub use mid::{Context, MidHandler, MidHook};
 #[cfg(windows)]
 pub use patch::CodePatch;
 pub use relocate::RelocateError;

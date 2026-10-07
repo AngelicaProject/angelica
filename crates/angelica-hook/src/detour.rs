@@ -1,7 +1,7 @@
 use crate::HookError;
 use crate::memory::{allocate_near, read, readable_len, write};
 use crate::relocate::{JUMP_LEN, branch_into, relocate};
-use crate::threads::Frozen;
+use crate::splice::Splice;
 
 /// Space reserved for a trampoline: the moved instructions, which are at
 /// most a few instructions of up to 15 bytes, and the jump back.
@@ -9,7 +9,7 @@ const TRAMPOLINE_LEN: usize = 128;
 /// `jmp qword ptr [rip+0]` followed by the 8-byte target.
 const RELAY_LEN: usize = 14;
 /// How many bytes at the target are decoded to find whole instructions.
-const READ_LEN: usize = 64;
+pub(crate) const READ_LEN: usize = 64;
 
 /// A jump from the start of a function to a replacement function.
 ///
@@ -21,14 +21,8 @@ const READ_LEN: usize = 64;
 /// tool's.
 #[derive(Debug)]
 pub struct Detour {
-    target: usize,
-    original: Vec<u8>,
-    patch: Vec<u8>,
+    splice: Splice,
     trampoline: usize,
-    /// For each moved instruction, its offset at the target and in the
-    /// trampoline.
-    offsets: Vec<(u32, u32)>,
-    enabled: bool,
 }
 
 impl Detour {
@@ -53,24 +47,20 @@ impl Detour {
         replacement: usize,
         function_len: Option<usize>,
     ) -> Result<Self, HookError> {
-        let available = readable_len(target, READ_LEN);
-        // SAFETY: `readable_len` bounded the read to readable memory.
-        let code = unsafe { read(target, available) };
+        // SAFETY: `readable_len` bounds the read to readable memory.
+        let code = unsafe { read(target, readable_len(target, READ_LEN)) };
         if let Some(len) = function_len {
             // SAFETY: the caller guarantees `len` readable bytes of code.
             let function = unsafe { read(target, len) };
-            let stolen = relocate(&code, target as u64, JUMP_LEN, target as u64)?.stolen_len;
-            if let Some((from, to)) = branch_into(&function, target as u64, target as u64, stolen) {
-                return Err(HookError::BranchIntoPatch { from, to });
-            }
+            check_branches(&function, target, target, &code)?;
         }
 
         let trampoline = allocate_near(target, TRAMPOLINE_LEN)?;
         let relocation = relocate(&code, target as u64, JUMP_LEN, trampoline as u64)?;
         if relocation.code.len() > TRAMPOLINE_LEN {
-            return Err(HookError::Relocate(crate::RelocateError::Encode(
-                "the trampoline is too long".to_owned(),
-            )));
+            return Err(
+                crate::RelocateError::Encode("the trampoline is too long".to_owned()).into(),
+            );
         }
         // SAFETY: the trampoline memory was just allocated and nothing can
         // reach it yet.
@@ -82,21 +72,13 @@ impl Detour {
         // SAFETY: as for the trampoline.
         unsafe { write(relay, &relay_code)? };
 
-        let mut patch = vec![0xE9];
-        // The relay is within 2 GiB of the target, so the difference fits.
-        let displacement = i32::try_from(relay.wrapping_sub(target + JUMP_LEN).cast_signed())
-            .map_err(|_| HookError::NoNearMemory(target))?;
-        patch.extend_from_slice(&displacement.to_le_bytes());
-        patch.resize(relocation.stolen_len, 0xCC);
-
-        Ok(Self {
-            target,
-            original: code[..relocation.stolen_len].to_vec(),
-            patch,
-            trampoline,
-            offsets: relocation.offsets,
-            enabled: false,
-        })
+        let moved = relocation
+            .offsets
+            .iter()
+            .map(|&(old, new)| (old, trampoline + new as usize))
+            .collect();
+        let splice = Splice::new(target, code[..relocation.stolen_len].to_vec(), relay, moved)?;
+        Ok(Self { splice, trampoline })
     }
 
     /// The address that runs the original function.
@@ -107,16 +89,16 @@ impl Detour {
 
     #[must_use]
     pub fn target(&self) -> usize {
-        self.target
+        self.splice.target()
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.enabled
+        self.splice.is_enabled()
     }
 
-    /// Writes the jump at the target. A suspended thread inside the bytes
-    /// it overwrites continues at the same instruction in the trampoline.
+    /// Writes the jump at the target. A suspended thread on an overwritten
+    /// instruction continues at the same instruction in the trampoline.
     ///
     /// # Errors
     ///
@@ -128,32 +110,12 @@ impl Detour {
     /// No code other than this crate changes the target's bytes while this
     /// call runs, and the replacement may be called from now on.
     pub unsafe fn enable(&mut self) -> Result<(), HookError> {
-        if self.enabled {
-            return Ok(());
-        }
-        // SAFETY: the bytes at the target were readable in `new` and stay mapped.
-        if unsafe { read(self.target, self.original.len()) } != self.original {
-            return Err(HookError::Changed(self.target));
-        }
-        let frozen = Frozen::others();
-        for (handle, rip) in frozen.instruction_pointers() {
-            if let Some(offset) = self.offset_at_target(rip)
-                && let Some(&(_, new)) = self.offsets.iter().find(|&&(old, _)| old == offset)
-            {
-                Frozen::set_instruction_pointer(handle, (self.trampoline + new as usize) as u64);
-            }
-        }
-        // SAFETY: every other thread is suspended and none is inside the
-        // bytes being replaced any more.
-        unsafe { write(self.target, &self.patch)? };
-        drop(frozen);
-        self.enabled = true;
-        Ok(())
+        // SAFETY: the caller accepts the contract of `Splice::enable`.
+        unsafe { self.splice.enable() }
     }
 
-    /// Restores the target's original bytes. A suspended thread inside the
-    /// moved instructions of the trampoline continues at the same
-    /// instruction at the target.
+    /// Restores the target's original bytes. A suspended thread on a moved
+    /// instruction in the trampoline continues at the original.
     ///
     /// # Errors
     ///
@@ -165,46 +127,22 @@ impl Detour {
     ///
     /// As for [`Detour::enable`].
     pub unsafe fn disable(&mut self) -> Result<(), HookError> {
-        if !self.enabled {
-            return Ok(());
-        }
         // SAFETY: as in `enable`.
-        if unsafe { read(self.target, self.patch.len()) } != self.patch {
-            return Err(HookError::Changed(self.target));
-        }
-        let frozen = Frozen::others();
-        for (handle, rip) in frozen.instruction_pointers() {
-            let moved_end = self.offsets.last().map_or(0, |&(_, new)| new as usize);
-            if let Some(offset) = rip.checked_sub(self.trampoline as u64)
-                && offset <= moved_end as u64
-                && let Some(&(old, _)) = self
-                    .offsets
-                    .iter()
-                    .find(|&&(_, new)| u64::from(new) == offset)
-            {
-                Frozen::set_instruction_pointer(handle, (self.target + old as usize) as u64);
-            }
-        }
-        // SAFETY: every other thread is suspended and none is about to run
-        // the moved instructions.
-        unsafe { write(self.target, &self.original)? };
-        drop(frozen);
-        self.enabled = false;
-        Ok(())
-    }
-
-    fn offset_at_target(&self, rip: u64) -> Option<u32> {
-        let offset = rip.checked_sub(self.target as u64)?;
-        (offset < self.original.len() as u64).then(|| u32::try_from(offset).unwrap_or(u32::MAX))
+        unsafe { self.splice.disable() }
     }
 }
 
-impl Drop for Detour {
-    /// Removes the jump if this detour still owns it. The trampoline and the
-    /// relay stay in memory.
-    fn drop(&mut self) {
-        // SAFETY: the same contract as `disable`, which `enable` required
-        // from the caller for the life of the detour.
-        let _ = unsafe { self.disable() };
+/// Refuses a function that branches into the instructions a jump at
+/// `location` would overwrite.
+pub(crate) fn check_branches(
+    function: &[u8],
+    function_start: usize,
+    location: usize,
+    code: &[u8],
+) -> Result<(), HookError> {
+    let stolen = relocate(code, location as u64, JUMP_LEN, location as u64)?.stolen_len;
+    match branch_into(function, function_start as u64, location as u64, stolen) {
+        Some((from, to)) => Err(HookError::BranchIntoPatch { from, to }),
+        None => Ok(()),
     }
 }

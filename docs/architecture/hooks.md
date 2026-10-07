@@ -30,6 +30,19 @@ While the bytes change, every other thread of the process is suspended. A suspen
 
 A detour is enabled only while the target still holds the bytes it was prepared from, and removed only while the target still holds its own jump. Trampolines and relays are never freed, because a thread may still be executing in one after its detour is removed.
 
+## Mid-function hooks
+
+A mid-function hook overwrites the instructions at a location with a `jmp rel32` to a stub near it, relocated as for a detour. The stub:
+
+1. pushes the general-purpose registers and the flags and stores `xmm0` to `xmm15`, forming the context;
+2. calls the handler with the context's address on a 16-byte aligned stack with 32 bytes of shadow space;
+3. loads every register and the flags back from the context, so the handler's changes take effect;
+4. runs the moved instructions and jumps back.
+
+The stack pointer is not part of what a handler can change: it is the address just past the context. A handler must not unwind; the host catches panics inside it.
+
+When the hook is installed, a suspended thread on the hooked instruction continues at the start of the stub and runs the handler; a thread on a later overwritten instruction continues at that instruction among the moved ones.
+
 ## Code patches
 
 A code patch is prepared only when the bytes at the address equal the expected original bytes in the map, so a patch never writes over code it was not made for. Applying or reverting it suspends the other threads and fails with a retryable error when a thread is stopped inside the bytes.

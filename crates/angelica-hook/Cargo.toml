@@ -14,7 +14,7 @@ authors.workspace = true
 testing = []
 
 [dependencies]
-iced-x86 = { workspace = true, features = ["encoder", "block_encoder", "instr_info"] }
+iced-x86 = { workspace = true, features = ["encoder", "block_encoder", "code_asm", "instr_info"] }
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
