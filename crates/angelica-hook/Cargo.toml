@@ -1,0 +1,43 @@
+[package]
+name = "angelica-hook"
+description = "x64 detours, code patches, and vtable slot replacement in the current process."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Copies test functions into executable memory.
+testing = []
+
+[dependencies]
+iced-x86 = { workspace = true, features = ["encoder", "block_encoder", "instr_info"] }
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Kernel",
+  "Win32_System_Memory",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+angelica-hook = { path = ".", features = ["testing"] }
+
+# This crate writes to code and other threads' contexts, so it may use
+# `unsafe`; docs/development/rust.md sets the rules.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"

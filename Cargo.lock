@@ -16,6 +16,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "angelica-hook"
+version = "0.1.0"
+dependencies = [
+ "angelica-hook",
+ "iced-x86",
+ "thiserror",
+ "windows-sys",
+]
+
+[[package]]
 name = "angelica-map"
 version = "0.1.0"
 dependencies = [

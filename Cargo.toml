@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/angelica-pe",
   "crates/angelica-map",
+  "crates/angelica-hook",
   "crates/angelica-cli",
 ]
 
@@ -27,6 +28,7 @@ sha2 = "0.10.9"
 tempfile = "3"
 thiserror = "2.0.20"
 toml = "1.1.6"
+windows-sys = "0.61.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

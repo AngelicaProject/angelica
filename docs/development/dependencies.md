@@ -7,7 +7,7 @@ Angelica prefers a small set of mature dependencies over internal reinvention of
 - `wasmtime`: plugin runtime, component model, epoch interruption, ahead-of-time compilation.
 - WIT and `wit-bindgen`: the plugin API definition and its bindings.
 - `iced-x86`: x64 decoding and encoding for trampolines and code-anchored offsets.
-- `windows`: Win32 and Direct3D 11 bindings.
+- `windows-sys`: Win32 and Direct3D 11 bindings.
 - `egui`: the overlay's user interface, drawn by Angelica's own Direct3D 11 painter.
 
 Everything that runs in the game is Rust or WebAssembly. A dependency is added with the first change that uses it, after checking its current stable version and license.
@@ -17,6 +17,8 @@ Everything that runs in the game is Rust or WebAssembly. A dependency is added w
 `angelica-pe` uses `memchr` (Unlicense OR MIT) to find the fixed bytes of a signature, and `thiserror` (MIT OR Apache-2.0) for its error types.
 
 `angelica-map` uses `toml` and `serde` (MIT OR Apache-2.0) to read map files, `iced-x86` (MIT) with only `std` and `decoder` to decode the instructions of code-anchored offsets and leaf functions, and `sha2` (MIT OR Apache-2.0) for `entries_sha256`.
+
+`angelica-hook` uses `iced-x86` with `encoder`, `block_encoder`, and `instr_info` to move instructions into trampolines, and `windows-sys` (MIT OR Apache-2.0) for memory protection, executable memory, and thread suspension.
 
 `angelica-cli` uses `clap` (MIT OR Apache-2.0) for its arguments, `serde_json` (MIT OR Apache-2.0) for `--json` output, and `sha2` for `exe_sha256`.
 
