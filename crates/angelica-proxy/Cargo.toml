@@ -1,0 +1,41 @@
+[package]
+name = "angelica-proxy"
+description = "Signed runtime loader and system dinput8 proxy."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[lib]
+name = "dinput8"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+angelica-hook.workspace = true
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_SystemInformation",
+  "Win32_System_Diagnostics_Debug", "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+angelica-hook = { workspace = true, features = ["testing"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"

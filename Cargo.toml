@@ -5,6 +5,7 @@ members = [
   "crates/angelica-map",
   "crates/angelica-hook",
   "crates/angelica-cli",
+  "crates/angelica-proxy",
 ]
 
 [workspace.package]
@@ -19,6 +20,8 @@ authors = ["AngelicaProject contributors"]
 [workspace.dependencies]
 angelica-map = { path = "crates/angelica-map" }
 angelica-pe = { path = "crates/angelica-pe" }
+angelica-hook = { path = "crates/angelica-hook" }
+ed25519-dalek = "3.0.0"
 clap = { version = "4.5", features = ["derive"] }
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder"] }
 memchr = "2.8.3"
