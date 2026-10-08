@@ -25,6 +25,8 @@ mod patch;
 #[cfg(windows)]
 mod splice;
 #[cfg(windows)]
+mod startup;
+#[cfg(windows)]
 mod threads;
 #[cfg(windows)]
 mod vtable;
@@ -40,5 +42,7 @@ pub use mid::{Context, MidHandler, MidHook};
 #[cfg(windows)]
 pub use patch::CodePatch;
 pub use relocate::RelocateError;
+#[cfg(windows)]
+pub use startup::StartupDetour;
 #[cfg(windows)]
 pub use vtable::VtableSlot;

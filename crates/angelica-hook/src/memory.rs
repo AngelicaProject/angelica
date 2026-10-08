@@ -48,7 +48,7 @@ pub(crate) fn allocate_near(near: usize, len: usize) -> Result<usize, HookError>
 }
 
 /// A new block in the first free region found going outward from `near`.
-fn allocate_block_near(near: usize) -> Option<usize> {
+pub(crate) fn allocate_block_near(near: usize) -> Option<usize> {
     let start = near - near % BLOCK;
     for step in 1..REACH / BLOCK {
         for candidate in [
