@@ -1,5 +1,7 @@
 //! The `angelica` command.
 
+mod compile;
+mod dev;
 mod verify;
 
 use std::process::ExitCode;
@@ -18,6 +20,18 @@ enum Command {
     /// Game map tools.
     #[command(subcommand)]
     Map(MapCommand),
+    /// Plugin tools.
+    #[command(subcommand)]
+    Plugin(PluginCommand),
+    /// A signed local installation for development.
+    #[command(subcommand)]
+    Dev(dev::DevCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginCommand {
+    /// Compile a component outside the game for the trusted package builder.
+    Compile(compile::CompileArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -38,5 +52,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
+        Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
+        Command::Dev(command) => dev::run(&command),
     }
 }

@@ -10,31 +10,24 @@ id = "harmonia"
 name = "Harmonia"
 version = "0.2.0"
 api = "1.0"
-description = "Shows the game in another language with community translations."
-
-[entries]
-required = ["excel.store_row.hash_table", "excel.store_row.ring_buffer", "text.utf8_string.to_upper"]
-optional = ["text.utf8_string.to_lower"]
+description = "Shows the game in another language with community translation packs."
+authors = ["pokeda"]
+memory_bytes = 1073741824
 
 [permissions]
-"game.hook" = ["excel.store_row.hash_table", "excel.store_row.ring_buffer", "text.utf8_string.to_upper", "text.utf8_string.to_lower"]
-"files.redirect" = true
-network = ["github.com", "objects.githubusercontent.com"]
-
-[interfaces]
-exports = ["harmonia:dictionary@1.0.0"]
-imports = []
+"excel.text" = true
+"text.case" = true
 ```
 
 ## Fields
 
-- `manifest`: format version. A reader refuses any other value.
-- `plugin.id`: lowercase letters, digits, and hyphens; unique in the registry; never changes.
-- `plugin.version`: semantic version.
-- `plugin.api`: the plugin API version the plugin was built for. The host runs the plugin when it supports that major version at an equal or higher minor version.
-- `entries.required`: map entries without which the plugin does not start.
-- `entries.optional`: map entries that enable part of the plugin; the plugin is told at start which are absent.
-- `permissions`: the permissions of [`../architecture/permissions.md`](../architecture/permissions.md). Permissions about map entries list the entries; `network` lists domains; others are `true`.
-- `interfaces.exports` and `interfaces.imports`: WIT interfaces with versions.
+- `manifest`: the format version, `1`. A reader refuses any other value.
+- `plugin.id`: 1–64 lowercase ASCII letters, digits, and hyphens, not starting or ending with a hyphen. Unique in the registry; never changes. It names the package folder, the storage folder, and the grant file.
+- `plugin.name`, `plugin.description`: what the player sees; not blank, at most 1024 bytes.
+- `plugin.version`: a semantic version.
+- `plugin.api`: the [plugin API](./plugin-api-v1.md) version the component was built for, `major.minor`. This host runs `1.0`.
+- `plugin.authors`: optional list of names.
+- `plugin.memory_bytes`: optional memory limit of each instance of the plugin, 1 to 1073741824 bytes; the host default (64 MiB) when absent.
+- `permissions`: each [permission](../architecture/permissions.md) the plugin needs, as `"<name>" = true`. `false` and an absent permission are the same. An unknown permission refuses the manifest.
 
-Every entry named under `permissions` must also appear under `entries`. A manifest that names an entry not in the map, or that is not consistent with itself, is refused at packing and at installation.
+Unknown fields refuse the manifest.

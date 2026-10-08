@@ -37,7 +37,9 @@ The proxy installs the entry hook only during static process initialization. Loa
 
 - If the host fails before plugins load, it unloads its hooks and the game runs unmodified.
 - The overlay does not depend on the game map (see [`ui.md`](./ui.md)), so the host can report in the game why it, a plugin, or an entry is disabled.
-- A crash in the game process writes a minidump and a report naming the active plugins and hooks to the log folder.
+- A crash in the game process writes a minidump and a report naming the plugins and their states to the log folder.
+
+The host's unhandled-exception filter attempts a normal Windows minidump and a JSON report with the executable and map hashes and each plugin's id, version, and state. Reading a plugin's state never waits on a lock; a state another thread holds is reported as unknown. The filter then forwards to the filter that preceded it, preserving the game's exception handling. The pinned host retains this callback until process exit. Reports are best effort if the filesystem or the crashed process cannot service the write; handled plugin traps do not produce process crash dumps.
 
 ## Updates
 

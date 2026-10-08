@@ -1,6 +1,6 @@
 # Hooks and code patches
 
-`angelica-hook` installs every modification of game code. Plugins and host services request modifications by game map entry; nothing can be installed at an address that is not a verified entry.
+`angelica-hook` installs every modification of game code. The host's adapters install hooks at verified game map entries only; plugins never install hooks or name addresses, they use the [host services](./services.md) the adapters implement.
 
 ## Kinds
 
@@ -55,12 +55,10 @@ A vtable slot is one aligned pointer, replaced with a single store; no thread is
 
 ## Chaining
 
-Several plugins may hook the same function. The host installs one native hook per function and calls the handlers in priority order, each one able to call the next; the last calls the original.
+The host installs at most one hook per function. When several plugins' rules apply to the same calls, the adapter combines them in its own defined order (for text tables, by priority).
 
 Other tools in the process may hook the same function. A detour installed over another tool's jump moves that jump into its trampoline, so calling the original runs the other tool's hook. A tool that installs its hook over Angelica's does the same, and Angelica's detour is then removed only after that tool removes its own; until then it stays installed.
 
-## Calling plugin code from a hook
+## Hooks and plugins
 
-A native hook calls a plugin handler through the plugin runtime. The handler runs on the instance bound to the thread kind declared by the map entry (see [`plugins.md`](./plugins.md#instances-and-threads)). If the handler traps, exceeds its time budget, or its plugin is disabled, the hook calls the next handler or the original as if the handler were absent.
-
-Hot functions are not given to plugin handlers. A host service handles them natively from rules plugins configure; see [`services.md`](./services.md).
+No hook calls plugin code. Functions the game calls often — building rows, converting text — are handled natively by adapters from rules plugins activated; see [`services.md`](./services.md). An adapter's detour catches panics and passes the call on unchanged when it fails.

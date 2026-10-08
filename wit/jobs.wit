@@ -1,0 +1,45 @@
+package angelica:plugin@1.0.0;
+
+/// Long work off the game's main thread.
+///
+/// `start` runs the guest's `run-job` export in a new instance of the plugin
+/// on a host thread. That instance has its own memory, shares nothing with
+/// the main instance except the plugin's storage, and is dropped when the
+/// job ends. A job may use `runtime`, `storage`, and `report`; operations
+/// that change the game return `wrong-context`.
+///
+/// A job runs for at most 10 minutes. Disabling the plugin cancels its
+/// jobs.
+interface jobs {
+    use types.{error};
+
+    variant state {
+        /// Still running, with the last reported progress.
+        running(job-progress),
+        /// `run-job` returned this output.
+        finished(list<u8>),
+        /// `run-job` returned an error, trapped, ran out of time, or was
+        /// cancelled.
+        failed(string),
+    }
+
+    record job-progress {
+        /// From 0 to 1.
+        fraction: f32,
+        message: string,
+    }
+
+    /// Starts a job. At most four jobs of a plugin run at once.
+    /// Called from the main instance only.
+    start: func(name: string, input: list<u8>) -> result<u64, error>;
+
+    /// The job's state. A finished or failed job is forgotten after it has
+    /// been returned once. Called from the main instance only.
+    poll: func(id: u64) -> result<state, error>;
+
+    /// Stops a running job; a later `poll` reports it failed.
+    cancel: func(id: u64) -> result<_, error>;
+
+    /// Called from inside a job: progress that `poll` returns.
+    report: func(fraction: f32, message: string) -> result<_, error>;
+}

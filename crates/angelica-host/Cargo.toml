@@ -1,0 +1,51 @@
+[package]
+name = "angelica-host"
+description = "Sandboxed plugin host and Windows game integration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[lib]
+name = "runtime"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+angelica-text.workspace = true
+angelica-map.workspace = true
+angelica-pe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+semver.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+wasmtime.workspace = true
+egui.workspace = true
+num-traits.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+angelica-hook.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Diagnostics_Debug", "Win32_System_Memory", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_UI_Shell"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+angelica-hook = { workspace = true, features = ["testing"] }
+angelica-pe = { workspace = true, features = ["testing"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"

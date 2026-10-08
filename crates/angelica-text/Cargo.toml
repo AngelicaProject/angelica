@@ -1,0 +1,18 @@
+[package]
+name = "angelica-text"
+description = "Game text encoding checks and the text table format, shared by the host and plugins."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Plugins link this crate through the SDK.
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

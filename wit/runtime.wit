@@ -1,0 +1,23 @@
+package angelica:plugin@1.0.0;
+
+/// The plugin's own context in the host.
+interface runtime {
+    enum level {
+        debug,
+        info,
+        warning,
+        error,
+    }
+
+    /// Appends a line to the plugin's log, which the Angelica menu shows.
+    log: func(level: level, message: string);
+
+    /// True while the host starts plugins before the game's own code runs.
+    /// Work done during this `start` applies to everything the game loads;
+    /// a plugin started later, when the player enables it, sees a game that
+    /// has already loaded data.
+    started-with-game: func() -> bool;
+
+    /// The game build: the contents of `game/ffxivgame.ver`.
+    game-version: func() -> string;
+}

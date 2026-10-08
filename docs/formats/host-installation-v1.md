@@ -1,0 +1,53 @@
+# Host installation format 1
+
+The installation folder contains `runtime.dll` and its detached release signature, as specified in [loading](../architecture/loading.md), or a newer pair in `staged/`.
+
+## Configuration
+
+`host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally an absolute `state_directory`. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, and `state` under the installation folder.
+
+Optional limits:
+
+| Field | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `memory_bytes` | 67108864 | 1–1073741824 | memory of a plugin instance whose manifest requests none |
+| `fuel` | 100000000 | 1–10000000000 | guest instructions per frame call; 100 times as many for `start` and `stop` |
+| `timeout_ms` | 20 | 1–1000 | guest time per frame call |
+
+Unknown fields and other formats are refused.
+
+## Authenticated file sets
+
+Map releases and plugin packages contain `files.json` and `files.json.sig`. The signature is exactly 64 raw Ed25519 bytes over the exact bytes of `files.json`, verified with the compiled release public key before the JSON is parsed:
+
+```json
+{"format":1,"files":{"angelica.toml":"<lowercase SHA-256>","plugin.wasm":"<lowercase SHA-256>","plugin.cwasm":"<lowercase SHA-256>"}}
+```
+
+Each listed file is read and its SHA-256 checked; only these bytes reach the map reader or the component loader. A plugin package holds `angelica.toml`, `plugin.wasm`, and `plugin.cwasm`, in a folder named by the plugin id. A map package holds `map.toml`, its `entries/*.toml`, and optionally `builds/*.toml`.
+
+`plugin.cwasm` is the component compiled by `angelica plugin compile` from the packaged `plugin.wasm`. It is native code: the signer must compile it from the source itself and never sign an artifact a plugin author supplied. The compiler version, engine settings, architecture, operating system, and CPU features must match the runtime; otherwise the package is refused, and the game never compiles a component.
+
+Paths use forward slashes and are relative. Traversal, empty parts, links, Windows device names, alternate streams, and trailing dots or spaces are refused. The file list is at most 1 MiB and 8192 files; each file at most 64 MiB, all together at most 256 MiB.
+
+## Player grants
+
+`grants/<plugin-id>.json` records the player's approval:
+
+```json
+{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "text.case"]}
+```
+
+A plugin runs only when its grant covers every permission its manifest declares. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+
+## Plugin settings
+
+`state/<plugin-id>.json` holds `{"format": 1, "enabled": false}` when the player turned the plugin off; without the file an approved plugin is enabled. Faults do not change it. An unreadable file or another format refuses the plugin.
+
+## Storage
+
+`storage/<plugin-id>/` is the plugin's folder ([storage](./plugin-api-v1.md#storage)).
+
+## Development installations
+
+`angelica dev key` creates a development signing key, and `angelica dev install` signs a runtime, a map, and plugins with it into an installation folder (the runtime into `staged/`). The proxy and runtime must be built with that key's public half in `ANGELICA_RELEASE_PUBLIC_KEY`. A development key is never a release key.

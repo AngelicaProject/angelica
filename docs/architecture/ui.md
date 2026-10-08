@@ -6,14 +6,24 @@ The host draws its interface over the game with **egui** and its own Direct3D 11
 
 The overlay chains with other tools that draw over the game; it does not assume it is the only `Present` hook.
 
+Bootstrap device creation requests the swap chain, device, feature level, and immediate context together. Graphics interposers can interpret a missing device output as a capability probe and omit swap-chain creation. Incomplete outputs fail initialization and release the bootstrap window; the host log distinguishes installed hooks from attachment to a rendering swap chain.
+
+`Insert` toggles visibility. Mouse and keyboard messages are consumed only while egui requests them; hidden or disabled overlays release capture. Rendering uses a private deferred context and executes its command list with immediate-context state restoration. No back-buffer references survive a completed frame; resizing drops frame resources before forwarding to the original function.
+
+When rendering runs outside the startup thread, a registered Windows message schedules ticks and UI events on the window thread. Main callbacks run only if it matches the startup thread. The renderer uses cached window descriptions. A mismatch disables the overlay with a diagnostic.
+
 ## What the host shows
 
-- Angelica's menu: installed plugins, their permissions and state, the catalog, updates, logs.
-- The state of the map for the running build: verified, unverified, and absent entries, and which plugins wait for them.
-- Plugin windows.
+The Angelica menu lists:
+
+- the game map for the running build: whether a signed build record verified it, and every absent entry with the reason;
+- each installed plugin: name, id, version, description, and state. A plugin awaiting approval shows its permissions with their descriptions and an approval button. An approved plugin has Enable or Disable, Open (which sends the plugin `open-requested`), Open plugin folder, and its recent log. A faulted plugin shows the reason, Retry, and Keep disabled;
+- recent host diagnostics.
+
+Enabling, disabling, approving, and retrying apply in the current session, on the main thread at the next frame.
 
 ## Plugin windows
 
-Plugins do not draw. They describe their interface through the UI interface of the plugin API in an immediate-mode style: every frame a plugin's window callback declares its widgets, and the host lays them out and draws them. The renderer is therefore a host detail that can change without affecting plugins.
+Plugins do not draw. Every frame a plugin returns the windows it wants shown as lists of widgets ([windows](../formats/plugin-api-v1.md#windows)), and the host lays them out and draws them, so the renderer can change without affecting plugins. Windows scroll vertically when their contents exceed their height.
 
-The host owns fonts (including glyphs for Cyrillic and Japanese), scaling, colors, and the frames of plugin windows. A plugin cannot draw outside its windows or imitate Angelica's permission dialogs.
+The host owns fonts, scaling, colors, and window frames. A window's title includes the plugin's name, and a plugin cannot draw outside its windows or show Angelica's own controls. The Windows adapter uses the installed Segoe UI font for Latin and Cyrillic and the first available Meiryo, MS Gothic, or Yu Gothic font for Japanese; fonts are not bundled.

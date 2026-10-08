@@ -1,0 +1,30 @@
+package angelica:plugin@1.0.0;
+
+/// Types shared by every interface.
+interface types {
+    /// Why a host call failed. `message` names the path, table, or value
+    /// involved; `kind` is stable for programs to branch on.
+    record error {
+        kind: error-kind,
+        message: string,
+    }
+
+    enum error-kind {
+        /// An argument breaks the operation's rules: a malformed path, an
+        /// invalid name, a file whose contents fail validation.
+        invalid-argument,
+        /// The named file, table, or job does not exist.
+        not-found,
+        /// The plugin does not hold the permission the operation needs.
+        permission-denied,
+        /// The operation is not offered in this context: a main-instance
+        /// operation called from a job, or the reverse.
+        wrong-context,
+        /// The game build lacks a map entry the operation needs.
+        unavailable,
+        /// A size, count, or storage quota would be exceeded.
+        limit-exceeded,
+        /// The operating system refused a file operation.
+        io,
+    }
+}

@@ -1,0 +1,13 @@
+manifest = 1
+
+[plugin]
+id = "hello"
+name = "Hello"
+version = "0.1.0"
+api = "1.0"
+description = "An example that uses every interface of the plugin API."
+authors = ["AngelicaProject contributors"]
+
+[permissions]
+"excel.text" = true
+"text.case" = true

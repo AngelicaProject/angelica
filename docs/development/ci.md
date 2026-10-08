@@ -13,11 +13,14 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 ```text
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo clippy -p angelica-sdk -p angelica-hello --target wasm32-wasip2 --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo deny --locked check
 ```
 
 No job requires a game installation.
+
+The Windows Rust job installs `wasm32-wasip2` so the plugin crates are linted for their target and the fake-game tests can build the example component with the pinned compiler.
 
 The `main` ruleset requires only `ci`. A new job is added to the `needs` of `ci`.
 

@@ -1,0 +1,17 @@
+[package]
+name = "angelica-hello"
+description = "An example plugin that uses every interface of the plugin API."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

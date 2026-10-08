@@ -6,12 +6,32 @@ Tests protect contracts, not implementation trivia. Tests must not depend on an 
 
 - **Pure crates** (`angelica-pe`, `angelica-map`, manifest and permission logic): unit tests and property tests over synthetic PE images and map files built in the tests.
 - **Hook engine**: unit tests of relocation on any platform, and, on Windows, tests that install hooks on machine code copied into executable memory (`angelica-hook`'s `testing` feature): RIP-relative operands and branches in the moved instructions, chaining and removal order, refusals, code patches with matching and non-matching original bytes, vtable slots, mid-function hooks that read and change general-purpose and XMM registers while flags survive, and a thread that spins inside the overwritten bytes while a detour is installed, repeated so that it is stopped at every instruction.
-- **Plugin runtime**: test components built in the workspace exercise limits, traps, permission refusals, and hot reload.
+- **Plugin runtime**: test components built in the workspace exercise limits, traps, permission refusals, and main/worker isolation.
 - **Plugins**: `angelica-fake-game` runs a plugin against recorded or scripted game data.
 
 ## Synthetic images
 
 The `testing` feature of `angelica-pe` builds x64 PE images with chosen sections (`PeBuilder`) and lays out a file image as Windows maps it (`map_file`). Tests of anything that reads an image use it instead of real executables, and check the file and the mapped layout give the same answers.
+
+## Loader tests
+
+`angelica-proxy` tests configuration, staged-version selection, and strict signature verification without an installed game. `angelica-hook` tests startup detour restoration and refusal to overwrite a later hook on private executable machine code.
+
+The Windows bootstrap integration test builds an isolated proxy with a test signing key, a signed synthetic runtime, and an executable that statically imports the proxy. It checks that the host starts before executable code and that invalid signatures, missing files, failed host startup, and incomplete staged updates leave the executable running:
+
+```text
+cargo test -p angelica-proxy --test bootstrap
+```
+
+The test invokes the pinned compiler and an offline Cargo build in a temporary directory and runs in Windows CI. It requires the workspace dependencies in the Cargo cache, but no game, network, or release key. It also checks export names and ordinals and confirms rejected DLLs never execute their `DllMain`.
+
+## Host tests
+
+Pure host modules have unit tests: text tables against rows (layout checks, guards, priorities, refused buffers), letter case against the game's rules, storage confinement and quota, manifests and grants.
+
+`angelica-fake-game` runs actual components in the real host: `build_component` builds a package for `wasm32-wasip2` with the pinned compiler, and `TestHost` gives the host temporary folders, a scripted game, and the calling thread as its main thread. `tests/hello.rs` drives [`examples/hello`](../../examples/hello) through its window: approval, events, storage, jobs, text tables applied to scripted rows, letters, permissions and missing map entries, and the player's choices across game starts. A plugin's own tests use the same crate.
+
+The Windows-only tests install the row and letter case detours on synthetic machine code and drive them with synthetic rows, sheets, strings, and an allocator vtable, checking the rebuilt buffers, the allocate and free calls, and the strings converted in place. They also cover the overlay painter on a software Direct3D 11 device, loading trusted compiler output, and the crash writer producing a real minidump of the test process. `angelica-host/tests/package.rs` checks that file sets are authenticated before parsing and that every content hash is checked. The compile CLI test checks that invalid source leaves an existing destination intact.
 
 ## Tests against the real game executable
 

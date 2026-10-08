@@ -1,0 +1,19 @@
+[package]
+name = "angelica-fake-game"
+description = "A scripted game for testing plugins and the host without an installed game."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+angelica-host.workspace = true
+angelica-text.workspace = true
+tempfile.workspace = true
+wasmtime.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+package angelica:plugin@1.0.0;
+
+/// Letter case of game text beyond the letters the game knows.
+///
+/// The game builds capitalized and lower-case text (`<head>`, `<caps>`,
+/// `<lower>` and similar text macros) with its own case conversion, which
+/// changes only Latin letters. A plugin adds letter pairs; the host then
+/// applies the game's own rules (first letter, every word, all letters,
+/// excluded words) to those letters as well, after the game's conversion.
+/// Requires `text.case`. Called from the main instance only.
+interface text-case {
+    use types.{error};
+
+    record letter {
+        lower: char,
+        upper: char,
+    }
+
+    /// Replaces the plugin's letters; an empty list removes them. Both
+    /// letters of a pair have the same UTF-8 length, so text never changes
+    /// length, and neither is ASCII. A letter another plugin already added
+    /// with a different partner is refused.
+    set-letters: func(letters: list<letter>) -> result<_, error>;
+}

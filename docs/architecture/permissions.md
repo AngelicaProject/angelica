@@ -1,32 +1,20 @@
 # Permissions
 
-A plugin's manifest declares its permissions; see [`../formats/plugin-manifest-v1.md`](../formats/plugin-manifest-v1.md). The player grants them when installing. An update that declares a permission the installed version did not have is not applied until the player grants it.
+A plugin's manifest declares its permissions ([manifest](../formats/plugin-manifest-v1.md)). The player sees them before approving the plugin, and approval grants exactly those. A new version that declares a permission the grant does not cover waits for approval again.
 
-## Permissions
+Every plugin, once approved, has its own windows, log, storage folder, and jobs; these need no permission. Everything that reaches the game needs one:
 
 | Permission | Allows | Shown to the player as |
 | --- | --- | --- |
-| `ui` | windows in the overlay, chat output, commands | — (always granted) |
-| `game.read` | reading the map fields and game data the manifest names | reads game state |
-| `game.hook` | the hooks the manifest names | changes game behavior |
-| `game.patch` | the code patches the manifest names | changes game code |
-| `game.call` | calling the game functions the manifest names | uses game functions |
-| `game.act` | actions on behalf of the player: using actions, operating game windows, moving items | acts for the player |
-| `game.memory` | reading and writing game memory outside named fields | full access to the game |
-| `files.redirect` | serving replacement game files through the file service | replaces game files |
-| `storage` | the plugin's own folder | — (always granted) |
-| `folder` | a folder the player chooses | reads and writes the chosen folder |
-| `network` | HTTP and WebSocket to the domains the manifest names | connects to the named domains |
-| `audio` | playing sound | plays sound |
-| `clipboard` | reading and writing the clipboard | uses the clipboard |
-| `plugin.import` | calling the interfaces of the plugins the manifest names | uses other plugins |
+| `excel.text` | activating [text tables](../formats/plugin-api-v1.md#text-tables) that replace text of the game's data sheets | Replaces text the game shows from its data sheets |
+| `text.case` | adding letters to the game's [letter case conversion](../formats/plugin-api-v1.md#letter-case) | Changes how the game capitalizes letters |
 
-Every permission except `ui` and `storage` is listed at installation with its details: the hooks, functions, domains, and plugins named in the manifest.
+A permission exists only together with the API operation it guards. A capability the API does not offer has no permission; it is added with the operation that needs it, as a narrow permission describing that operation.
 
-## Combinations
+## Grants
 
-`game.memory` together with `network` could send account data to a server. The installation screen states this explicitly for that combination.
+The host records the player's approval in `grants/<plugin-id>.json` ([installation](../formats/host-installation-v1.md#player-grants)). A plugin runs only with a grant that covers every permission its manifest declares; an operation checks both the declaration and the grant. A package without a grant appears in the Angelica menu with its permissions and an approval button, and runs no code.
 
 ## Data no permission exposes
 
-Session tokens, login data, and other data that could take over the account are not available through any typed API. The host denies `game.memory` reads of the memory regions that hold them.
+Session tokens, login data, and other data that could take over the account are not available through any operation.

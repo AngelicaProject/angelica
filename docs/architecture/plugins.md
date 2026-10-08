@@ -2,40 +2,38 @@
 
 ## Plugins are WebAssembly components
 
-A plugin is a WebAssembly component that targets the Angelica API defined in WIT under `wit/`. The host runs it with wasmtime. Any language that builds a component can be used; the SDK and documentation target Rust.
+A plugin is a WebAssembly component of the `plugin` world in [`wit/`](../../wit), the [plugin API](../formats/plugin-api-v1.md). The host runs it with wasmtime. Any language that builds a component can be used; the SDK and documentation target Rust (`wasm32-wasip2`).
 
-The host compiles each plugin ahead of time when it is installed and loads the compiled artifact at game start. Compiled artifacts are a cache tied to the wasmtime version and are rebuilt when it changes.
+The release pipeline compiles each component outside the game with `angelica plugin compile` and signs the source and the compiled artifact together ([installation](../formats/host-installation-v1.md)). The host loads only authenticated artifacts and never compiles in the game.
 
-## Isolation and limits
+## Isolation
 
-- A plugin sees only its own linear memory and the API functions its permissions allow; see [`permissions.md`](./permissions.md).
-- Game memory is never mapped into plugin memory. Reads and writes go through API calls that copy data and check the access against the plugin's permissions and map entries.
-- Each plugin has a memory limit and a time budget per call, enforced with epoch interruption. A plugin that traps or exceeds a limit is disabled for the session, and its hooks and service rules are removed.
+- A plugin sees only its own linear memory and the host's imports. Game memory is never mapped into it; everything a plugin gives or gets is copied.
+- Every operation on the game is a host service with a verified adapter and a permission ([services](./services.md)). There is no access to game memory, game functions, or addresses.
+- Each call is bounded in guest time, fuel, and memory. A trap or an exceeded limit faults the plugin: its effects are removed and it stays off until the player retries it. The game keeps running.
+- WASI imports Rust's standard library adds expose only random numbers and clocks; all others trap.
 
-## Instances and threads
+## Instances
 
-A component instance is not thread-safe. Each plugin has:
+A component instance is single-threaded. A running plugin has:
 
-- a **main instance** that runs on the game's main thread: start-up, the frame tick, events, the user interface, and hooks on main-thread functions;
-- optionally a **worker instance** for hooks on other game threads. Main and worker share data only through host-provided shared tables, never through plugin memory.
+- a **main instance** on the game's main thread: `start`, `tick`, window events, `ui`, `stop`, and every operation that changes the game;
+- **job instances**, one per job, on host threads: long work such as verifying and converting a large file, with storage access and progress reports. They share nothing with the main instance except the plugin's storage.
 
-Every function entry in the map declares the thread kind it runs on, and the host binds a handler to the matching instance. A plugin cannot call a main-thread game function from a worker. The host checks the calling thread on every hooked call: a call from a thread that does not match the entry's declaration skips the handler, runs the original, and reports the entry as declared wrongly.
+Hot paths never call a plugin. Work the game does for every row, string, or file — replacing row text, converting letter case — is done natively from rules the plugin activated.
 
 ## Lifecycle
 
-1. Load: the manifest is checked against the granted permissions and the present map entries.
-2. Start: the main instance runs its start export and registers hooks, commands, windows, and service rules.
-3. Run: frame ticks, events, and hook calls.
-4. Stop: on disable, update, or game exit, hooks and rules are removed before the instance is dropped.
+1. **Discovery.** At startup the host reads each authenticated package in `plugins/`, parses its manifest, loads its compiled component, and links the host's imports. A package that fails is listed with the reason.
+2. **Approval.** A package without a grant covering its permissions waits in the Angelica menu, which lists its permissions. Approving writes the grant and starts the plugin.
+3. **Start.** Approved and enabled plugins start before the game's own code runs, so rules they activate in `start` apply to everything the game loads. A plugin enabled later starts at once; `runtime.started-with-game` tells the two apart.
+4. **Running.** Every frame: `tick`, pending window events, `ui`.
+5. **Stop.** Disabling calls `stop`, then removes the plugin's text tables, letters, jobs, and windows. A fault does the same without calling `stop`. At game exit every plugin stops.
 
-## Development mode
+The player's choice to disable a plugin is kept across game starts ([settings](../formats/host-installation-v1.md#plugin-settings)). A faulted plugin is never restarted automatically.
 
-In development mode, a plugin is reloaded in the running game when its build changes: the host stops it, removes its hooks and rules, and starts the new build. Development mode also allows local map entries that are not verified. A plugin that uses local entries cannot be packed for the registry.
+## Developing a plugin
 
-## Interfaces between plugins
+A Rust plugin depends on `angelica-sdk`, implements `angelica_sdk::Plugin`, and exports it with `angelica_sdk::plugin!`. [`examples/hello`](../../examples/hello) uses every interface. `angelica-fake-game` runs a plugin's component in the real host against a scripted game, so a plugin's own tests cover its windows, storage, jobs, and the rows its tables change without the game.
 
-A plugin may export a WIT interface and another may import it. The dependency is declared in both manifests and checked at install time, so an incompatible version is reported before the game starts. Calls between plugins go through the host and are subject to the caller's permissions.
-
-## Recording and replay
-
-The host can record a plugin's hook calls and API results during a session. `angelica-fake-game` replays a recording against a plugin build, so plugin behavior can be tested without the game.
+To run a plugin in the game during development: build it for `wasm32-wasip2`, then `angelica dev install` signs it with a development key into a local installation ([development installations](../formats/host-installation-v1.md#development-installations)).

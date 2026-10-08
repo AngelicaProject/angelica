@@ -1,0 +1,36 @@
+package angelica:plugin@1.0.0;
+
+/// What every plugin exports. The host calls the main instance on the game's
+/// main thread and `run-job` in job instances on host threads.
+interface guest {
+    use ui.{window, event};
+
+    /// Called once when the plugin is enabled. An error disables it and is
+    /// shown in the Angelica menu.
+    start: func() -> result<_, string>;
+
+    /// Called once before the plugin is disabled, also at game exit. Tables
+    /// and letters the plugin activated are removed afterwards in any case.
+    stop: func();
+
+    /// Called every frame with the seconds since the previous call.
+    tick: func(elapsed: f64) -> result<_, string>;
+
+    /// The plugin's windows for this frame.
+    ui: func() -> list<window>;
+
+    /// A player action in one of the plugin's windows or the Angelica menu.
+    ui-event: func(event: event);
+
+    /// Runs a job that `jobs.start` started; see the `jobs` interface.
+    run-job: func(name: string, input: list<u8>) -> result<list<u8>, string>;
+}
+
+world plugin {
+    import runtime;
+    import storage;
+    import jobs;
+    import excel-text;
+    import text-case;
+    export guest;
+}

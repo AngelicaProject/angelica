@@ -1,30 +1,33 @@
 # Host services
 
-A host service is a general capability implemented natively in the host and offered to plugins through the API. A service is added when a kind of plugin needs something that cannot be done safely or fast enough from plugin code. A service is never specific to one plugin.
+A host service is an operation on the game or the player's system that the host implements natively and offers to plugins through the API. Plugins compose services into their own applications; the host never knows what a plugin is for.
 
-## Services
+## API design
 
-| Service | Purpose | Permission |
+The API is defined in `wit/` and specified in [the API contract](../formats/plugin-api-v1.md). The SDK adds bindings and helpers for that contract; it does not add capabilities.
+
+An operation names a resource and defines its inputs, results, validation, ownership, thread, limits, and failure. It must serve any plugin that needs the resource, without the host learning a plugin's name, file formats, or policy. A first consumer may motivate an operation; it must still be described in terms of the resource. For example, text tables replace cells of the game's sheets by sheet, row, column, and guard: a translation plugin uses them for its packs, another plugin could use them for annotations or accessibility. Reading the translation pack, trusting its publisher, and choosing which sheets to translate stay in the translation plugin.
+
+An operation is as narrow as its verified contract. A game structure the map does not describe, or a change whose effects on the game are not known, stays unavailable rather than being exposed through a general escape hatch such as raw memory access or arbitrary function calls.
+
+## Kinds of services
+
+| Kind | Example | Rule |
 | --- | --- | --- |
-| Game data | Sheets and rows of the game's Excel data, files from the game's archives | `game.read` |
-| Excel rows | Observe and rewrite rows as the game stores them | `game.hook` on the row store entries |
-| File redirection | Serve a replacement for a game file path, per collection and per character | `files.redirect` |
-| Character metadata | Per-character changes to the game's equipment and body metadata tables | `files.redirect` |
-| Redraw | Redraw a character after its files or metadata changed | `game.call` |
-| Game windows | Read the game's window tree and agents, operate windows | `game.read`, `game.act` |
-| Player actions | Use actions, move items | `game.act` |
-| Chat and commands | Print to chat, register commands | `ui` |
-| Overlay UI | Windows and widgets drawn by the host | `ui` |
-| World drawing | Lines, shapes, and markers at world positions | `ui` |
-| File validation | Check that a file has a valid structure for its game format before the game reads it | applied to every redirected file |
-| Network | HTTP and WebSocket to declared domains, streamed to the plugin's folder | `network` |
-| Storage | The plugin's own folder and a folder the player chose | `storage`, `folder` |
-| Audio, clipboard | Play sound, use the clipboard | `audio`, `clipboard` |
+| Declarative game rules | text tables, letter case | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
+| Host resources | storage, jobs, windows | bounded per plugin, confined to the plugin |
 
-## Declarative hot paths
+Each service that changes the game uses an adapter over verified map entries with a written contract ([game structures](../formats/game-structures.md)). An adapter installs its hooks the first time a plugin needs it and keeps them until the process exits; without active rules they only pass calls on.
 
-File redirection and character metadata run on the game's resource threads thousands of times during loading. Plugins do not handle these calls; they give the service rules (collections of path replacements, which collection applies to which character, metadata changes), and the service applies them natively. A plugin changes the rules at any time; the service takes the new rules at a consistent point.
+## Adding a service
 
-## Validation of external files
+A plugin combines existing operations whenever they express its task; convenience code belongs in the plugin or in SDK helpers. A new service is added for a concrete need that existing operations cannot meet safely or fast enough, together with:
 
-Every file served through file redirection is validated for its format before the game reads it. A file that fails is not served, and the plugin that supplied it is told why. Files downloaded from other players are parsed inside the downloading plugin's sandbox first, so a malformed file can crash at most that plugin's instance.
+- the WIT interface and its section in the API contract;
+- a permission when it reaches the game or the player's system ([permissions](./permissions.md));
+- the adapter's contract and map entries when it touches game structures;
+- tests through `angelica-fake-game`.
+
+## Validation of external data
+
+Data a plugin brings from outside — a downloaded pack, a file the player chose — is parsed inside the plugin's sandbox, typically in a job, so a malformed file can fault at most that plugin. What reaches a service is in the service's own format and is validated by the host again before it affects the game.

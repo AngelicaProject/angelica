@@ -1,0 +1,17 @@
+[package]
+name = "angelica-sdk"
+description = "Write Angelica plugins in Rust: bindings to the plugin API, a plugin trait, and helpers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+angelica-text.workspace = true
+wit-bindgen.workspace = true
+
+[lints]
+workspace = true

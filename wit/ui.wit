@@ -1,0 +1,126 @@
+package angelica:plugin@1.0.0;
+
+/// Windows a plugin describes and the host draws.
+///
+/// Every frame the host calls the guest's `ui` export and draws the windows
+/// it returns; a window that is not returned is not shown. Widgets are
+/// controlled: they show the value the plugin passes, and a change by the
+/// player arrives as an `event` before the next frame. Widget ids are
+/// unique within a window.
+///
+/// Layout is a flat list. `begin-row` ... `end-row` places the widgets
+/// between them side by side; `begin-section` ... `end-section` puts them
+/// under a heading the player can collapse. Both nest; every `begin` needs
+/// its `end`.
+interface ui {
+    enum tone {
+        normal,
+        muted,
+        good,
+        warning,
+        bad,
+    }
+
+    record text {
+        text: string,
+        tone: tone,
+    }
+
+    record button {
+        id: string,
+        label: string,
+        enabled: bool,
+    }
+
+    record checkbox {
+        id: string,
+        label: string,
+        checked: bool,
+    }
+
+    record text-input {
+        id: string,
+        label: string,
+        value: string,
+        hint: string,
+    }
+
+    record choice {
+        id: string,
+        label: string,
+        options: list<string>,
+        /// Index into `options`; `none` shows no selection.
+        selected: option<u32>,
+    }
+
+    record progress {
+        /// From 0 to 1.
+        fraction: f32,
+        label: string,
+    }
+
+    record section {
+        id: string,
+        title: string,
+        open-by-default: bool,
+    }
+
+    variant widget {
+        heading(string),
+        text(text),
+        button(button),
+        checkbox(checkbox),
+        text-input(text-input),
+        choice(choice),
+        progress(progress),
+        separator,
+        begin-row,
+        end-row,
+        begin-section(section),
+        end-section,
+    }
+
+    record window {
+        id: string,
+        title: string,
+        widgets: list<widget>,
+    }
+
+    variant event {
+        /// A button was pressed.
+        clicked(widget-ref),
+        /// A checkbox was toggled.
+        toggled(toggled),
+        /// The text of a text input changed.
+        edited(edited),
+        /// An option of a choice was selected.
+        chosen(chosen),
+        /// The player closed the window with its close button.
+        closed(string),
+        /// The player asked to open the plugin from the Angelica menu.
+        open-requested,
+    }
+
+    record widget-ref {
+        window: string,
+        id: string,
+    }
+
+    record toggled {
+        window: string,
+        id: string,
+        checked: bool,
+    }
+
+    record edited {
+        window: string,
+        id: string,
+        value: string,
+    }
+
+    record chosen {
+        window: string,
+        id: string,
+        index: u32,
+    }
+}
