@@ -1,6 +1,25 @@
 use std::fmt::Write as _;
 
 use crate::Resolution;
+use crate::{Absence, EntryKind, Map, Value};
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRecord {
+    game_version: String,
+    exe_sha256: String,
+    entries_sha256: String,
+    present: BTreeMap<String, u32>,
+    absent: BTreeMap<String, String>,
+    constant_offsets: Constants,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Constants {
+    names: Vec<String>,
+}
 
 /// The result of resolving a map against one game executable, as committed
 /// to `builds/<game version>.toml`.
@@ -13,6 +32,119 @@ pub struct BuildRecord {
 }
 
 impl BuildRecord {
+    /// Checks record identity without resolving or scanning code.
+    /// # Errors
+    /// Rejects malformed record data.
+    pub fn matches(text: &str, executable: &str, entries: &str) -> Result<bool, String> {
+        let raw: RawRecord = toml::from_str(text).map_err(|e| e.to_string())?;
+        Ok(raw.exe_sha256 == executable && raw.entries_sha256 == entries)
+    }
+
+    /// Reads an authenticated record, validating its completeness and image bounds.
+    /// # Errors
+    /// Rejects mismatched map hashes, missing/extra entries and invalid recorded addresses.
+    pub fn from_toml(
+        text: &str,
+        map: &Map,
+        image: &angelica_pe::Image<'_>,
+    ) -> Result<Self, String> {
+        let raw: RawRecord = toml::from_str(text).map_err(|e| e.to_string())?;
+        if raw.game_version.trim().is_empty()
+            || !valid_hash(&raw.exe_sha256)
+            || raw.entries_sha256 != map.entries_sha256()
+        {
+            return Err("build record identity or map hash is invalid".into());
+        }
+        for name in raw.present.keys().chain(raw.absent.keys()) {
+            if map.get(name).is_none() {
+                return Err(format!("build record names unknown entry {name}"));
+            }
+        }
+        let mut results = BTreeMap::new();
+        let mut constants = Vec::new();
+        for name in map.order() {
+            let entry = map.get(name).ok_or("entry disappeared")?;
+            let value = match (raw.present.get(name), raw.absent.get(name)) {
+                (Some(value), None) => match &entry.kind {
+                    EntryKind::Field { offset, .. } => {
+                        if let Some(offset) = offset {
+                            if value != offset {
+                                return Err(format!("build record changed constant field {name}"));
+                            }
+                            constants.push(name.clone());
+                        }
+                        Value::Offset(*value)
+                    }
+                    EntryKind::Function { .. }
+                    | EntryKind::Location { .. }
+                    | EntryKind::Patch { .. } => {
+                        if !image.is_code(*value) {
+                            return Err(format!("recorded entry {name} is outside code"));
+                        }
+                        Value::Address(*value)
+                    }
+                    EntryKind::Vtable { slots } => {
+                        if image
+                            .bytes_at(
+                                *value,
+                                usize::try_from(*slots)
+                                    .map_err(|e| e.to_string())?
+                                    .checked_mul(8)
+                                    .ok_or("vtable size overflow")?,
+                            )
+                            .is_none()
+                        {
+                            return Err(format!("recorded vtable {name} is outside image"));
+                        }
+                        Value::Address(*value)
+                    }
+                    EntryKind::Global { .. } => {
+                        if image.bytes_at(*value, 1).is_none() {
+                            return Err(format!("recorded global {name} is outside image"));
+                        }
+                        Value::Address(*value)
+                    }
+                },
+                (None, Some(reason)) if !reason.is_empty() => {
+                    results.insert(name.clone(), Err(Absence::Recorded(reason.clone())));
+                    continue;
+                }
+                _ => return Err(format!("build record must classify {name} exactly once")),
+            };
+            if entry
+                .references()
+                .iter()
+                .any(|reference| !matches!(results.get(*reference), Some(Ok(_))))
+            {
+                return Err(format!(
+                    "recorded present entry {name} depends on an absent entry"
+                ));
+            }
+            results.insert(name.clone(), Ok(value));
+        }
+        constants.sort();
+        if raw
+            .constant_offsets
+            .names
+            .iter()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != raw.constant_offsets.names.len()
+            || raw.constant_offsets.names.iter().collect::<BTreeSet<_>>()
+                != constants.iter().collect::<BTreeSet<_>>()
+        {
+            return Err("build record constant_offsets does not match the map".into());
+        }
+        Ok(Self {
+            game_version: raw.game_version,
+            exe_sha256: raw.exe_sha256,
+            entries_sha256: raw.entries_sha256,
+            resolution: Resolution {
+                results,
+                constant_offsets: constants,
+            },
+        })
+    }
     /// The record as TOML. The text depends only on the record: tables and
     /// keys are in a fixed order and values in a fixed notation.
     #[must_use]
@@ -44,6 +176,13 @@ impl BuildRecord {
         text.push_str("]\n");
         text
     }
+}
+
+fn valid_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// A TOML basic string.

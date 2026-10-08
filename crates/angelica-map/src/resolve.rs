@@ -32,6 +32,7 @@ impl Value {
 /// Why an entry is absent from a build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Absence {
+    Recorded(String),
     NoMatch,
     Ambiguous(usize),
     OutsideImage,
@@ -50,6 +51,7 @@ pub enum Absence {
 impl fmt::Display for Absence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Recorded(reason) => formatter.write_str(reason),
             Self::NoMatch => write!(formatter, "signature has no match"),
             Self::Ambiguous(count) => write!(formatter, "signature matched {count} addresses"),
             Self::OutsideImage => write!(formatter, "address is outside the image"),
@@ -90,8 +92,8 @@ impl fmt::Display for Absence {
 /// The result of resolving every entry of a map against one image.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
-    results: BTreeMap<String, Result<Value, Absence>>,
-    constant_offsets: Vec<String>,
+    pub(crate) results: BTreeMap<String, Result<Value, Absence>>,
+    pub(crate) constant_offsets: Vec<String>,
 }
 
 impl Resolution {
