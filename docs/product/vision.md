@@ -12,14 +12,16 @@ Every workflow is designed to be carried out by a coding agent as well as by a p
 
 ## What a plugin can be
 
-The plugin API and host services support plugins of these kinds:
+Angelica is a general plugin platform. A plugin's purpose is defined by its author; there is no fixed taxonomy or closed list of supported plugin kinds. Authors compose reusable API capabilities to build applications within the sandbox, granted permissions, and verified game contracts.
+
+Examples of applications include:
 
 - **Translation** of the game's text and fonts.
 - **Mod management**: replacing game files per character, with collections of mods and per-character metadata changes.
 - **Automation of game activities** such as crafting, behind an explicit permission.
 - **Appearance sync** between players through a plugin's own server, applying downloaded files safely.
 
-A plugin of any of these kinds is built only from the plugin API, map entries, and host services. When a kind of plugin needs something the API does not offer, the API gains a general service rather than the plugin gaining native code.
+These examples illustrate product scope, not plugin categories or a claim that every required API is already implemented. The same capabilities can support applications outside this list. When a concrete use case requires a missing capability, the API gains a reusable operation on game or host resources; application policy remains in the plugin. API design requirements belong in [host services](../architecture/services.md).
 
 ## Primary workflows
 

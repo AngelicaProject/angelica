@@ -11,3 +11,4 @@
 9. **Angelica coexists.** Angelica works alongside graphics injectors and other in-process tools, chains hooks with them, and never requires their absence.
 10. **Agents are first-class users.** Every contract is machine-readable, every tool can report in JSON, and every failure names what failed.
 11. **Documentation stays current.** Architecture and development documentation evolve with the code.
+12. **Plugin purposes are open-ended.** The API exposes reusable game and host capabilities that authors compose into their own applications. A plugin's identity or category never determines its API; verified resource contracts and explicit permissions do.
