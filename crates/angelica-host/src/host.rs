@@ -589,13 +589,14 @@ impl Host {
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
             .collect();
-        let commands: Vec<_> = self
+        let mut commands: Vec<_> = self
             .services
             .commands
             .take()
             .iter()
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
+        commands.extend(self.services.commands.take_overflowed());
         let game_events = self.services.events.take();
         let frame = Frame {
             elapsed,
