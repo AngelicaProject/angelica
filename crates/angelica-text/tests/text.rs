@@ -211,3 +211,68 @@ fn owned_table_reads_like_the_parsed_one() {
     );
     assert!(angelica_text::table::OwnedTable::new(vec![0; 10]).is_err());
 }
+
+/// A small deterministic generator, so a failing case can be replayed.
+struct Mutator(u64);
+
+impl Mutator {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(&mut self, bound: usize) -> usize {
+        usize::try_from(self.next() % bound.max(1) as u64).unwrap()
+    }
+
+    /// `bytes` with one to four random changes: bits, bytes, length-like
+    /// fields set to edge values, truncation, or a repeated slice.
+    fn mutate(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut bytes = bytes.to_vec();
+        for _ in 0..=self.below(4) {
+            let at = self.below(bytes.len());
+            match self.below(5) {
+                0 if !bytes.is_empty() => bytes[at] ^= 1 << self.below(8),
+                1 if !bytes.is_empty() => bytes[at] = self.next().to_le_bytes()[0],
+                2 if bytes.len() >= at + 8 => {
+                    let edges = [0, 1, 0xFF, 0xFFFF_FFFF, u64::MAX, bytes.len() as u64];
+                    let value = edges[self.below(edges.len())];
+                    let width = [2, 4, 8][self.below(3)];
+                    bytes[at..at + width].copy_from_slice(&value.to_le_bytes()[..width]);
+                }
+                3 => bytes.truncate(at),
+                _ => {
+                    let end = (at + self.below(64)).min(bytes.len());
+                    let slice = bytes[at..end].to_vec();
+                    let to = self.below(bytes.len());
+                    bytes.splice(to..to, slice);
+                }
+            }
+        }
+        bytes
+    }
+}
+
+#[test]
+fn damaged_tables_are_refused_without_panicking() {
+    let sample = sample();
+    let mut mutator = Mutator(0x9E37_79B9_7F4A_7C15);
+    let mut accepted = 0;
+    for _ in 0..100_000 {
+        let bytes = mutator.mutate(&sample);
+        let Ok(table) = Table::parse(&bytes) else {
+            continue;
+        };
+        accepted += 1;
+        for sheet in table.sheets() {
+            for cell in sheet.cells() {
+                assert!(!sheet.row(cell.row, cell.subrow).is_empty());
+            }
+            assert!(table.sheet(sheet.name).is_some());
+        }
+    }
+    // Some mutations keep a valid table, such as a changed text byte.
+    assert!(accepted > 0);
+}

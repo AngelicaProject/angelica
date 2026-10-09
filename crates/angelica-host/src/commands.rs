@@ -986,4 +986,33 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, Kind::Unavailable);
     }
+
+    #[test]
+    fn damaged_lines_are_answered_without_panicking() {
+        let (_folder, data) = data();
+        let commands = Commands::default();
+        commands.define("p", tree(), &data).unwrap();
+        let lines = [
+            "/hello greet Alisaie 3",
+            "/hi g \"Y'shtola Rhul\"",
+            "/hello say happy what a day",
+            "/hello set sound on 0.5",
+            "/hello help greet",
+        ];
+        let mut mutator = crate::mutations::Mutator::new(11);
+        for index in 0..50_000 {
+            let line = mutator.mutate_text(lines[index % lines.len()]);
+            if commands.submit(line.as_bytes()) {
+                for line in commands.take() {
+                    let _ = commands.resolve(&line);
+                }
+            }
+            let bytes = mutator.mutate(lines[index % lines.len()].as_bytes());
+            if commands.submit(&bytes) {
+                for line in commands.take() {
+                    let _ = commands.resolve(&line);
+                }
+            }
+        }
+    }
 }

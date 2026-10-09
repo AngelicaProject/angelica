@@ -231,4 +231,26 @@ mod tests {
             "no check for models"
         );
     }
+
+    #[test]
+    fn damaged_replacements_are_refused_without_panicking() {
+        let font_original = font(&[(0x41, 0, 0), (0x42, 10, 0)]);
+        let font_added = font(&[(0x41, 0, 0), (0x42, 10, 0), (0xD090, 20, 9)]);
+        let mut texture = vec![0u8; TEXTURE_HEADER + 64];
+        texture[4] = 0x40;
+        let mut mutator = crate::mutations::Mutator::new(7);
+        for _ in 0..50_000 {
+            let _ = check(
+                "common/font/axis_12.fdt",
+                &font_original,
+                &mutator.mutate(&font_added),
+            );
+            let _ = check(
+                "common/font/axis_12.fdt",
+                &mutator.mutate(&font_original),
+                &font_added,
+            );
+            let _ = check("common/font/font1.tex", &texture, &mutator.mutate(&texture));
+        }
+    }
 }

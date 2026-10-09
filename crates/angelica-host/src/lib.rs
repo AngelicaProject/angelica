@@ -17,6 +17,8 @@ pub mod host;
 pub mod http;
 pub mod jobs;
 pub mod manifest;
+#[cfg(test)]
+mod mutations;
 pub mod package;
 pub mod panel;
 pub mod sandbox;

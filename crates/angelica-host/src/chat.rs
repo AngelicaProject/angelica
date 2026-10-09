@@ -271,4 +271,19 @@ mod tests {
         assert_eq!(integer(500), [0xF2, 0x01, 0xF4]);
         assert_eq!(integer(0x0100), [0xF1, 0x01]);
     }
+
+    #[test]
+    fn damaged_messages_are_refused_without_panicking() {
+        let mut mutator = crate::mutations::Mutator::new(17);
+        for _ in 0..20_000 {
+            let spans: Vec<Span> = (0..=mutator.below(3))
+                .map(|_| Span::new(mutator.mutate_text("Hello, [world]!\nAgain"), Tone::Accent))
+                .collect();
+            if check(&spans).is_ok() {
+                let encoded = encode(&mutator.mutate_text("Hello"), &spans);
+                let _ = plain(&encoded);
+            }
+            let _ = plain(&mutator.mutate(b"\x02\x48\x04\xF2\x02\x25\x03text\x02\x48\x02\x01\x03"));
+        }
+    }
 }
