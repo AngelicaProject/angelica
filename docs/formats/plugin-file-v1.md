@@ -23,12 +23,24 @@ The author key is the plugin's identity. `angelica plugin pack` signs with it an
 
 The player is not shown the key. The menu shows that the plugin comes from its author, with the manifest's `authors`, and not from the Angelica catalog.
 
+## Links
+
+A plugin is shared by a link: an `https` URL of its plugin file that always serves the newest version. `angelica plugin publish --github <owner/name>` signs the plugin and puts the file `<id>.angelica` into the release `<id>` of that GitHub repository, replacing the previous version, so the link stays `https://github.com/<owner>/<name>/releases/download/<id>/<id>.angelica`; it refuses a version that is not newer than the one the link serves, and a link that serves another author's file. Any other `https` host serves a plugin as well: the signature, not the host, makes a file trusted.
+
+The installer downloads from any public `https` host, with the rules of the plugin API's [HTTP](./plugin-api-v1.md#http) otherwise (port 443, public addresses only, at most 5 redirects), at most the size of the largest plugin file.
+
 ## Installation
 
-`angelica plugin install <file> --installation <folder>` installs a plugin file into a [host installation](./host-installation-v1.md):
+`angelica plugin install <file or link> --installation <folder>` installs a plugin file into a [host installation](./host-installation-v1.md):
 
 1. It verifies the signature and the manifest.
-2. The first installation of a plugin id binds the id to the author's key in `keys/authors/<plugin-id>.json`: `{"format": 1, "plugin_id": "timers", "author_key": "<lowercase hex>"}`. A file of the same id signed by another key is refused, and so is a plugin id already installed from the catalog.
+2. The first installation of a plugin id binds the id to the author's key in `keys/authors/<plugin-id>.json`: `{"format": 1, "plugin_id": "timers", "author_key": "<lowercase hex>", "url": "<link>"}`, where `url` is the link the plugin was last installed from and is absent for a file. A file of the same id signed by another key is refused, and so is a plugin id already installed from the catalog.
 3. It compiles the component with the runtime's engine and writes the package `plugins/<plugin-id>/`: the plugin file as it came (`plugin.angelica`), the compiled `plugin.cwasm`, and `files.json` signed with the installation key ([authenticated file sets](./host-installation-v1.md#authenticated-file-sets)).
+
+## Updates
+
+`angelica plugin update --installation <folder>` checks the link of every installed plugin that has one. A file from the same author with the same plugin id and a newer `plugin.version` is installed as above; the same or an older version leaves the plugin as it is; another author's file or another plugin at the link is refused and reported. A plugin whose package folder the player removed is not brought back.
+
+## Loading
 
 The host loads such a package only when the installation key verifies `files.json`, the author's signature verifies the plugin file, and the author is the one the id is bound to; the manifest and component come from the plugin file. A new version replaces the package while the game runs; one that declares more waits for approval ([permissions](../architecture/permissions.md#grants)).

@@ -1,23 +1,20 @@
 //! Plugins from their authors, outside the official catalog: the author's
-//! key, signed plugin files (`docs/formats/plugin-file-v1.md`), and their
-//! installation, which compiles the component on the player's computer and
-//! signs the package with the installation's key.
-use crate::{
-    Output,
-    dev::{package, read_key, write},
-};
+//! key, signed plugin files (`docs/formats/plugin-file-v1.md`), publishing
+//! them behind a link that stays the same across versions, and installing
+//! and updating them.
+use crate::Output;
 use clap::Args;
 use ed25519_dalek::SigningKey;
 use runtime::{
-    author::{self, Pin},
+    author,
+    installer::{self, Installation},
     manifest::Manifest,
     package::hex,
 };
 use std::{
-    collections::BTreeMap,
     io::Read,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command, ExitCode},
 };
 
 #[derive(Debug, Args)]
@@ -50,9 +47,38 @@ pub struct PackArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct PublishArgs {
+    /// The plugin's folder, with `angelica.toml`.
+    #[arg(default_value = ".")]
+    folder: PathBuf,
+    /// The component built for `wasm32-wasip2`.
+    #[arg(long)]
+    component: PathBuf,
+    /// The GitHub repository (`owner/name`) whose release `<id>` holds the
+    /// file; publishing uses the `gh` command and its sign-in.
+    #[arg(long)]
+    github: String,
+    /// The author key, created when missing; by default
+    /// `%APPDATA%/Angelica/author.key`.
+    #[arg(long)]
+    key: Option<PathBuf>,
+    #[command(flatten)]
+    reporting: Output,
+}
+
+#[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// The plugin file (`.angelica`).
-    file: PathBuf,
+    /// The plugin file (`.angelica`), or an `https` link to it.
+    source: String,
+    /// The installation folder `angelica.json` names.
+    #[arg(long)]
+    installation: PathBuf,
+    #[command(flatten)]
+    reporting: Output,
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
     /// The installation folder `angelica.json` names.
     #[arg(long)]
     installation: PathBuf,
@@ -77,11 +103,71 @@ pub fn key(args: &KeyArgs) -> ExitCode {
 }
 
 pub fn pack(args: &PackArgs) -> ExitCode {
-    report(&args.reporting, "plugin-pack", pack_file(args))
+    report(
+        &args.reporting,
+        "plugin-pack",
+        (|| {
+            let packed = pack_plugin(&args.folder, &args.component, args.key.as_ref())?;
+            let output = args.output.clone().unwrap_or_else(|| {
+                PathBuf::from(format!("{}-{}.angelica", packed.id, packed.version))
+            });
+            installer::write(&output, &packed.file)?;
+            Ok(serde_json::json!({
+                "plugin": packed.id,
+                "version": packed.version,
+                "file": output,
+                "key": packed.key,
+                "key_created": packed.key_created,
+            }))
+        })(),
+    )
+}
+
+pub fn publish(args: &PublishArgs) -> ExitCode {
+    report(&args.reporting, "plugin-publish", publish_plugin(args))
 }
 
 pub fn install(args: &InstallArgs) -> ExitCode {
-    report(&args.reporting, "plugin-install", install_file(args))
+    report(
+        &args.reporting,
+        "plugin-install",
+        (|| {
+            let installation = Installation::open(&args.installation)?;
+            if args.source.contains("://") && !args.source.starts_with("https://") {
+                return Err(format!(
+                    "{}: plugins install only from https links",
+                    args.source
+                ));
+            }
+            let (file, url) = if args.source.starts_with("https://") {
+                (installer::fetch(&args.source)?, Some(args.source.as_str()))
+            } else {
+                let path = Path::new(&args.source);
+                (read_limited(path, author::MAX_FILE)?, None)
+            };
+            let installed = installer::install(&installation, file, url)?;
+            serde_json::to_value(installed).map_err(|e| e.to_string())
+        })(),
+    )
+}
+
+pub fn update(args: &UpdateArgs) -> ExitCode {
+    report(
+        &args.reporting,
+        "plugin-update",
+        (|| {
+            let installation = Installation::open(&args.installation)?;
+            let outcomes = installer::update(&installation, installer::fetch);
+            let mut report = serde_json::Map::new();
+            for (id, outcome) in outcomes {
+                report.insert(
+                    id,
+                    serde_json::to_value(outcome).map_err(|e| e.to_string())?,
+                );
+            }
+            Ok(serde_json::Value::Object(report))
+        })(),
+    )
 }
 
 fn report(reporting: &Output, code: &str, result: Result<serde_json::Value, String>) -> ExitCode {
@@ -123,26 +209,9 @@ fn key_path(key: Option<&PathBuf>) -> Result<PathBuf, String> {
 /// The key at `path`, created when there is none; whether it was created.
 fn author_key(path: &Path) -> Result<(SigningKey, bool), String> {
     if path.exists() {
-        return Ok((read_key(path)?, false));
+        return Ok((installer::read_key(path)?, false));
     }
-    Ok((new_key(path)?, true))
-}
-
-/// Creates a key at `path`, which must not exist.
-fn new_key(path: &Path) -> Result<SigningKey, String> {
-    let mut secret = [0u8; 32];
-    getrandom::fill(&mut secret).map_err(|e| e.to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    // A key is never overwritten.
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .and_then(|mut file| std::io::Write::write_all(&mut file, hex(&secret).as_bytes()))
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(SigningKey::from_bytes(&secret))
+    Ok((installer::create_key(path)?, true))
 }
 
 fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
@@ -156,102 +225,150 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// Compiles a component for this runtime, which also checks it.
-fn compile(component: &[u8]) -> Result<Vec<u8>, String> {
-    let sandbox = runtime::sandbox::Sandbox::new()?;
-    wasmtime::component::Component::new(&sandbox.engine, component)
-        .and_then(|component| component.serialize())
-        .map_err(|e| format!("the component does not compile: {e}"))
+/// A plugin signed into a file.
+struct Packed {
+    id: String,
+    version: String,
+    name: String,
+    description: String,
+    file: Vec<u8>,
+    key: PathBuf,
+    key_created: bool,
 }
 
-fn pack_file(args: &PackArgs) -> Result<serde_json::Value, String> {
-    let manifest_bytes = read_limited(&args.folder.join("angelica.toml"), author::MAX_MANIFEST)?;
+fn pack_plugin(folder: &Path, component: &Path, key: Option<&PathBuf>) -> Result<Packed, String> {
+    let manifest_bytes = read_limited(&folder.join("angelica.toml"), author::MAX_MANIFEST)?;
     let manifest = Manifest::parse(
         std::str::from_utf8(&manifest_bytes).map_err(|e| format!("angelica.toml: {e}"))?,
     )
     .map_err(|e| e.to_string())?;
-    let component = read_limited(&args.component, author::MAX_COMPONENT)?;
-    compile(&component)?;
-    let key_path = key_path(args.key.as_ref())?;
-    let (key, created) = author_key(&key_path)?;
-    let file = author::sign(&key, &manifest_bytes, &component)?;
-    let output = args.output.clone().unwrap_or_else(|| {
-        PathBuf::from(format!(
-            "{}-{}.angelica",
-            manifest.id(),
-            manifest.plugin.version
-        ))
-    });
-    write(&output, &file)?;
+    let component = read_limited(component, author::MAX_COMPONENT)?;
+    installer::compile(&component)?;
+    let key_path = key_path(key)?;
+    let (key, key_created) = author_key(&key_path)?;
+    Ok(Packed {
+        id: manifest.id().to_owned(),
+        version: manifest.plugin.version.clone(),
+        name: manifest.plugin.name.clone(),
+        description: manifest.plugin.description.clone(),
+        file: author::sign(&key, &manifest_bytes, &component)?,
+        key: key_path,
+        key_created,
+    })
+}
+
+/// The link players install `id` from: the file `<id>.angelica` of the
+/// release `<id>` in `repository`, which every version replaces.
+fn github_link(repository: &str, id: &str) -> String {
+    format!("https://github.com/{repository}/releases/download/{id}/{id}.angelica")
+}
+
+fn publish_plugin(args: &PublishArgs) -> Result<serde_json::Value, String> {
+    let repository = args.github.trim();
+    let valid = repository.split('/').count() == 2
+        && repository.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        });
+    if !valid {
+        return Err(format!(
+            "{repository} is not a GitHub repository owner/name"
+        ));
+    }
+    let packed = pack_plugin(&args.folder, &args.component, args.key.as_ref())?;
+    let link = github_link(repository, &packed.id);
+    // Players update from the link: it must move to a newer version of
+    // the same author.
+    if let Ok(current) = installer::fetch(&link) {
+        let current = author::open(&current)?;
+        if author::open(&packed.file)?.author != current.author {
+            return Err(format!(
+                "{link} holds a file signed with another author key than {}",
+                packed.key.display()
+            ));
+        }
+        let current =
+            Manifest::parse(std::str::from_utf8(&current.manifest).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        if !installer::newer(&packed.version, &current.plugin.version)? {
+            return Err(format!(
+                "{link} already has version {}; raise plugin.version",
+                current.plugin.version
+            ));
+        }
+    }
+    let folder = std::env::temp_dir().join(format!("angelica-publish-{}", std::process::id()));
+    let file = folder.join(format!("{}.angelica", packed.id));
+    installer::write(&file, &packed.file)?;
+    let published = upload(repository, &packed, &file);
+    let _ = std::fs::remove_dir_all(&folder);
+    published?;
     Ok(serde_json::json!({
-        "plugin": manifest.id(),
-        "version": manifest.plugin.version,
-        "file": output,
-        "key": key_path,
-        "key_created": created,
+        "plugin": packed.id,
+        "version": packed.version,
+        "link": link,
+        "key": packed.key,
+        "key_created": packed.key_created,
     }))
 }
 
-fn install_file(args: &InstallArgs) -> Result<serde_json::Value, String> {
-    let bytes = read_limited(&args.file, author::MAX_FILE)?;
-    let file = author::open(&bytes)?;
-    let manifest = Manifest::parse(
-        std::str::from_utf8(&file.manifest).map_err(|e| format!("angelica.toml: {e}"))?,
-    )
-    .map_err(|e| e.to_string())?;
-    let id = manifest.id();
-    let config = runtime::config::Config::load(&args.installation)?;
-    let keys = config
-        .keys_directory
-        .clone()
-        .unwrap_or_else(|| args.installation.join("keys"));
-    let folder = config.plugin_directory.join(id);
-    let pin = Pin::read(&keys, id)?;
-    match &pin {
-        Some(pin) if !pin.names(&file.author) => {
-            return Err(format!(
-                "this file of {id} is signed by another author than the installed {id}; not installed"
-            ));
-        }
-        None if folder.exists() => {
-            return Err(format!(
-                "{id} is already installed from the Angelica catalog; not installed"
-            ));
-        }
-        _ => {}
+/// Creates the release `<id>` when missing and replaces its file.
+fn upload(repository: &str, packed: &Packed, file: &Path) -> Result<(), String> {
+    let gh = |arguments: &[&std::ffi::OsStr]| -> Result<bool, String> {
+        Command::new("gh")
+            .args(arguments)
+            .status()
+            .map(|status| status.success())
+            .map_err(|e| format!("gh: {e}; install the GitHub command and sign in"))
+    };
+    let exists = gh(&[
+        "release".as_ref(),
+        "view".as_ref(),
+        packed.id.as_ref(),
+        "--repo".as_ref(),
+        repository.as_ref(),
+    ])?;
+    if !exists
+        && !gh(&[
+            "release".as_ref(),
+            "create".as_ref(),
+            packed.id.as_ref(),
+            "--repo".as_ref(),
+            repository.as_ref(),
+            "--title".as_ref(),
+            packed.name.as_ref(),
+            "--notes".as_ref(),
+            packed.description.as_ref(),
+        ])?
+    {
+        return Err(format!(
+            "gh could not create the release {} in {repository}",
+            packed.id
+        ));
     }
-    let compiled = compile(&file.component)?;
-    let installation = installation_key(&keys)?;
-    if pin.is_none() {
-        let pin = Pin::new(id, &file.author);
-        write(
-            &keys.join("authors").join(format!("{id}.json")),
-            &serde_json::to_vec_pretty(&pin).map_err(|e| e.to_string())?,
-        )?;
+    if !gh(&[
+        "release".as_ref(),
+        "upload".as_ref(),
+        packed.id.as_ref(),
+        file.as_os_str(),
+        "--clobber".as_ref(),
+        "--repo".as_ref(),
+        repository.as_ref(),
+    ])? {
+        return Err(format!("gh could not upload {}", file.display()));
     }
-    let files = BTreeMap::from([
-        ("plugin.angelica".to_owned(), bytes),
-        ("plugin.cwasm".to_owned(), compiled),
-    ]);
-    package(&folder, &files, &installation)?;
-    Ok(serde_json::json!({
-        "plugin": id,
-        "version": manifest.plugin.version,
-        "folder": folder,
-        "new_author": pin.is_none(),
-    }))
+    Ok(())
 }
 
-/// The installation's key, created with its public half when missing.
-fn installation_key(keys: &Path) -> Result<SigningKey, String> {
-    let path = keys.join("installation.key");
-    if path.exists() {
-        return read_key(&path);
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_github_link_stays_the_same_across_versions() {
+        assert_eq!(
+            super::github_link("example/timers", "timers"),
+            "https://github.com/example/timers/releases/download/timers/timers.angelica"
+        );
     }
-    let key = new_key(&path)?;
-    write(
-        &keys.join("installation.pub"),
-        hex(key.verifying_key().as_bytes()).as_bytes(),
-    )?;
-    Ok(key)
 }

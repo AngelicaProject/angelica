@@ -20,6 +20,7 @@ pub mod game_data;
 pub mod host;
 pub mod http;
 pub mod icons;
+pub mod installer;
 pub mod jobs;
 pub mod manifest;
 #[cfg(test)]

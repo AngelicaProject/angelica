@@ -8,7 +8,7 @@
 use crate::Output;
 use clap::{Args, Subcommand};
 use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
+use runtime::installer::{read_key, write, write_package as package};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -98,59 +98,6 @@ fn key(args: &KeyArgs) -> Result<serde_json::Value, String> {
     Ok(
         serde_json::json!({"key": args.output, "public_key": runtime::package::hex(public.as_bytes())}),
     )
-}
-
-pub(crate) fn read_key(path: &Path) -> Result<SigningKey, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let text = text.trim();
-    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!(
-            "{}: a key is 64 hexadecimal digits",
-            path.display()
-        ));
-    }
-    let mut secret = [0u8; 32];
-    for (index, byte) in secret.iter_mut().enumerate() {
-        *byte =
-            u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|e| e.to_string())?;
-    }
-    Ok(SigningKey::from_bytes(&secret))
-}
-
-pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let temporary = path.with_extension("tmp-angelica");
-    std::fs::write(&temporary, bytes)
-        .and_then(|()| std::fs::rename(&temporary, path))
-        .map_err(|e| format!("{}: {e}", path.display()))
-}
-
-/// Writes `files` and a signed `files.json` into `folder`, replacing it.
-pub(crate) fn package(
-    folder: &Path,
-    files: &BTreeMap<String, Vec<u8>>,
-    key: &SigningKey,
-) -> Result<(), String> {
-    if folder.exists() {
-        std::fs::remove_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    }
-    let mut hashes = serde_json::Map::new();
-    for (name, bytes) in files {
-        if !runtime::package::valid_relative_path(name) {
-            return Err(format!("{name} is not a valid package path"));
-        }
-        hashes.insert(
-            name.clone(),
-            runtime::package::hex(&Sha256::digest(bytes)).into(),
-        );
-        write(&folder.join(name), bytes)?;
-    }
-    let list = serde_json::to_vec(&serde_json::json!({"format": 1, "files": hashes}))
-        .map_err(|e| e.to_string())?;
-    write(&folder.join("files.json.sig"), &key.sign(&list).to_bytes())?;
-    write(&folder.join("files.json"), &list)
 }
 
 fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {

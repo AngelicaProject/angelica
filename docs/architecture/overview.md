@@ -46,7 +46,7 @@ Each crate owns one boundary:
 - `angelica-text`: the game's encoded strings and the [text table](../formats/text-table-v1.md) format, shared by the host and plugins. No `unsafe`.
 - `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, and helpers.
 - `angelica-fake-game`: runs plugins in the real host against a scripted game.
-- `angelica-cli`: the `angelica` command: `map verify`, `excel` to explore the installed game's sheets, `exe` to disassemble the executable and propose signatures, `plugin new` to create a plugin project, `plugin compile`, `plugin key`, `plugin pack`, and `plugin install` for plugins from their authors, and `dev` for signed local installations. Every command can report in JSON.
+- `angelica-cli`: the `angelica` command: `map verify`, `excel` to explore the installed game's sheets, `exe` to disassemble the executable and propose signatures, `plugin new` to create a plugin project, `plugin compile`, `plugin key`, `plugin pack`, `plugin publish`, `plugin install`, and `plugin update` for plugins from their authors, and `dev` for signed local installations. Every command can report in JSON.
 - `angelica-installer`: places, repairs, and removes the proxy DLL in the game folder.
 
 ## Data flow at game start

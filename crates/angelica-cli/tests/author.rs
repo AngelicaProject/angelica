@@ -81,6 +81,16 @@ fn a_packed_plugin_installs_for_its_author_only() {
             .unwrap();
     assert_eq!(package.manifest.origin, runtime::manifest::Origin::Author);
 
+    // Installed from a file, it has no link to update from.
+    let (ok, report) = angelica(&[
+        "plugin".as_ref(),
+        "update".as_ref(),
+        "--installation".as_ref(),
+        installation.as_os_str(),
+    ]);
+    assert!(ok, "{report}");
+    assert_eq!(report, serde_json::json!({}));
+
     // A new version from the same author installs; another author's does not.
     let (ok, _) = pack(&source, &key, &file);
     assert!(ok);
@@ -109,6 +119,20 @@ fn a_packed_plugin_installs_for_its_author_only() {
             .as_str()
             .unwrap()
             .contains("catalog"),
+        "{report}"
+    );
+
+    // Links are https only.
+    let (ok, report) = install(
+        Path::new("http://example.org/timers.angelica"),
+        &installation,
+    );
+    assert!(!ok);
+    assert!(
+        report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("https"),
         "{report}"
     );
 

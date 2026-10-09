@@ -121,6 +121,9 @@ pub struct Pin {
     pub plugin_id: String,
     /// The author's public key, lowercase hex.
     pub author_key: String,
+    /// The link the plugin was last installed from, which updates use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 impl Pin {
@@ -130,6 +133,7 @@ impl Pin {
             format: 1,
             plugin_id: plugin_id.into(),
             author_key: crate::package::hex(author),
+            url: None,
         }
     }
 

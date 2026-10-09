@@ -48,8 +48,12 @@ enum PluginCommand {
     Key(author::KeyArgs),
     /// Sign a plugin into one file players install, outside the catalog.
     Pack(author::PackArgs),
-    /// Install a plugin file into an installation: check the author, compile.
+    /// Publish a plugin behind a link that stays the same (GitHub release).
+    Publish(author::PublishArgs),
+    /// Install a plugin file or link into an installation: check the author, compile.
     Install(author::InstallArgs),
+    /// Update the plugins installed from links to newer versions of the same author.
+    Update(author::UpdateArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -74,7 +78,9 @@ fn main() -> ExitCode {
         Command::Plugin(PluginCommand::New(args)) => new::run(&args),
         Command::Plugin(PluginCommand::Key(args)) => author::key(&args),
         Command::Plugin(PluginCommand::Pack(args)) => author::pack(&args),
+        Command::Plugin(PluginCommand::Publish(args)) => author::publish(&args),
         Command::Plugin(PluginCommand::Install(args)) => author::install(&args),
+        Command::Plugin(PluginCommand::Update(args)) => author::update(&args),
         Command::Dev(command) => dev::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),

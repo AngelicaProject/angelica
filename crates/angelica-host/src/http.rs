@@ -156,6 +156,8 @@ struct Refused(String);
 #[derive(Debug)]
 struct ListedResolver {
     hosts: Arc<Vec<String>>,
+    /// Every public host, for [`Client::for_plugin_files`].
+    any_host: bool,
     inner: DefaultResolver,
 }
 
@@ -174,7 +176,7 @@ impl Resolver for ListedResolver {
         if uri.port_u16().is_some_and(|port| port != 443) {
             return Err(refused(format!("{uri} is not on port 443")));
         }
-        if !listed(&self.hosts, host) {
+        if !self.any_host && !listed(&self.hosts, host) {
             return Err(refused(format!(
                 "{host} is not a host the plugin's manifest lists"
             )));
@@ -303,6 +305,7 @@ pub struct Head {
 pub struct Client {
     agent: ureq::Agent,
     hosts: Arc<Vec<String>>,
+    any_host: bool,
 }
 
 impl Client {
@@ -310,6 +313,29 @@ impl Client {
     /// patterns that [`check_host_pattern`] accepted.
     #[must_use]
     pub fn new(hosts: Vec<String>, id: &str, version: &str) -> Self {
+        Self::build(
+            hosts,
+            false,
+            format!(
+                "Angelica/{} (plugin {id}/{version})",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+    }
+
+    /// A client for the plugin files the installer downloads: every public
+    /// host, with the same rules otherwise. A file is trusted for its
+    /// author's signature, not for where it came from.
+    #[must_use]
+    pub fn for_plugin_files() -> Self {
+        Self::build(
+            Vec::new(),
+            true,
+            format!("Angelica/{} (installer)", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    fn build(hosts: Vec<String>, any_host: bool, user_agent: String) -> Self {
         let hosts = Arc::new(hosts);
         let config = Config::builder()
             .https_only(true)
@@ -317,10 +343,7 @@ impl Client {
             .proxy(None)
             .max_redirects(MAX_REDIRECTS)
             .max_redirects_will_error(true)
-            .user_agent(format!(
-                "Angelica/{} (plugin {id}/{version})",
-                env!("CARGO_PKG_VERSION")
-            ))
+            .user_agent(user_agent)
             .timeout_resolve(Some(CONNECT_TIME))
             .timeout_connect(Some(CONNECT_TIME))
             .timeout_recv_response(Some(RESPONSE_TIME))
@@ -332,10 +355,15 @@ impl Client {
                 .chain(SystemTls::default()),
             ListedResolver {
                 hosts: hosts.clone(),
+                any_host,
                 inner: DefaultResolver::default(),
             },
         );
-        Self { agent, hosts }
+        Self {
+            agent,
+            hosts,
+            any_host,
+        }
     }
 
     /// Checks a request before anything is sent.
@@ -368,7 +396,7 @@ impl Client {
                 request.url
             )));
         }
-        if !listed(&self.hosts, authority.host()) {
+        if !self.any_host && !listed(&self.hosts, authority.host()) {
             return Err(Error::new(
                 Kind::PermissionDenied,
                 format!(
@@ -698,6 +726,7 @@ mod tests {
     fn redirects_and_resolution_follow_the_same_rules() {
         let resolver = ListedResolver {
             hosts: Arc::new(vec!["example.com".into()]),
+            any_host: false,
             inner: DefaultResolver::default(),
         };
         let config = Config::default();
@@ -723,6 +752,27 @@ mod tests {
             assert_eq!(error.kind, Kind::PermissionDenied);
             assert!(error.message.contains(problem), "{}", error.message);
         }
+    }
+
+    #[test]
+    fn plugin_files_come_from_any_public_host_only() {
+        let client = Client::for_plugin_files();
+        for (url, kind) in [
+            ("https://127.0.0.1/timers.angelica", Kind::PermissionDenied),
+            ("https://localhost/timers.angelica", Kind::PermissionDenied),
+            ("http://example.org/timers.angelica", Kind::InvalidArgument),
+            (
+                "https://example.org:8443/timers.angelica",
+                Kind::InvalidArgument,
+            ),
+        ] {
+            let error = client
+                .send(&request(url), GET_TIME, MAX_BODY, || false)
+                .err()
+                .unwrap();
+            assert_eq!(error.kind, kind, "{url}: {}", error.message);
+        }
+        assert!(client.check(&request("https://any.example.org/")).is_ok());
     }
 
     #[test]
