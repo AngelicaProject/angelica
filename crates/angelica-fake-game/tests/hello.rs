@@ -690,3 +690,57 @@ fn chat_messages_arrive_in_the_next_frame_under_their_permission() {
     click(&test, "heard");
     assert_eq!(message(&test), "nothing heard yet");
 }
+
+#[test]
+fn a_new_package_replaces_the_running_plugin_without_a_restart() {
+    let test = approved(MANIFEST);
+    click(&test, "click");
+    let old = test.host.plugin("hello").unwrap();
+
+    test.reload(
+        &MANIFEST.replace("version = \"0.1.0\"", "version = \"0.1.1\""),
+        component(),
+    )
+    .unwrap();
+    let new = test.host.plugin("hello").unwrap();
+    assert_eq!(old.status(), Status::Disabled, "the old version stopped");
+    assert_eq!(new.status(), Status::Running);
+    assert_eq!(new.manifest.plugin.version, "0.1.1");
+    assert!(
+        test.host
+            .diagnostics()
+            .iter()
+            .any(|line| line == "hello: loaded version 0.1.1")
+    );
+    test.event("hello", Event::OpenRequested);
+    assert!(
+        matches!(&new.windows()[0].widgets[6], Widget::Text(clicks) if clicks.text == "1 clicks"),
+        "storage is kept"
+    );
+}
+
+#[test]
+fn a_package_that_declares_more_waits_for_approval() {
+    let test = approved(&without_permissions(&["state.self"]));
+    test.reload(MANIFEST, component()).unwrap();
+    assert_eq!(
+        test.host.plugin("hello").unwrap().status(),
+        Status::AwaitingApproval
+    );
+}
+
+#[test]
+fn a_package_the_host_refuses_leaves_the_old_one_running() {
+    let test = approved(MANIFEST);
+    std::fs::write(test.folder.path().join("grants/hello.json"), b"{").unwrap();
+    test.reload(MANIFEST, component()).unwrap();
+    assert_eq!(test.host.plugin("hello").unwrap().status(), Status::Running);
+    assert!(
+        test.host
+            .diagnostics()
+            .iter()
+            .any(|line| line.starts_with("reload: hello: grants:")),
+        "{:?}",
+        test.host.diagnostics()
+    );
+}

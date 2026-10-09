@@ -280,6 +280,30 @@ impl TestHost {
         self.host.install(manifest, &component)
     }
 
+    /// A new package of a plugin appears while the game runs: the host
+    /// loads it in the next frame, which this runs, as it does with a
+    /// package written to the plugin directory.
+    ///
+    /// # Errors
+    /// An invalid manifest or component; the host's own refusals are
+    /// diagnostics, as in the game.
+    pub fn reload(&self, manifest: &str, component: &[u8]) -> Result<(), String> {
+        struct Once(Option<(Manifest, wasmtime::component::Component)>);
+        impl runtime::host::Updates for Once {
+            fn packages(
+                &mut self,
+            ) -> Vec<Result<(Manifest, wasmtime::component::Component), String>> {
+                self.0.take().into_iter().map(Ok).collect()
+            }
+        }
+        let manifest = Manifest::parse(manifest).map_err(|e| e.to_string())?;
+        let component = wasmtime::component::Component::new(&self.host_engine(), component)
+            .map_err(|e| e.to_string())?;
+        self.host.watch(Box::new(Once(Some((manifest, component)))));
+        self.host.frame(1.0 / 60.0);
+        Ok(())
+    }
+
     fn host_engine(&self) -> wasmtime::Engine {
         self.host.engine().clone()
     }

@@ -234,6 +234,15 @@ impl StateTables {
         tables
     }
 
+    /// Takes the tables of `other` in place of these.
+    pub fn replace_with(&self, other: Self) {
+        let tables = other
+            .tables
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        *self.tables.write().unwrap_or_else(PoisonError::into_inner) = tables;
+    }
+
     /// Adds or replaces a table.
     pub fn insert(&self, plan: TablePlan) {
         self.tables

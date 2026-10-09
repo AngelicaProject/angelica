@@ -36,7 +36,7 @@ impl Panel {
                     ui.label(egui::RichText::new(line).weak());
                 }
                 ui.separator();
-                for plugin in host.plugins() {
+                for plugin in &host.plugins() {
                     draw_plugin(host, plugin, ui);
                 }
                 let diagnostics = host.diagnostics();
@@ -48,7 +48,7 @@ impl Panel {
                     });
                 }
             });
-        for plugin in host.plugins() {
+        for plugin in &host.plugins() {
             if plugin.status() != Status::Running {
                 continue;
             }

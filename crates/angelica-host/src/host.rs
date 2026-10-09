@@ -93,6 +93,21 @@ impl Plugin {
     }
 }
 
+/// What changes on disk while the game runs: plugin packages and the game
+/// map. Called every frame on the main thread; an implementation looks at
+/// the disk as often as it sees fit.
+pub trait Updates: Send {
+    /// The packages that changed since the last call: each authenticated
+    /// and loaded, or the reason it could not be.
+    fn packages(&mut self) -> Vec<Result<(Manifest, wasmtime::component::Component), String>>;
+
+    /// When the game map changed since the last call, what reloading it
+    /// did, or why it could not be reloaded.
+    fn map(&mut self) -> Option<Result<String, String>> {
+        None
+    }
+}
+
 /// A player action from the menu, applied on the main thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -107,7 +122,9 @@ pub struct Host {
     limits: Limits,
     services: Arc<Services>,
     directories: Directories,
-    plugins: BTreeMap<String, Arc<Plugin>>,
+    plugins: std::sync::RwLock<BTreeMap<String, Arc<Plugin>>>,
+    /// What changes on disk while the game runs.
+    updates: Mutex<Option<Box<dyn Updates>>>,
     main_thread: ThreadId,
     actions: Mutex<VecDeque<Action>>,
     events: Mutex<VecDeque<(String, Event)>>,
@@ -132,7 +149,8 @@ impl Host {
             limits,
             services,
             directories,
-            plugins: BTreeMap::new(),
+            plugins: std::sync::RwLock::new(BTreeMap::new()),
+            updates: Mutex::new(None),
             main_thread: std::thread::current().id(),
             actions: Mutex::new(VecDeque::new()),
             events: Mutex::new(VecDeque::new()),
@@ -181,13 +199,29 @@ impl Host {
         std::thread::current().id() == self.main_thread
     }
 
-    pub fn plugins(&self) -> impl Iterator<Item = &Arc<Plugin>> {
-        self.plugins.values()
+    /// Every plugin, sorted by id.
+    #[must_use]
+    pub fn plugins(&self) -> Vec<Arc<Plugin>> {
+        self.plugins
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
     }
 
     #[must_use]
-    pub fn plugin(&self, id: &str) -> Option<&Arc<Plugin>> {
-        self.plugins.get(id)
+    pub fn plugin(&self, id: &str) -> Option<Arc<Plugin>> {
+        self.plugins
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
+    /// Reloads what `updates` reports as changed, in later frames.
+    pub fn watch(&self, updates: Box<dyn Updates>) {
+        *self.updates.lock().unwrap_or_else(PoisonError::into_inner) = Some(updates);
     }
 
     /// Registers an authenticated package. It starts with [`Host::start_all`]
@@ -198,9 +232,48 @@ impl Host {
     /// unreadable grant or settings file.
     pub fn install(&mut self, manifest: Manifest, component: &Component) -> Result<(), String> {
         let id = manifest.id().to_owned();
-        if self.plugins.contains_key(&id) {
+        if self.plugin(&id).is_some() {
             return Err(format!("{id}: installed twice"));
         }
+        let plugin = self.create(manifest, component)?;
+        self.plugins
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, plugin);
+        Ok(())
+    }
+
+    /// Replaces a plugin's package with a new one, or adds a new plugin,
+    /// while the game runs. The new package is prepared first; when that
+    /// fails, the old one keeps running. The old one is stopped as when the
+    /// player disables it, and the new one starts when the player approved
+    /// what it declares and left the plugin enabled; one that declares more
+    /// waits for approval. Called on the main thread.
+    ///
+    /// # Errors
+    /// As [`Host::install`] for the new package.
+    pub fn replace(&self, manifest: Manifest, component: &Component) -> Result<(), String> {
+        let id = manifest.id().to_owned();
+        let version = manifest.plugin.version.clone();
+        let fresh = self.create(manifest, component)?;
+        if let Some(old) = self.plugin(&id)
+            && old.status() == Status::Running
+        {
+            self.stop(&old, Status::Disabled);
+        }
+        self.plugins
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.clone(), fresh.clone());
+        if fresh.status() == Status::Disabled && fresh.enabled.load(Ordering::Acquire) {
+            self.start(&fresh);
+        }
+        self.diagnostic(format!("{id}: loaded version {version}"));
+        Ok(())
+    }
+
+    fn create(&self, manifest: Manifest, component: &Component) -> Result<Arc<Plugin>, String> {
+        let id = manifest.id().to_owned();
         let pre = self
             .sandbox
             .prepare(component)
@@ -255,17 +328,16 @@ impl Host {
             jobs: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
         });
-        self.plugins.insert(id, plugin);
-        Ok(())
+        Ok(plugin)
     }
 
     /// Starts every approved and enabled plugin, before the game's code
     /// runs: `runtime.started-with-game` is true during these starts.
     pub fn start_all(&self) {
         self.services.starting.store(true, Ordering::Release);
-        for plugin in self.plugins.values() {
+        for plugin in self.plugins() {
             if plugin.status() == Status::Disabled && plugin.enabled.load(Ordering::Acquire) {
-                self.start(plugin);
+                self.start(&plugin);
             }
         }
         self.services.starting.store(false, Ordering::Release);
@@ -409,9 +481,9 @@ impl Host {
 
     /// Stops every plugin, at game exit.
     pub fn stop_all(&self) {
-        for plugin in self.plugins.values() {
+        for plugin in self.plugins() {
             if plugin.status() == Status::Running {
-                self.stop(plugin, Status::Disabled);
+                self.stop(&plugin, Status::Disabled);
             }
         }
     }
@@ -420,7 +492,10 @@ impl Host {
     /// lock another thread may hold; for crash reports.
     #[must_use]
     pub fn crash_snapshot(&self) -> Vec<(String, String, String)> {
-        self.plugins
+        let Ok(plugins) = self.plugins.try_read() else {
+            return Vec::new();
+        };
+        plugins
             .values()
             .map(|plugin| {
                 let status = plugin
@@ -460,6 +535,25 @@ impl Host {
             self.diagnostic("a frame was requested outside the game's main thread");
             return;
         }
+        let (map, changed) = self
+            .updates
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .map(|updates| (updates.map(), updates.packages()))
+            .unwrap_or_default();
+        match map {
+            Some(Ok(note)) => self.diagnostic(note),
+            Some(Err(reason)) => self.diagnostic(format!("game map not reloaded: {reason}")),
+            None => {}
+        }
+        for package in changed {
+            if let Err(reason) =
+                package.and_then(|(manifest, component)| self.replace(manifest, &component))
+            {
+                self.diagnostic(format!("reload: {reason}"));
+            }
+        }
         let actions: Vec<_> = self
             .actions
             .lock()
@@ -485,8 +579,8 @@ impl Host {
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
         let game_events = self.services.events.take();
-        for plugin in self.plugins.values() {
-            self.frame_plugin(plugin, elapsed, &commands, &game_events, &events);
+        for plugin in self.plugins() {
+            self.frame_plugin(&plugin, elapsed, &commands, &game_events, &events);
         }
     }
 
@@ -635,9 +729,9 @@ impl Host {
             | Action::OpenFolder(id) => id,
         };
         let plugin = self
-            .plugins
-            .get(id)
+            .plugin(id)
             .ok_or_else(|| format!("{id}: not installed"))?;
+        let plugin = &plugin;
         match action {
             Action::Approve(_) => {
                 let grants = Grants::for_manifest(&plugin.manifest);

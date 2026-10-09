@@ -51,6 +51,8 @@ The HTTP service is checked against real servers with ignored tests that need th
 
 ## In-game checks
 
+A plugin or the game map is changed without restarting the game: `angelica dev install` with `--plugin` and `--map`, but without `--runtime`, writes the signed packages while the game runs, and the host loads them within a second ([reload](../architecture/plugins.md#lifecycle)). Changes to the host itself need a game restart.
+
 A change to code that runs in the game process is checked in the running game before review. The pull request names what was checked: the game build, the plugins loaded, and the behavior observed.
 
 A new invariant check is confirmed to fail against a deliberately broken implementation before it is relied on.

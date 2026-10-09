@@ -43,6 +43,10 @@ Reading is confined:
 
 A field is visible to plugins because a table names it. A table's fields are a contract: they keep their names and meaning across builds, and a field that would expose data that could compromise the account is never added.
 
+## Reloading the map
+
+While the game runs, the host looks at the signed map every second. When its file list changes, the host authenticates it, resolves it against the running executable again, and replaces the sheet schemas and state tables plugins read. Entries that installed hooks use keep their addresses until the next game start.
+
 ## Build records
 
 A build record maps the hash of one executable to the resolved address of every entry and the result of every check. It is produced offline by `angelica map verify` and published with the map. With a record for the running executable, the host does not scan: it checks the hash and uses the recorded addresses.

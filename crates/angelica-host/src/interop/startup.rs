@@ -114,6 +114,17 @@ fn initialize() -> Result<(), String> {
         Box::new(|folder: &Path| super::open_folder(folder)),
     );
     discover_plugins(&config, &sandbox, &mut host);
+    let map_data = MapData {
+        directory: config.map_directory.clone(),
+        seen: None,
+        sheets: host.services().sheets.clone(),
+        state: host.services().state.clone(),
+    };
+    host.watch(Box::new(FolderPackages::new(
+        config.plugin_directory.clone(),
+        sandbox.clone(),
+        map_data,
+    )));
 
     // Keep code and callbacks mapped even if a later tool retains one of our hooks.
     let mut pinned = std::ptr::null_mut();
@@ -260,49 +271,172 @@ fn load_map(
     (catalog, loaded, map_status)
 }
 
-fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {
-    let listing = match std::fs::read_dir(&config.plugin_directory) {
+/// An authenticated package from its folder in the plugin directory.
+fn load_package(
+    folder: &Path,
+    sandbox: &Sandbox,
+) -> Result<(Manifest, wasmtime::component::Component), String> {
+    let files = FileSet::load(folder, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
+    let manifest = std::str::from_utf8(
+        files
+            .get("angelica.toml")
+            .ok_or("the package has no angelica.toml")?,
+    )
+    .map_err(|e| e.to_string())?;
+    let manifest = Manifest::parse(manifest).map_err(|e| e.to_string())?;
+    if folder.file_name() != Some(std::ffi::OsStr::new(manifest.id())) {
+        return Err(format!(
+            "the folder name differs from the plugin id {}",
+            manifest.id()
+        ));
+    }
+    let artifact = files
+        .get("plugin.cwasm")
+        .ok_or("the package has no compiled component; compile it outside the game first")?;
+    // SAFETY: FileSet authenticated every byte with the release signing key.
+    // Release packages accept compiler artifacts only from the trusted build
+    // pipeline, never native code supplied by a plugin author.
+    let component = unsafe { super::component::load_authenticated(&sandbox.engine, artifact) }?;
+    Ok((manifest, component))
+}
+
+/// The folders of the plugin directory.
+fn package_folders(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let listing = match std::fs::read_dir(directory) {
         Ok(listing) => listing,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => {
-            host.diagnostic(format!("plugin directory: {e}"));
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("plugin directory: {e}")),
+    };
+    let mut folders = Vec::new();
+    for item in listing {
+        let item = item.map_err(|e| e.to_string())?;
+        if item.file_type().map_err(|e| e.to_string())?.is_dir() {
+            folders.push(item.path());
+        }
+    }
+    folders.sort();
+    Ok(folders)
+}
+
+fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {
+    let folders = match package_folders(&config.plugin_directory) {
+        Ok(folders) => folders,
+        Err(error) => {
+            host.diagnostic(error);
             return;
         }
     };
-    for item in listing {
-        let result = (|| {
-            let item = item.map_err(|e| e.to_string())?;
-            if !item.file_type().map_err(|e| e.to_string())?.is_dir() {
-                return Ok(());
-            }
-            let files =
-                FileSet::load(&item.path(), RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
-            let manifest = std::str::from_utf8(
-                files
-                    .get("angelica.toml")
-                    .ok_or("the package has no angelica.toml")?,
-            )
-            .map_err(|e| e.to_string())?;
-            let manifest = Manifest::parse(manifest).map_err(|e| e.to_string())?;
-            if item.file_name() != manifest.id() {
-                return Err(format!(
-                    "the folder name differs from the plugin id {}",
-                    manifest.id()
-                ));
-            }
-            let artifact = files.get("plugin.cwasm").ok_or(
-                "the package has no compiled component; compile it outside the game first",
-            )?;
-            // SAFETY: FileSet authenticated every byte with the release signing key.
-            // Release packages accept compiler artifacts only from the trusted build
-            // pipeline, never native code supplied by a plugin author.
-            let component =
-                unsafe { super::component::load_authenticated(&sandbox.engine, artifact) }?;
-            host.install(manifest, &component)
-        })();
+    for folder in folders {
+        let result = load_package(&folder, sandbox)
+            .and_then(|(manifest, component)| host.install(manifest, &component));
         if let Err(error) = result {
-            host.diagnostic(format!("plugin refused: {error}"));
+            host.diagnostic(format!("{}: {error}", folder.display()));
         }
+    }
+}
+
+/// The plugin directory's packages and the game map, reloaded when their
+/// signed file list changes.
+struct FolderPackages {
+    directory: std::path::PathBuf,
+    sandbox: Arc<Sandbox>,
+    /// The signed file list of every package folder, as last seen.
+    seen: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+    checked: std::time::Instant,
+    map: MapData,
+}
+
+/// The game map's data the host uses without hooks: sheet schemas and
+/// state tables, which a reloaded map replaces.
+struct MapData {
+    directory: std::path::PathBuf,
+    seen: Option<Vec<u8>>,
+    sheets: Arc<crate::sheets::Sheets>,
+    state: Arc<crate::state::StateTables>,
+}
+
+impl MapData {
+    fn changed(&mut self) -> bool {
+        let list = std::fs::read(self.directory.join("files.json")).ok();
+        if list.is_none() || list == self.seen {
+            return false;
+        }
+        self.seen = list;
+        true
+    }
+
+    fn reload(&self) -> Result<String, String> {
+        let (base, snapshot, hash) = executable_snapshot()?;
+        let files =
+            FileSet::load(&self.directory, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
+        let (map, catalog) = Catalog::from_signed_files(&files, &snapshot, base as u64, hash)?;
+        self.sheets.set(map.sheets().cloned());
+        self.state.replace_with(crate::state::StateTables::from_map(
+            &map,
+            &catalog,
+            base as u64,
+        ));
+        Ok(format!(
+            "game map reloaded: {} sheet schemas and {} state tables; entries that hooks use change at the next game start",
+            map.sheets().count(),
+            map.state_tables().count()
+        ))
+    }
+}
+
+impl FolderPackages {
+    fn new(directory: std::path::PathBuf, sandbox: Arc<Sandbox>, mut map: MapData) -> Self {
+        // The map and the packages present now were loaded at start.
+        map.changed();
+        let mut packages = Self {
+            directory,
+            sandbox,
+            seen: std::collections::BTreeMap::new(),
+            checked: std::time::Instant::now(),
+            map,
+        };
+        let _ = packages.look();
+        packages
+    }
+
+    /// The folders whose signed file list changed since the last look.
+    fn look(&mut self) -> Vec<std::path::PathBuf> {
+        let mut changed = Vec::new();
+        for folder in package_folders(&self.directory).unwrap_or_default() {
+            // The installer writes the file list last; a package without one
+            // is still being written.
+            let Ok(list) = std::fs::read(folder.join("files.json")) else {
+                continue;
+            };
+            if self.seen.get(&folder) != Some(&list) {
+                self.seen.insert(folder.clone(), list);
+                changed.push(folder);
+            }
+        }
+        changed
+    }
+}
+
+impl crate::host::Updates for FolderPackages {
+    fn map(&mut self) -> Option<Result<String, String>> {
+        if self.checked.elapsed() < std::time::Duration::from_secs(1) {
+            return None;
+        }
+        self.map.changed().then(|| self.map.reload())
+    }
+
+    fn packages(&mut self) -> Vec<Result<(Manifest, wasmtime::component::Component), String>> {
+        if self.checked.elapsed() < std::time::Duration::from_secs(1) {
+            return Vec::new();
+        }
+        self.checked = std::time::Instant::now();
+        self.look()
+            .into_iter()
+            .map(|folder| {
+                load_package(&folder, &self.sandbox)
+                    .map_err(|error| format!("{}: {error}", folder.display()))
+            })
+            .collect()
     }
 }
 
