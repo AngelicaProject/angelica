@@ -61,4 +61,4 @@ Other tools in the process may hook the same function. A detour installed over a
 
 ## Hooks and plugins
 
-No hook calls plugin code. Functions the game calls often — building rows, converting text — are handled natively by adapters from rules plugins activated; see [`services.md`](./services.md). An adapter's detour catches panics and passes the call on unchanged when it fails.
+No hook calls plugin code. Functions the game calls often — building rows, converting text — are handled natively by adapters from rules plugins activated; see [`services.md`](./services.md). An adapter that reports what the game did — a line the player sent, a message, a window that opened — records it in a bounded queue, and the host delivers it to plugins in the next frame. A plugin changes what the game does only through rules or host operations, never from inside a hook. An adapter's detour catches panics and passes the call on unchanged when it fails.

@@ -15,12 +15,23 @@ An operation is as narrow as its verified contract. A game structure the map doe
 | Kind | Example | Rule |
 | --- | --- | --- |
 | Declarative game rules | text tables, letter case, replacement files | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
+| Game state | the player, the party, the inventory | the plugin reads fields the game map makes visible to plugins, by entry name, under a read permission for their domain; reads happen on the main thread between frames and never write |
+| Game events | a chat message arrived, a window opened, the zone changed | an adapter's hook records the event; the plugin receives it in the next frame and cannot change what the game did |
+| Operations on the game | using an action, moving an item | one host operation per kind of action, with its own permission, validated arguments, and a rate the host enforces; automation is built from these operations |
 | Player interaction | chat commands, chat messages | the plugin declares its commands and supplies its messages; the host parses, answers help and mistakes, and presents everything under the plugin's name in the game's own look |
-| Game data | game files, Excel sheets | read-only originals from the installed archives, never another plugin's changes; bounded and cached by the host |
+| Game data | game files, Excel sheets | read-only originals from the installed archives, never another plugin's changes; bounded and cached by the host; sheet columns are addressed by the names the game map's sheet schemas give them |
 | Host resources | storage, jobs, windows | bounded per plugin, confined to the plugin |
 | The internet | HTTPS requests | only to the public hosts the manifest names and the player approved, from jobs, with the host's TLS and limits |
 
 Each service that changes the game uses an adapter over verified map entries with a written contract ([game structures](../formats/game-structures.md)). An adapter installs its hooks the first time a plugin needs it and keeps them until the process exits; without active rules they only pass calls on.
+
+## Growing the API
+
+The API grows by game domain (the inventory, the party, the chat, the game's own windows), not by plugin. A domain's interface is designed once for every plugin that needs the domain, so a patch that changes the domain is absorbed in one adapter and one set of map entries.
+
+A plugin author whose plugin needs a capability the API lacks does not work around it: there is no raw memory access, no game function call, and no hook to fall back on. The author files an API request that names the game resource, the operation, and the plugins that need it. A platform maintainer adds the capability to its domain as described below. Requests that share a domain are designed together.
+
+Published research on the game's structures may serve as a starting point for map entries, under the game map repository's import rules. Angelica never depends on it: nothing is fetched from it at build or run time, and every entry is verified against the game's executable before it is used.
 
 ## Adding a service
 

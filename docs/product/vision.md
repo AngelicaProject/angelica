@@ -5,7 +5,8 @@ Angelica lets players extend FINAL FANTASY XIV with plugins without trusting eac
 ## Users
 
 - **Players** install Angelica once, browse and install plugins from an in-game catalog, see what each plugin is allowed to do, and keep playing after a patch.
-- **Plugin authors** write a plugin against a typed API, test it without the game, reload it in the running game while developing, and publish it from source.
+- **Plugin authors**, most of them coding agents, write a plugin against a typed API, explore the game's data from the command line, test the plugin without the game, reload it in the running game while developing, and publish it from source. When the API lacks a capability, they request it instead of working around it.
+- **Platform maintainers** add capabilities to the API one game domain at a time, as host services over verified map entries.
 - **Map maintainers** keep the game map current: after a patch they verify and recover entries against the new executable and publish the result.
 
 Every workflow is designed to be carried out by a coding agent as well as by a person: contracts are machine-readable, tools report in JSON, and every failure names the entry, permission, or file involved.
@@ -18,7 +19,7 @@ Examples of applications include:
 
 - **Translation** of the game's text and fonts.
 - **Mod management**: replacing game files per character, with collections of mods and per-character metadata changes.
-- **Automation of game activities** such as crafting, behind an explicit permission.
+- **Automation of game activities**, from crafting to combat, behind explicit permissions for each kind of action.
 - **Appearance sync** between players through a plugin's own server, applying downloaded files safely.
 
 These examples illustrate product scope, not plugin categories or a claim that every required API is already implemented. The same capabilities can support applications outside this list. When a concrete use case requires a missing capability, the API gains a reusable operation on game or host resources; application policy remains in the plugin. API design requirements belong in [host services](../architecture/services.md).

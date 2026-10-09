@@ -13,6 +13,8 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | Prints its messages in your chat log |
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the public hosts the manifest lists in `http.hosts` | Downloads from these internet hosts, followed by the list |
 
+Permissions follow game domains and are as narrow as the domain allows: reading a domain's state, receiving its events, and each kind of operation on it are separate permissions. Automation is the use of operations, so each kind of action a plugin may take for the player is its own permission, shown to the player in plain words.
+
 A permission exists only together with the API operation it guards. A capability the API does not offer has no permission; it is added with the operation that needs it, as a narrow permission describing that operation.
 
 ## Grants

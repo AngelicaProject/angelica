@@ -2,13 +2,14 @@
 
 1. **The player's system is never exposed.** Plugin code runs only in the sandbox. Anything outside the game (files, network, audio, clipboard) reaches a plugin only as a host service behind a permission the player granted. There is no native plugin code and no plugin-supplied process.
 2. **A plugin cannot take the game down.** A trap, a panic, a timeout, or a limit hit by a plugin disables that plugin and lets the original game code run. Angelica's own failures disable Angelica, not the game.
-3. **Plugins name, the map locates.** A plugin refers to game functions, fields, and patches by game map entry names. Addresses and offsets exist only in the game map.
+3. **Plugins name, the map locates.** A plugin reads game state by the names of game map entries the map makes visible to plugins, and changes the game only through host operations. Addresses and offsets exist only in the game map. A plugin never calls game functions or installs hooks.
 4. **A patch breaks only what changed.** An entry that is not verified for the running build is absent; only plugins and features that need it stop. Everything else keeps working.
-5. **Unknown means off.** An unknown build, an ambiguous signature, or a failed consistency check makes an entry absent. Angelica never runs on a guess.
-6. **Permissions are visible, narrow, and explicit.** A plugin gets exactly the permissions its manifest declares and the player granted. A new version that declares more asks again. Data that could compromise the account is never exposed through any permission.
-7. **Hot paths are declarative.** Work the game does thousands of times per frame (resolving file paths, reading metadata) is executed by the host from rules a plugin configures, not by calling into plugin code each time.
-8. **Contracts are versioned.** The plugin API, the plugin manifest, and the game map format are versioned. A newer host keeps running plugins built for an older API version of the same major version.
-9. **Angelica coexists.** Angelica works alongside graphics injectors and other in-process tools, chains hooks with them, and never requires their absence.
-10. **Agents are first-class users.** Every contract is machine-readable, every tool can report in JSON, and every failure names what failed.
-11. **Documentation stays current.** Architecture and development documentation evolve with the code.
-12. **Plugin purposes are open-ended.** The API exposes reusable game and host capabilities that authors compose into their own applications. A plugin's identity or category never determines its API; verified resource contracts and explicit permissions do.
+5. **Plugins outlive patches.** A game patch is absorbed by the game map and the host's adapters; no plugin is rebuilt for a game build. Nothing a plugin addresses depends on a build's layout: it uses map entry names, sheet columns by name, and host operations.
+6. **Unknown means off.** An unknown build, an ambiguous signature, or a failed consistency check makes an entry absent. Angelica never runs on a guess.
+7. **Permissions are visible, narrow, and explicit.** A plugin gets exactly the permissions its manifest declares and the player granted. A new version that declares more asks again. Data that could compromise the account is never exposed through any permission.
+8. **Hot paths are declarative.** Work the game does thousands of times per frame (resolving file paths, reading metadata) is executed by the host from rules a plugin configures, not by calling into plugin code each time.
+9. **Contracts are versioned.** The plugin API, the plugin manifest, and the game map format are versioned. A newer host keeps running plugins built for an older API version of the same major version.
+10. **Angelica coexists.** Angelica works alongside graphics injectors and other in-process tools, chains hooks with them, and never requires their absence.
+11. **Agents are first-class users.** Plugins are written first of all by coding agents. Every contract is machine-readable, every tool can report in JSON, every failure names what failed, and the documentation and tooling let an agent go from an idea to a tested plugin without reading the host's code.
+12. **Documentation stays current.** Architecture and development documentation evolve with the code.
+13. **Plugin purposes are open-ended.** The API exposes reusable game and host capabilities that authors compose into their own applications. A plugin's identity or category never determines its API; verified resource contracts and explicit permissions do.
