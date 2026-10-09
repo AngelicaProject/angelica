@@ -170,7 +170,7 @@ fn windows_events_and_storage() {
     let widgets = &plugin.windows()[0].widgets;
     assert!(matches!(&widgets[0], Widget::Heading(heading) if heading == "Hello, Alphinaud"));
     assert_eq!(
-        std::fs::read(test.folder.path().join("storage/hello/clicks.txt")).unwrap(),
+        std::fs::read(test.folder.path().join("storage/hello/clicks.json")).unwrap(),
         b"2"
     );
 

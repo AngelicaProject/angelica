@@ -159,6 +159,8 @@ name = "angelica-sdk"
 version = "0.1.0"
 dependencies = [
  "angelica-text",
+ "serde",
+ "serde_json",
  "wit-bindgen",
 ]
 

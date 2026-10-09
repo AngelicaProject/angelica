@@ -42,7 +42,10 @@ pub mod chat;
 pub mod commands;
 pub mod events;
 pub mod excel;
+pub mod http;
+pub mod jobs;
 pub mod state;
+pub mod storage;
 pub mod ui;
 
 /// The host's interfaces, as generated from `wit/`.
@@ -55,6 +58,14 @@ pub mod api {
 
 pub use angelica_text as text;
 pub use api::types::{Error, ErrorKind};
+
+/// Lets `?` turn a host error into the message that [`Plugin`]'s methods
+/// return.
+impl From<Error> for String {
+    fn from(error: Error) -> Self {
+        error.message
+    }
+}
 
 /// A plugin. The host creates it with [`Plugin::start`] when the plugin is
 /// enabled and drops it after [`Plugin::stop`].

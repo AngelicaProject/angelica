@@ -7,11 +7,13 @@
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case},
+    api::{excel_text, file_replacements, game_files, runtime, storage as files, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
     events::{self, EventKind, GameEvent},
-    excel, state,
+    excel, http,
+    jobs::{self, Job, Poll},
+    state, storage,
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -28,7 +30,8 @@ struct Hello {
     name: String,
     shout: bool,
     color: Option<u32>,
-    job: Option<u64>,
+    /// The running job, whose output is a line for the window.
+    job: Option<Job<String>>,
     progress: f32,
     message: String,
     /// The last message the chat log received, as `sender: text`.
@@ -45,12 +48,11 @@ impl Hello {
         match id {
             "click" => {
                 self.clicks += 1;
-                if let Err(error) = storage::write("clicks.txt", self.clicks.to_string().as_bytes())
-                {
+                if let Err(error) = storage::save("clicks.json", &self.clicks) {
                     self.say(format!("cannot save: {}", error.message));
                 }
             }
-            "count" | "fail" | "fetch" => match jobs::start(id, b"hello job") {
+            "count" | "fail" | "fetch" => match jobs::start(id, &"hello job") {
                 Ok(job) => self.job = Some(job),
                 Err(error) => self.say(format!("job refused: {}", error.message)),
             },
@@ -92,7 +94,7 @@ impl Hello {
                         if let Some(last) = texture.last_mut() {
                             *last ^= 0xFF;
                         }
-                        storage::write("font1.tex", &texture)
+                        files::write("font1.tex", &texture)
                     })
                     .and_then(|()| {
                         file_replacements::replace("common/font/font1.tex", "font1.tex")
@@ -190,8 +192,7 @@ fn who() -> Result<String, String> {
             "position_y",
             "position_z",
         ],
-    )
-    .map_err(|e| e.message)?
+    )?
     else {
         return Ok("no character yet".into());
     };
@@ -212,8 +213,7 @@ fn who() -> Result<String, String> {
             .and_then(state::Value::float)
             .unwrap_or(0.0)
     };
-    let zone = state::read_one("self.zone", &["territory_type"])
-        .map_err(|e| e.message)?
+    let zone = state::read_one("self.zone", &["territory_type"])?
         .and_then(|values| values[0].as_ref().and_then(state::Value::unsigned))
         .unwrap_or(0);
     Ok(format!(
@@ -232,8 +232,7 @@ fn who() -> Result<String, String> {
 
 /// The statuses on the player's character, with the seconds they last.
 fn statuses() -> Result<String, String> {
-    let rows =
-        state::read("self.statuses", &["status_id", "remaining_time"]).map_err(|e| e.message)?;
+    let rows = state::read("self.statuses", &["status_id", "remaining_time"])?;
     if rows.is_empty() {
         return Ok("no statuses".into());
     }
@@ -278,16 +277,12 @@ fn write_table() -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     let bytes = writer.finish().map_err(|e| e.to_string())?;
-    storage::write("example.table", &bytes).map_err(|e| e.message)
+    Ok(files::write("example.table", &bytes)?)
 }
 
 impl Plugin for Hello {
     fn start() -> Result<Self, String> {
-        let clicks = storage::read("clicks.txt")
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .and_then(|text| text.parse().ok())
-            .unwrap_or(0);
+        let clicks = storage::load("clicks.json")?.unwrap_or(0);
         angelica_sdk::info(&format!(
             "started for game {}, with the game: {}",
             runtime::game_version(),
@@ -314,20 +309,16 @@ impl Plugin for Hello {
     }
 
     fn tick(&mut self, _elapsed: f64) -> Result<(), String> {
-        if let Some(job) = self.job {
-            match jobs::poll(job).map_err(|e| e.message)? {
-                jobs::State::Running(progress) => self.progress = progress.fraction,
-                jobs::State::Finished(output) => {
+        if let Some(job) = &mut self.job {
+            match job.poll() {
+                Poll::Running => self.progress = job.progress().fraction,
+                Poll::Done(result) => {
                     self.job = None;
                     self.progress = 1.0;
-                    self.say(format!(
-                        "job finished: {}",
-                        String::from_utf8_lossy(&output)
-                    ));
-                }
-                jobs::State::Failed(reason) => {
-                    self.job = None;
-                    self.say(format!("job failed: {reason}"));
+                    match result {
+                        Ok(line) => self.say(format!("job finished: {line}")),
+                        Err(reason) => self.say(format!("job failed: {reason}")),
+                    }
                 }
             }
         }
@@ -451,42 +442,37 @@ impl Plugin for Hello {
 
     fn run_job(name: &str, input: Vec<u8>) -> Result<Vec<u8>, String> {
         match name {
-            "count" => {
+            "count" => jobs::run(&input, |text: String| {
                 // The standard library's hashing and clocks work in a plugin.
                 let started = std::time::Instant::now();
-                let distinct: std::collections::HashSet<u8> = input.iter().copied().collect();
+                let distinct: std::collections::HashSet<u8> = text.bytes().collect();
                 angelica_sdk::info(&format!(
                     "{} distinct bytes in {:?}",
                     distinct.len(),
                     started.elapsed()
                 ));
                 for step in 0..=10u8 {
-                    jobs::report(f32::from(step) / 10.0, "counting").map_err(|e| e.message)?;
+                    jobs::report(f32::from(step) / 10.0, "counting")?;
                 }
-                storage::append("jobs.log", &input).map_err(|e| e.message)?;
-                Ok(format!("{} bytes", input.len()).into_bytes())
-            }
-            "fail" => Err("this job always fails".into()),
-            "fetch" => {
-                let request = http::Request {
-                    url: "https://example.com/".into(),
-                    headers: vec![http::Header {
-                        name: "accept".into(),
-                        value: "text/html".into(),
-                    }],
-                };
-                let page = http::get(&request).map_err(|e| e.message)?;
-                let (head, saved) =
-                    http::download(&request, "example.html").map_err(|e| e.message)?;
+                files::append("jobs.log", text.as_bytes())?;
+                Ok(format!("{} bytes", text.len()))
+            }),
+            "fail" => jobs::run(&input, |_: String| -> Result<String, String> {
+                Err("this job always fails".into())
+            }),
+            "fetch" => jobs::run(&input, |_: String| {
+                let request =
+                    http::Request::new("https://example.com/").header("accept", "text/html");
+                let page = request.get()?;
+                let (head, saved) = request.download("example.html")?;
                 Ok(format!(
                     "{} with {} bytes; saved {} bytes with {}",
                     page.head.status,
                     page.body.len(),
                     saved,
                     head.status
-                )
-                .into_bytes())
-            }
+                ))
+            }),
             _ => Err(format!("no job {name}")),
         }
     }

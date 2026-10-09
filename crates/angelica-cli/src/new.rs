@@ -88,8 +88,7 @@ impl Plugin for {type} {
             Message::new()
                 .text("Hello from ")
                 .accent("{name}")
-                .print()
-                .map_err(|e| e.message)?;
+                .print()?;
         }
         Ok(())
     }
@@ -196,7 +195,9 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 
 - Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin. When the API lacks a capability, do not work around it: write an API request naming the game resource, the operation, and why the plugin needs it.
 - Declare only the permissions the plugin uses; the player sees each one.
-- Long work (bulk sheet reads, HTTP) runs in a job (`Plugin::run_job`); frame callbacks have a few milliseconds.
+- Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds. Start it with `angelica_sdk::jobs::start`, poll the `Job` in `tick`, and do the work in `Plugin::run_job` with `jobs::run`; inputs and outputs are any serde types (add the `serde` crate with its `derive` feature for your own). Requests use `angelica_sdk::http::get`.
+- Settings and other saved values: `angelica_sdk::storage::load` and `save` (JSON in the plugin's folder).
+- `?` turns a host error into the `String` that the plugin's methods return.
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 ";
