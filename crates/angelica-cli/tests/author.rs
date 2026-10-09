@@ -136,6 +136,14 @@ fn a_packed_plugin_installs_for_its_author_only() {
         "{report}"
     );
 
+    // An installation named by a relative path.
+    let relative = tempfile::tempdir_in(".").unwrap();
+    let name = relative.path().file_name().unwrap().to_owned();
+    let (ok, _) = pack(&source, &key, &file);
+    assert!(ok);
+    let (ok, report) = install(&file, Path::new(&name));
+    assert!(ok, "{report}");
+
     // A damaged file is refused before anything is written.
     let mut damaged = std::fs::read(&file).unwrap();
     let last = damaged.len() - 1;

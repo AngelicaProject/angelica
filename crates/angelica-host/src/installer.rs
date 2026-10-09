@@ -30,6 +30,8 @@ impl Installation {
     /// # Errors
     /// An unreadable or invalid `host.json`.
     pub fn open(root: &Path) -> Result<Self, String> {
+        // The host's configuration takes absolute folders.
+        let root = &std::path::absolute(root).map_err(|e| format!("{}: {e}", root.display()))?;
         let config = crate::config::Config::load(root)?;
         Ok(Self {
             keys: config
