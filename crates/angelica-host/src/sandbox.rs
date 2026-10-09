@@ -2,6 +2,8 @@
 //! the time, fuel, and memory each call may use.
 #![forbid(unsafe_code)]
 use crate::{
+    chat::Chat,
+    commands::Commands,
     error::{Error, Kind},
     excel_text::ExcelText,
     jobs::{JobState, Jobs, Slot},
@@ -142,6 +144,8 @@ pub struct Services {
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub excel: Arc<ExcelText>,
     pub case: Arc<TextCase>,
+    pub commands: Arc<Commands>,
+    pub chat: Arc<Chat>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -203,6 +207,8 @@ impl Log {
 /// What every instance of one plugin shares.
 pub struct Context {
     pub id: String,
+    /// The plugin's name from its manifest.
+    pub name: String,
     /// Permissions the manifest declares and the player granted.
     pub permissions: BTreeSet<Permission>,
     pub memory_bytes: u64,
@@ -287,6 +293,11 @@ pub fn budget(store: &mut Store<State>, time: Duration, fuel: u64) {
 }
 
 impl State {
+    #[must_use]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
     /// Runs a host operation without charging its time to the guest.
     fn host<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
         let started = Instant::now();
@@ -683,6 +694,130 @@ impl api::text_case::Host for State {
         })
         .map_err(Into::into)
     }
+}
+
+impl api::commands::Host for State {
+    fn define(&mut self, commands: Vec<api::commands::Command>) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::ChatCommands))?;
+        let commands = commands.into_iter().map(command_from_api).collect();
+        self.host(|state| {
+            let services = &state.context.services;
+            services
+                .game
+                .enable_commands()
+                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            services
+                .commands
+                .define(&state.context.id, commands, &services.data)
+        })
+        .map_err(Into::into)
+    }
+}
+
+fn command_from_api(command: api::commands::Command) -> crate::commands::Command {
+    use crate::commands::{Parameter, ValueKind};
+    use api::commands::ValueKind as Kind;
+    crate::commands::Command {
+        path: command.path,
+        aliases: command.aliases,
+        description: command.description,
+        parameters: command
+            .parameters
+            .into_iter()
+            .map(|parameter| Parameter {
+                name: parameter.name,
+                description: parameter.description,
+                kind: match parameter.kind {
+                    Kind::Word => ValueKind::Word,
+                    Kind::Text => ValueKind::Text,
+                    Kind::Integer(bounds) => ValueKind::Integer {
+                        min: bounds.min,
+                        max: bounds.max,
+                    },
+                    Kind::Number => ValueKind::Number,
+                    Kind::Choice(words) => ValueKind::Choice(words),
+                    Kind::Switch => ValueKind::Switch,
+                },
+                optional: parameter.optional,
+            })
+            .collect(),
+    }
+}
+
+/// An invocation as the guest's `command` export takes it.
+#[must_use]
+pub fn invocation_to_api(invocation: crate::commands::Invocation) -> api::commands::Invocation {
+    use crate::commands::Value as V;
+    use api::commands::Value;
+    api::commands::Invocation {
+        path: invocation.path,
+        arguments: invocation
+            .arguments
+            .into_iter()
+            .map(|(name, value)| api::commands::Argument {
+                name,
+                value: match value {
+                    V::Word(word) => Value::Word(word),
+                    V::Text(text) => Value::Text(text),
+                    V::Integer(value) => Value::Integer(value),
+                    V::Number(value) => Value::Number(value),
+                    V::Choice(word) => Value::Choice(word),
+                    V::Switch(on) => Value::Switch(on),
+                },
+            })
+            .collect(),
+    }
+}
+
+impl api::chat::Host for State {
+    fn print(&mut self, message: Vec<api::chat::Span>) -> ApiResult<()> {
+        use crate::chat::{Span, Tone};
+        use api::chat::Tone as T;
+        api(self.main_only())?;
+        api(self.permitted(Permission::ChatPrint))?;
+        let spans: Vec<Span> = message
+            .into_iter()
+            .map(|span| Span {
+                text: span.text,
+                tone: match span.tone {
+                    T::Normal => Tone::Normal,
+                    T::Accent => Tone::Accent,
+                    T::Muted => Tone::Muted,
+                    T::Good => Tone::Good,
+                    T::Warning => Tone::Warning,
+                    T::Bad => Tone::Bad,
+                },
+                italic: span.italic,
+            })
+            .collect();
+        self.host(|state| print(&state.context, &spans))
+            .map_err(Into::into)
+    }
+}
+
+/// Prints a message of a plugin: checked, within the plugin's rate, with
+/// its name in front.
+///
+/// # Errors
+/// A message that breaks a rule, a plugin over its rate, and a game that
+/// cannot print.
+pub fn print(context: &Context, spans: &[crate::chat::Span]) -> crate::error::Result<()> {
+    crate::chat::check(spans).map_err(Error::invalid)?;
+    let services = &context.services;
+    if !services.chat.admit(&context.id, Instant::now()) {
+        return Err(Error::new(
+            Kind::LimitExceeded,
+            format!(
+                "a plugin prints at most {} messages a second",
+                crate::chat::MAX_PER_WINDOW
+            ),
+        ));
+    }
+    services
+        .game
+        .print(&crate::chat::encode(&context.name, spans))
+        .map_err(|reason| Error::new(Kind::Unavailable, reason))
 }
 
 /// Whether a trap came from running out of time or fuel rather than a bug

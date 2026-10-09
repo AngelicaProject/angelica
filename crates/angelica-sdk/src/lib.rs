@@ -38,12 +38,15 @@ pub mod bindings {
     wit_bindgen::generate!({ path: "../../wit", world: "plugin", pub_export_macro: true, generate_all });
 }
 
+pub mod chat;
+pub mod commands;
 pub mod ui;
 
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        excel, excel_text, file_replacements, game_files, jobs, runtime, storage, text_case, types,
+        chat, commands, excel, excel_text, file_replacements, game_files, jobs, runtime, storage,
+        text_case, types,
     };
 }
 
@@ -72,6 +75,14 @@ pub trait Plugin: Sized + 'static {
 
     /// A player action in a window or the Angelica menu.
     fn ui_event(&mut self, _event: ui::Event) {}
+
+    /// A command of the plugin the player ran (see [`commands`]).
+    ///
+    /// # Errors
+    /// The error is printed in the chat log as the plugin's message.
+    fn command(&mut self, _invocation: commands::Invocation) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Called before the plugin is disabled.
     fn stop(&mut self) {}
@@ -148,6 +159,14 @@ macro_rules! plugin {
 
                 fn ui_event(event: $crate::ui::Event) {
                     with((), |plugin| $crate::Plugin::ui_event(plugin, event));
+                }
+
+                fn command(
+                    invocation: $crate::commands::Invocation,
+                ) -> ::std::result::Result<(), ::std::string::String> {
+                    with(::std::result::Result::Ok(()), |plugin| {
+                        $crate::Plugin::command(plugin, invocation)
+                    })
                 }
 
                 fn run_job(

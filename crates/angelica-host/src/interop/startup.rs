@@ -106,6 +106,7 @@ fn initialize() -> Result<(), String> {
             .unwrap_or_else(|| root.join("cache"))
             .join("files"),
     ));
+    let commands = Arc::new(crate::commands::Commands::default());
     let executable = module_path(base)?;
     let game = Arc::new(WindowsGame {
         catalog: catalog.clone(),
@@ -113,6 +114,7 @@ fn initialize() -> Result<(), String> {
         excel: excel.clone(),
         case: case.clone(),
         files: files.clone(),
+        commands: commands.clone(),
         version: WindowsGame::read_version(&executable),
     });
     // The executable is in `game/`; the archives are in `game/sqpack`.
@@ -122,6 +124,8 @@ fn initialize() -> Result<(), String> {
         files,
         excel,
         case,
+        commands,
+        chat: Arc::new(crate::chat::Chat::default()),
         game,
         starting: AtomicBool::new(false),
     });

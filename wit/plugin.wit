@@ -4,6 +4,7 @@ package angelica:plugin@1.0.0;
 /// main thread and `run-job` in job instances on host threads.
 interface guest {
     use ui.{window, event};
+    use commands.{invocation};
 
     /// Called once when the plugin is enabled. An error disables it and is
     /// shown in the Angelica menu.
@@ -22,6 +23,11 @@ interface guest {
     /// A player action in one of the plugin's windows or the Angelica menu.
     ui-event: func(event: event);
 
+    /// A command of the plugin the player ran; see the `commands`
+    /// interface. Called after `tick` of the frame that follows. An error
+    /// is printed in the chat log as the plugin's message.
+    command: func(invocation: invocation) -> result<_, string>;
+
     /// Runs a job that `jobs.start` started; see the `jobs` interface.
     run-job: func(name: string, input: list<u8>) -> result<list<u8>, string>;
 }
@@ -35,5 +41,7 @@ world plugin {
     import excel-text;
     import file-replacements;
     import text-case;
+    import commands;
+    import chat;
     export guest;
 }

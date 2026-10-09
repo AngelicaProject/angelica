@@ -21,6 +21,12 @@ pub enum Permission {
     /// Serve replacement game files.
     #[serde(rename = "files.replace")]
     FilesReplace,
+    /// Add chat commands.
+    #[serde(rename = "chat.commands")]
+    ChatCommands,
+    /// Print messages in the chat log.
+    #[serde(rename = "chat.print")]
+    ChatPrint,
 }
 
 impl Permission {
@@ -30,6 +36,8 @@ impl Permission {
             Self::ExcelText => "excel.text",
             Self::TextCase => "text.case",
             Self::FilesReplace => "files.replace",
+            Self::ChatCommands => "chat.commands",
+            Self::ChatPrint => "chat.print",
         }
     }
 
@@ -40,6 +48,8 @@ impl Permission {
             Self::ExcelText => "Replaces text the game shows from its data sheets",
             Self::TextCase => "Changes how the game capitalizes letters",
             Self::FilesReplace => "Replaces game files: fonts and textures",
+            Self::ChatCommands => "Adds its own chat commands",
+            Self::ChatPrint => "Prints its messages in your chat log",
         }
     }
 }

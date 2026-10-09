@@ -17,6 +17,8 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `excel-text` | replacement text for cells of the game's Excel sheets | `excel.text` |
 | `text-case` | letters added to the game's letter case conversion | `text.case` |
 | `file-replacements` | replacement game files the game reads instead of its own | `files.replace` |
+| `commands` | chat commands the host parses for the plugin | `chat.commands` |
+| `chat` | messages in the player's chat log | `chat.print` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -27,14 +29,14 @@ Every fallible call returns `types.error`: a stable `kind` for programs and a `m
 The host keeps one **main instance** per running plugin and calls it on the game's main thread:
 
 - `start` once when the plugin is enabled. An error disables the plugin and is shown in the Angelica menu. During the game's own start, before any game code runs, `runtime.started-with-game` is true; a plugin enabled later sees a game that has already loaded data.
-- `tick` every frame, then `ui-event` for each player action since the previous frame, then `ui`.
+- `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `ui-event` for each player action, then `ui`.
 - `stop` before the plugin is disabled and at game exit.
 
 Each call has a time limit counted in guest time only (time spent in host calls is not counted) and a fuel limit (`host.json`, [installation](./host-installation-v1.md)): by default 20 ms for frame calls and 2 s for `start` and `stop`. Exceeding a limit traps.
 
-A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
+A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, and `jobs.report`; `excel-text`, `text-case`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -82,6 +84,18 @@ A file the game has no original for, another format, a failed check, and a file 
 ## Letter case
 
 The game builds capitalized and lower-case text (`<head>`, `<caps>`, `<lower>` and related macros) with `Utf8String::ToUpper` and `ToLower`, which change only the letters the game knows. `text-case.set-letters` adds letter pairs; after the game's own conversion the host applies the same rule — first letter, first letter of every word except the game's excluded words, or every letter — to the added letters, skipping macros. Both letters of a pair are non-ASCII, differ, and have the same UTF-8 length, so text never changes length. A pair that conflicts with another plugin's is refused. A plugin adds at most 4096 pairs; an empty list removes them.
+
+## Commands
+
+`commands.define` replaces the plugin's commands with a tree: root commands such as `/hello`, subcommands such as `/hello greet` (at most 3 words deep), and typed parameters. Words — command names, aliases (at most 8 per command), and parameter names — are 1–32 lower-case ASCII letters, digits, and hyphens; descriptions are one line of at most 256 bytes. A plugin defines at most 64 commands of at most 16 parameters each. Optional parameters follow every required one, and only the last takes the rest of the line (`text`). A choice offers 1–64 distinct words without spaces or quotes. `help` is never a subcommand. A root name or alias must be free: not a command of the game in any of its languages — the host reads them from the game's `TextCommand` sheet, and without that sheet `define` returns `unavailable` — not `angelica`, and not another running plugin's. A tree that breaks a rule is refused whole and the previous one stays.
+
+When the player sends a line from the chat box or a macro whose first word is one of the plugin's roots or root aliases, case-insensitively, the game never sees it. In the next frame the host parses it: words are separated by spaces, and text in double quotes is one word. Subcommands and aliases are matched case-insensitively; then each parameter takes its argument by kind — a `word`, the rest of the line as typed for `text`, a whole number within the bounds for `integer`, a finite decimal number for `number`, one of the words for `choice` (passed as listed), `on` or `off` for `switch`. The plugin's `command` receives the command's path as defined and the arguments in parameter order; an optional parameter left out has no argument.
+
+The host answers some lines itself, as the plugin's message in the chat log: `/<root> help` and `/<root> help <subcommand>` print help built from the descriptions; a line that does not fit (a missing or extra argument, a value of the wrong kind, an unclosed quote) prints what is wrong and the command's usage; a line with links, auto-translate phrases, or more than 1000 bytes is refused. An error returned by `command` is printed the same way. These answers need no `chat.print`. The host keeps at most 32 lines waiting for the next frame. Disabling the plugin removes its commands; the game then handles those lines again.
+
+## Chat
+
+`chat.print` adds a message to the chat log, in the Echo channel. A message is a list of spans of plain text, each in a tone — `normal`, `accent`, `muted`, `good`, `warning`, or `bad` — and optionally italic; a line break starts a new line, and no other control character is allowed. A message has at most 64 spans and 2000 bytes of text, and is not empty. The host renders the tones with colors of the game's interface theme and starts every message with `[<plugin name>]` in a color no tone uses, so a plugin cannot pass its message off as the game's or another plugin's ([game structures](./game-structures.md#chat)). A plugin prints at most 20 messages in any second; past that `print` returns `limit-exceeded`. Before the game's chat log exists, during the game's start, it returns `unavailable`.
 
 ## WASI
 

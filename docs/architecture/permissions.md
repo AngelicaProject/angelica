@@ -9,6 +9,8 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `excel.text` | activating [text tables](../formats/plugin-api-v1.md#text-tables) that replace text of the game's data sheets | Replaces text the game shows from its data sheets |
 | `text.case` | adding letters to the game's [letter case conversion](../formats/plugin-api-v1.md#letter-case) | Changes how the game capitalizes letters |
 | `files.replace` | serving [replacement game files](../formats/plugin-api-v1.md#replacement-files) of formats the host checks | Replaces game files: fonts and textures |
+| `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | Adds its own chat commands |
+| `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | Prints its messages in your chat log |
 
 A permission exists only together with the API operation it guards. A capability the API does not offer has no permission; it is added with the operation that needs it, as a narrow permission describing that operation.
 

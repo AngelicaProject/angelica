@@ -26,4 +26,19 @@ pub trait Game: Send + Sync {
     /// # Errors
     /// Names the map entries the game build lacks.
     fn enable_file_replacements(&self) -> Result<(), String>;
+
+    /// Makes the game hand the plugins' command lines to
+    /// [`crate::commands::Commands::submit`] before it runs a line.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks.
+    fn enable_commands(&self) -> Result<(), String>;
+
+    /// Prints the game's text `message` in the chat log's Echo channel. On
+    /// the main thread only.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks, or says the chat log
+    /// does not exist yet.
+    fn print(&self, message: &[u8]) -> Result<(), String>;
 }

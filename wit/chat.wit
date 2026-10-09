@@ -1,0 +1,37 @@
+package angelica:plugin@1.0.0;
+
+/// Messages in the player's chat log.
+///
+/// A message is a list of spans of plain text, each in a tone. The host
+/// renders the tones with the colors of the game's interface theme and
+/// starts every message with the plugin's name in a color plugins cannot
+/// use, so a plugin's message never looks like the game's or another
+/// plugin's. Messages appear in the Echo channel. Requires `chat.print`.
+/// Called from the main instance only.
+interface chat {
+    use types.{error};
+
+    enum tone {
+        normal,
+        /// Draws the eye: names, values, commands.
+        accent,
+        /// Secondary detail.
+        muted,
+        good,
+        warning,
+        bad,
+    }
+
+    record span {
+        /// Plain text; a line break starts a new line. No other control
+        /// characters.
+        text: string,
+        tone: tone,
+        italic: bool,
+    }
+
+    /// Prints a message. At most 64 spans and 2000 bytes of text; a plugin
+    /// prints at most 20 messages in any second. Returns `unavailable`
+    /// before the game's chat log exists, during the game's start.
+    print: func(message: list<span>) -> result<_, error>;
+}

@@ -12,3 +12,5 @@ authors = ["AngelicaProject contributors"]
 "excel.text" = true
 "text.case" = true
 "files.replace" = true
+"chat.commands" = true
+"chat.print" = true

@@ -3,6 +3,8 @@
 //! the thread that created the host, the game's main thread.
 #![forbid(unsafe_code)]
 use crate::{
+    chat::{Span, Tone},
+    commands::Outcome,
     jobs::Jobs,
     manifest::{Grants, Manifest},
     sandbox::{self, Bindings, Context, Limits, Log, PluginPre, Role, Sandbox, Services, State},
@@ -287,6 +289,7 @@ impl Host {
         ));
         let context = Arc::new(Context {
             id: id.clone(),
+            name: plugin.manifest.plugin.name.clone(),
             permissions: plugin
                 .manifest
                 .permissions()
@@ -387,6 +390,8 @@ impl Host {
         self.services.excel.remove_plugin(id);
         self.services.case.remove_plugin(id);
         self.services.files.remove_plugin(id);
+        self.services.commands.remove_plugin(id);
+        self.services.chat.remove_plugin(id);
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -439,8 +444,9 @@ impl Host {
         }
     }
 
-    /// Runs one frame on the main thread: queued actions, `tick`, queued
-    /// window events, and `ui` of every running plugin.
+    /// Runs one frame on the main thread: queued actions, then for every
+    /// running plugin `tick`, the commands the player ran, queued window
+    /// events, and `ui`.
     pub fn frame(&self, elapsed: f64) {
         if !self.on_main_thread() {
             self.diagnostic("a frame was requested outside the game's main thread");
@@ -463,12 +469,25 @@ impl Host {
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
             .collect();
+        let commands: Vec<_> = self
+            .services
+            .commands
+            .take()
+            .iter()
+            .filter_map(|line| self.services.commands.resolve(line))
+            .collect();
         for plugin in self.plugins.values() {
-            self.frame_plugin(plugin, elapsed, &events);
+            self.frame_plugin(plugin, elapsed, &commands, &events);
         }
     }
 
-    fn frame_plugin(&self, plugin: &Arc<Plugin>, elapsed: f64, events: &[(String, Event)]) {
+    fn frame_plugin(
+        &self,
+        plugin: &Arc<Plugin>,
+        elapsed: f64,
+        commands: &[(String, Outcome)],
+        events: &[(String, Event)],
+    ) {
         let id = plugin.manifest.id();
         let mut running = plugin
             .running
@@ -486,6 +505,28 @@ impl Host {
                 Ok(Err(reason)) => return Some(format!("tick failed: {reason}")),
                 Err(trap) => {
                     return Some(format!("tick trapped: {}", sandbox::describe_trap(&trap)));
+                }
+            }
+            for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
+                let invocation = match outcome {
+                    Outcome::Reply(spans) => {
+                        self.reply(store.data().context(), spans);
+                        continue;
+                    }
+                    Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
+                };
+                sandbox::budget(store, self.limits.call_time, self.limits.fuel);
+                match guest.call_command(&mut *store, &invocation) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(reason)) => {
+                        self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
+                    }
+                    Err(trap) => {
+                        return Some(format!(
+                            "command trapped: {}",
+                            sandbox::describe_trap(&trap)
+                        ));
+                    }
                 }
             }
             for (_, event) in events.iter().filter(|(target, _)| target == id) {
@@ -515,6 +556,38 @@ impl Host {
         drop(running);
         if let Some(reason) = fault {
             self.fault(plugin, reason);
+        }
+    }
+
+    /// Prints the host's answer to a plugin's command in the chat log, as
+    /// the plugin's message: help, a usage error, or the error the command
+    /// returned. Text past the message limit is cut.
+    fn reply(&self, context: &Context, spans: &[Span]) {
+        let mut kept = Vec::new();
+        let mut left = crate::chat::MAX_TEXT;
+        for span in spans {
+            let text: String = span
+                .text
+                .chars()
+                .filter(|&c| c == '\n' || !c.is_control())
+                .collect();
+            if text.len() > left {
+                kept.push(Span::new("...", Tone::Muted));
+                break;
+            }
+            left -= text.len();
+            kept.push(Span {
+                text,
+                ..span.clone()
+            });
+        }
+        let message = crate::chat::encode(&context.name, &kept);
+        if let Err(reason) = self.services.game.print(&message) {
+            self.diagnostic(format!(
+                "{}: {reason}: {}",
+                context.id,
+                crate::chat::plain(&message)
+            ));
         }
     }
 

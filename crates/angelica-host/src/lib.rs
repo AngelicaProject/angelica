@@ -3,6 +3,8 @@
 //! API, and, on Windows, the hooks and the overlay that connect them to the
 //! game.
 pub mod catalog;
+pub mod chat;
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod excel_text;

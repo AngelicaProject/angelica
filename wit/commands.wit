@@ -1,0 +1,94 @@
+package angelica:plugin@1.0.0;
+
+/// Chat commands of a plugin.
+///
+/// A plugin describes its commands as a tree: a root command such as
+/// `/hello`, subcommands such as `/hello greet`, and the typed parameters
+/// of each. When the player sends a line that starts with one of the
+/// plugin's commands, in the chat box or a macro, the game never sees it:
+/// the host parses it against the tree and calls the guest's `command`
+/// export with the command's path and typed arguments. A line that does
+/// not fit the tree is answered in the chat log with the command's usage;
+/// `/<root> help` and `/<root> help <subcommand>` print help built from the
+/// descriptions. Requires `chat.commands`. Called from the main instance
+/// only.
+interface commands {
+    use types.{error};
+
+    /// The kind of a parameter's value.
+    variant value-kind {
+        /// One word, or text in double quotes.
+        word,
+        /// The rest of the line, as typed; only the last parameter.
+        text,
+        /// A whole number within the bounds, inclusive.
+        integer(integer-bounds),
+        /// A finite decimal number.
+        number,
+        /// One of these words, case-insensitive; the argument is the word
+        /// as listed.
+        choice(list<string>),
+        /// `on` or `off`.
+        switch,
+    }
+
+    record integer-bounds {
+        min: s64,
+        max: s64,
+    }
+
+    record parameter {
+        /// 1-32 lower-case ASCII letters, digits, and hyphens; unique within
+        /// the command. Shown in usage lines as `<name>`.
+        name: string,
+        description: string,
+        kind: value-kind,
+        /// Optional parameters follow every required one.
+        optional: bool,
+    }
+
+    record command {
+        /// The words that run the command: the root's name, then each
+        /// subcommand's, such as `["hello", "greet"]`. Each word is 1-32
+        /// lower-case ASCII letters, digits, and hyphens. A subcommand's
+        /// parent is listed before it.
+        path: list<string>,
+        /// Other words for the last word of the path.
+        aliases: list<string>,
+        /// One line shown in help; at most 256 bytes.
+        description: string,
+        parameters: list<parameter>,
+    }
+
+    /// The value of one argument, by its parameter's kind.
+    variant value {
+        word(string),
+        text(string),
+        integer(s64),
+        number(f64),
+        choice(string),
+        switch(bool),
+    }
+
+    record argument {
+        /// The parameter's name.
+        name: string,
+        value: value,
+    }
+
+    /// A command the player ran.
+    record invocation {
+        /// The command's path as defined, never an alias.
+        path: list<string>,
+        /// The arguments in parameter order; an optional parameter the
+        /// player left out has none.
+        arguments: list<argument>,
+    }
+
+    /// Replaces the plugin's commands; an empty list removes them. Root
+    /// names and aliases must be free: not a command of the game in any of
+    /// its languages and not another plugin's. `help` is never a
+    /// subcommand. At most 64 commands, 3 words deep, 16 parameters each;
+    /// a choice offers at most 64 words.
+    define: func(commands: list<command>) -> result<_, error>;
+}

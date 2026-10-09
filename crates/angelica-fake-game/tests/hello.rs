@@ -1,7 +1,11 @@
 //! The example plugin in a host with a scripted game: approval, windows and
-//! events, storage, jobs, text tables, letter case, permissions, and
-//! disabling.
-use angelica_fake_game::{TestHost, build_component, row_buffer, row_strings, store_row};
+//! events, storage, jobs, text tables, letter case, chat commands and
+//! messages, permissions, and disabling.
+use angelica_fake_game::{
+    TestHost, build_component,
+    game_files::{FakeGame, TextSheet},
+    row_buffer, row_strings, store_row,
+};
 use angelica_text::table::{Column, Variant};
 use runtime::{
     excel_text::SheetInfo,
@@ -21,13 +25,45 @@ fn component() -> &'static [u8] {
 }
 
 fn approved(manifest: &str) -> TestHost {
-    let mut test = TestHost::new(Limits::default());
+    approve(TestHost::new(Limits::default()), manifest)
+}
+
+fn approve(mut test: TestHost, manifest: &str) -> TestHost {
     test.install(manifest, component()).unwrap();
     test.host.queue(Action::Approve("hello".into()));
     test.frames(1);
     assert_eq!(test.host.plugin("hello").unwrap().status(), Status::Running);
     test.event("hello", Event::OpenRequested);
     test
+}
+
+/// A host over `game`, with the example approved after `setup`. The
+/// example reads the game's command list when it starts, so the game's
+/// files exist before.
+fn approved_over(game: &FakeGame, manifest: &str, setup: impl FnOnce(&TestHost)) -> TestHost {
+    let test = TestHost::new(Limits::default());
+    game.write(&test.game_folder()).unwrap();
+    setup(&test);
+    approve(test, manifest)
+}
+
+/// A game whose command list has `/tell`.
+fn game_with_commands() -> FakeGame {
+    FakeGame::new("2026.09.15.0000.0000").with_text(
+        "TextCommand",
+        &TextSheet::new(2, &[0, 1]).row(1, &[(0, "/tell"), (1, "/t")]),
+    )
+}
+
+fn with_commands(manifest: &str, setup: impl FnOnce(&TestHost)) -> TestHost {
+    approved_over(&game_with_commands(), manifest, setup)
+}
+
+/// What the player ran printed in the chat log.
+fn printed(test: &TestHost, line: &str) -> Vec<String> {
+    test.game.printed.lock().unwrap().clear();
+    assert!(test.command(line), "{line} was left to the game");
+    test.game.printed_text()
 }
 
 /// The example's manifest without these permissions.
@@ -269,7 +305,7 @@ fn the_players_choice_and_grants_persist_across_game_starts() {
 
 #[test]
 fn plugins_read_the_games_files_and_sheets() {
-    use angelica_fake_game::game_files::{FakeGame, FakeRow, FakeSheet, FakeValue};
+    use angelica_fake_game::game_files::{FakeRow, FakeSheet, FakeValue};
     use angelica_sqpack::excel::{ColumnKind, Language};
     let test = approved(MANIFEST);
     click(&test, "read");
@@ -279,16 +315,14 @@ fn plugins_read_the_games_files_and_sheets() {
         message(&test)
     );
 
-    let test = approved(MANIFEST);
     let sheet = FakeSheet::new(vec![ColumnKind::String]).with_rows(
         Language::English,
         vec![FakeRow::new(1, vec![FakeValue::String(b"Potion".to_vec())])],
     );
-    FakeGame::new("2026.09.15.0000.0000")
+    let game = game_with_commands()
         .with_sheet("Item", sheet)
-        .with_file("common/font/AXIS_12.fdt", vec![7; 100])
-        .write(&test.game_folder())
-        .unwrap();
+        .with_file("common/font/AXIS_12.fdt", vec![7; 100]);
+    let test = approved_over(&game, MANIFEST, |_| {});
     click(&test, "read");
     assert_eq!(
         message(&test),
@@ -298,15 +332,11 @@ fn plugins_read_the_games_files_and_sheets() {
 
 #[test]
 fn plugins_replace_game_files_the_host_can_check() {
-    use angelica_fake_game::game_files::FakeGame;
-    let test = approved(MANIFEST);
     let mut texture = vec![0u8; 80 + 32];
     texture[4] = 0x40;
     texture[5] = 0x14;
-    FakeGame::new("2026.09.15.0000.0000")
-        .with_file("common/font/font1.tex", texture.clone())
-        .write(&test.game_folder())
-        .unwrap();
+    let game = game_with_commands().with_file("common/font/font1.tex", texture.clone());
+    let test = approved_over(&game, MANIFEST, |_| {});
     click(&test, "texture");
     assert_eq!(message(&test), "texture replaced");
     let served = test
@@ -328,14 +358,162 @@ fn plugins_replace_game_files_the_host_can_check() {
             .is_none()
     );
 
-    let test = approved(&without_permissions(&["files.replace"]));
-    FakeGame::new("2026.09.15.0000.0000")
-        .with_file("common/font/font1.tex", vec![0u8; 80 + 32])
-        .write(&test.game_folder())
-        .unwrap();
+    let game = game_with_commands().with_file("common/font/font1.tex", vec![0u8; 80 + 32]);
+    let test = approved_over(&game, &without_permissions(&["files.replace"]), |_| {});
     click(&test, "texture");
     assert_eq!(
         message(&test),
         "texture refused: the plugin does not hold files.replace"
     );
+}
+
+#[test]
+fn commands_run_and_print_in_the_chat_log() {
+    let test = with_commands(MANIFEST, |_| {});
+    assert_eq!(
+        printed(&test, "/hello greet Alphinaud 2"),
+        ["[Hello] Hello, Alphinaud!
+Hello, Alphinaud!"]
+    );
+    assert_eq!(
+        printed(&test, "/HELLO g \"Y'shtola Rhul\""),
+        ["[Hello] Hello, Y'shtola Rhul!"]
+    );
+    assert_eq!(
+        printed(&test, "/hello print Good  it works "),
+        ["[Hello] it works"]
+    );
+    assert_eq!(
+        printed(&test, "/hello colors"),
+        ["[Hello] normal accent muted good warning bad italic"]
+    );
+
+    printed(&test, "/hello caps on");
+    test.event(
+        "hello",
+        Event::Edited(Edited {
+            window: "main".into(),
+            id: "name".into(),
+            value: "Alisaie".into(),
+        }),
+    );
+    let windows = test.host.plugin("hello").unwrap().windows();
+    assert!(
+        matches!(&windows[0].widgets[0], Widget::Heading(heading) if heading == "Hello, ALISAIE")
+    );
+
+    test.game.printed.lock().unwrap().clear();
+    assert!(!test.command("/tell Alphinaud hi"), "the game's command");
+    assert!(!test.command("hello"), "not a command");
+    assert!(test.game.printed_text().is_empty());
+}
+
+#[test]
+fn the_host_answers_help_mistakes_and_errors() {
+    let test = with_commands(MANIFEST, |_| {});
+    let help = printed(&test, "/hello help");
+    assert!(
+        help[0].starts_with("[Hello] /hello — Greets you"),
+        "{help:?}"
+    );
+    assert!(help[0].contains(
+        "
+/hello greet <name> [times] — Greets someone"
+    ));
+    assert!(help[0].contains(
+        "
+/hello print <normal|accent|muted|good|warning|bad> <words...>"
+    ));
+    let help = printed(&test, "/hello help greet");
+    assert!(help[0].contains("(also g)"), "{help:?}");
+    assert!(help[0].contains(
+        "
+  times — How often (whole number, 1 to 5)"
+    ));
+
+    assert_eq!(
+        printed(&test, "/hello greet"),
+        ["[Hello] Missing <name>.
+Usage: /hello greet <name> [times] · /hello help"]
+    );
+    let mistake = printed(&test, "/hello greet Alphinaud 6");
+    assert!(
+        mistake[0].starts_with("[Hello] <times> is from 1 to 5."),
+        "{mistake:?}"
+    );
+    let mistake = printed(&test, "/hello print loud hi");
+    assert!(
+        mistake[0].starts_with("[Hello] <tone> is one of normal, accent"),
+        "{mistake:?}"
+    );
+
+    assert_eq!(
+        printed(&test, "/hello fail"),
+        ["[Hello] this command always fails"]
+    );
+}
+
+#[test]
+fn commands_and_messages_need_their_permission() {
+    let test = with_commands(&without_permissions(&["chat.commands"]), |_| {});
+    assert_eq!(
+        message(&test),
+        "commands refused: the plugin does not hold chat.commands"
+    );
+    assert!(!test.command("/hello"));
+
+    let test = with_commands(&without_permissions(&["chat.print"]), |_| {});
+    assert!(printed(&test, "/hello greet Alphinaud").is_empty());
+    assert_eq!(
+        message(&test),
+        "cannot print: the plugin does not hold chat.print"
+    );
+    let help = printed(&test, "/hello help");
+    assert!(
+        help[0].starts_with("[Hello] /hello"),
+        "the host's answers need no permission"
+    );
+}
+
+#[test]
+fn commands_and_messages_need_the_game() {
+    let test = approved(MANIFEST);
+    assert!(
+        message(&test).starts_with("commands refused: the game's command list cannot be read"),
+        "{}",
+        message(&test)
+    );
+
+    let test = with_commands(MANIFEST, |test| {
+        test.game
+            .commands_available
+            .store(false, std::sync::atomic::Ordering::Release);
+    });
+    assert_eq!(
+        message(&test),
+        "commands refused: map entry shell.command_module.execute_command_inner is absent"
+    );
+
+    let test = with_commands(MANIFEST, |test| {
+        test.game
+            .chat_available
+            .store(false, std::sync::atomic::Ordering::Release);
+    });
+    assert!(printed(&test, "/hello").is_empty());
+    assert_eq!(
+        message(&test),
+        "cannot print: the chat log does not exist yet"
+    );
+}
+
+#[test]
+fn commands_are_removed_with_the_plugin() {
+    let test = with_commands(MANIFEST, |_| {});
+    assert_eq!(
+        printed(&test, "/hello"),
+        ["[Hello] Hello! Try /hello help."]
+    );
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert!(!test.command("/hello"));
 }

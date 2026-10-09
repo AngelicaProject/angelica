@@ -27,8 +27,8 @@ Hot paths never call a plugin. Work the game does for every row, string, or file
 1. **Discovery.** At startup the host reads each authenticated package in `plugins/`, parses its manifest, loads its compiled component, and links the host's imports. A package that fails is listed with the reason.
 2. **Approval.** A package without a grant covering its permissions waits in the Angelica menu, which lists its permissions. Approving writes the grant and starts the plugin.
 3. **Start.** Approved and enabled plugins start before the game's own code runs, so rules they activate in `start` apply to everything the game loads. A plugin enabled later starts at once; `runtime.started-with-game` tells the two apart.
-4. **Running.** Every frame: `tick`, pending window events, `ui`.
-5. **Stop.** Disabling calls `stop`, then removes the plugin's text tables, letters, jobs, and windows. A fault does the same without calling `stop`. At game exit every plugin stops.
+4. **Running.** Every frame: `tick`, the plugin's commands the player ran, pending window events, `ui`.
+5. **Stop.** Disabling calls `stop`, then removes the plugin's text tables, letters, replaced files, commands, jobs, and windows. A fault does the same without calling `stop`. At game exit every plugin stops.
 
 The player's choice to disable a plugin is kept across game starts ([settings](../formats/host-installation-v1.md#plugin-settings)). A faulted plugin is never restarted automatically.
 

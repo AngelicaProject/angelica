@@ -64,3 +64,35 @@ A texture is the exception to the game's disk reader: the texture load takes a t
 | `text.case_exclusion.word` (`ptr`), `.length` (`i32`) | fields of an exclusion record | a word the conversion leaves unchanged |
 
 The exclusion list is an array of 16-byte records ended by one whose length is zero; the adapter reads at most 256. A word is excluded at a position when the text there begins with it, as the game compares it. Strings longer than 1 MiB are left as the game converted them. Macros (`0x02` … `0x03`) are skipped whole; a malformed macro ends the conversion.
+
+## Chat
+
+The game runs a line the player sends from the chat box or a macro with the command module's `ExecuteCommandInner`, which looks the first word up in its command list. The adapter detours it: when the line's first word is a plugin's command, the host takes the line and the original is not called; every other line, and every line while no plugin has commands, goes to the original unchanged. Plugin messages are added to the chat log with the log module's `PrintMessage`, on the game's main thread.
+
+| Entry | Kind | Use |
+| --- | --- | --- |
+| `shell.command_module.execute_command_inner` | function `(ptr module, ptr line, ptr ui_module)` | detoured |
+| `text.utf8_string.string_ptr` (`ptr`), `.used_size` (`i64`) | fields of the string | the line's bytes and their count with the terminator |
+| `framework.instance` | `ptr` global | the framework, zero before it exists |
+| `framework.get_ui_module` | function `(ptr framework) -> ptr` | the UI module |
+| `ui.ui_module.get_log_module` | slot 11 of the `ui.ui_module` vtable, `(ptr ui_module) -> ptr` | the chat log module |
+| `ui.log_module.print_message` | function `(ptr log, u16 kind, ptr sender, ptr message, i32 timestamp, u8 silent) -> u32` | adds a message |
+| `text.utf8_string.from_sequence` | function `(ptr string, ptr bytes, u64 length) -> ptr` | constructs a game string |
+| `text.utf8_string.dtor` | function `(ptr string)` | frees a game string |
+
+The line is a `Utf8String`; the detour reads it only when its used size is 2 to 4096, otherwise the game handles it. A framework, UI module, or log module that is zero means the chat log does not exist yet, and printing returns `unavailable`.
+
+To print, the adapter constructs two game strings in zeroed 0x80-byte buffers (the constructor uses the first 0x62 bytes and allocates when the text does not fit its 64-byte inline buffer): an empty sender and the message. It calls `PrintMessage(log, 56, sender, message, 0, 0)` — log kind 56 is the Echo channel, timestamp 0 means now — and then destroys both strings; the log keeps its own copy.
+
+The message is the game's encoded text: `[<plugin name>]` in color row 500, a space, then each span. A tone other than `normal` sets the text color with the macro `0x48` (`UIForeground`) and the tone's row, and resets it with row 0 after the span; an italic span is wrapped in macro `0x1A` with 1 and 0; a line break is macro `0x10`. Rows are of the game's `UIColor` sheet, which holds a color for each interface theme, so the colors follow the player's theme:
+
+| Use | `UIColor` row |
+| --- | --- |
+| plugin name | 500 |
+| `accent` | 502 |
+| `muted` | 3 |
+| `good` | 504 |
+| `warning` | 506 |
+| `bad` | 508 |
+
+Without one of the command entries, `commands.define` returns `unavailable`; without one of the printing entries, `chat.print` and the host's answers to commands are unavailable. The detour stays installed until the process exits.

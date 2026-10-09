@@ -1,9 +1,13 @@
 //! An example plugin that uses every interface of the plugin API: a window
 //! with each kind of widget, files in its storage, a job, the game's files
-//! and sheets, a text table, letter case, and a replaced game file. The host's integration tests drive it through its window.
+//! and sheets, a text table, letter case, a replaced game file, and chat
+//! commands that print in the chat log. The host's integration tests drive
+//! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
     api::{excel, excel_text, file_replacements, game_files, jobs, runtime, storage, text_case},
+    chat::{Message, Tone as ChatTone},
+    commands::{Command, Invocation, Parameter},
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -114,6 +118,41 @@ impl Hello {
     }
 }
 
+/// `/hello` and its subcommands.
+fn commands() -> Command {
+    Command::new("hello", "Greets you")
+        .subcommand(
+            Command::new("greet", "Greets someone")
+                .alias("g")
+                .parameter(Parameter::word("name", "Who to greet"))
+                .parameter(Parameter::integer("times", "How often", 1, 5).optional()),
+        )
+        .subcommand(
+            Command::new("print", "Prints words in a tone")
+                .parameter(Parameter::choice(
+                    "tone",
+                    "How it looks",
+                    &TONES.map(|(word, _)| word),
+                ))
+                .parameter(Parameter::text("words", "What to print")),
+        )
+        .subcommand(
+            Command::new("caps", "Shows the name in the window in capitals")
+                .parameter(Parameter::switch("on", "Whether to use capitals")),
+        )
+        .subcommand(Command::new("colors", "Shows every tone"))
+        .subcommand(Command::new("fail", "Always fails"))
+}
+
+const TONES: [(&str, ChatTone); 6] = [
+    ("normal", ChatTone::Normal),
+    ("accent", ChatTone::Accent),
+    ("muted", ChatTone::Muted),
+    ("good", ChatTone::Good),
+    ("warning", ChatTone::Warning),
+    ("bad", ChatTone::Bad),
+];
+
 /// A table that replaces the text of Item row 1, column 0, while it is
 /// "Potion".
 fn write_table() -> Result<(), String> {
@@ -154,7 +193,7 @@ impl Plugin for Hello {
             runtime::game_version(),
             runtime::started_with_game()
         ));
-        Ok(Self {
+        let mut hello = Self {
             open: false,
             clicks,
             name: String::new(),
@@ -163,7 +202,11 @@ impl Plugin for Hello {
             job: None,
             progress: 0.0,
             message: String::new(),
-        })
+        };
+        if let Err(error) = angelica_sdk::commands::define(&[commands()]) {
+            hello.say(format!("commands refused: {}", error.message));
+        }
+        Ok(hello)
     }
 
     fn tick(&mut self, _elapsed: f64) -> Result<(), String> {
@@ -238,6 +281,53 @@ impl Plugin for Hello {
             Event::Edited(edited) => self.name = edited.value,
             Event::Chosen(chosen) => self.color = Some(chosen.index),
         }
+    }
+
+    fn command(&mut self, invocation: Invocation) -> Result<(), String> {
+        let message = if invocation.is(&["hello"]) {
+            Message::new()
+                .text("Hello! Try ")
+                .accent("/hello help")
+                .text(".")
+        } else if invocation.is(&["hello", "greet"]) {
+            let name = invocation.word("name").unwrap_or_default();
+            let mut message = Message::new();
+            for time in 0..invocation.integer("times").unwrap_or(1) {
+                if time > 0 {
+                    message = message.line();
+                }
+                message = message.text("Hello, ").accent(&name).text("!");
+            }
+            message
+        } else if invocation.is(&["hello", "print"]) {
+            let tone = invocation.word("tone").unwrap_or_default();
+            let tone = TONES
+                .iter()
+                .find(|(word, _)| *word == tone)
+                .map_or(ChatTone::Normal, |(_, tone)| *tone);
+            Message::new().span(invocation.word("words").unwrap_or_default(), tone)
+        } else if invocation.is(&["hello", "caps"]) {
+            self.shout = invocation.switch("on").unwrap_or(false);
+            Message::new()
+                .text("Capitals are ")
+                .accent(if self.shout { "on" } else { "off" })
+        } else if invocation.is(&["hello", "colors"]) {
+            TONES
+                .iter()
+                .fold(Message::new(), |message, (word, tone)| {
+                    message.span(format!("{word} "), *tone)
+                })
+                .span("italic", ChatTone::Normal)
+                .italic()
+        } else if invocation.is(&["hello", "fail"]) {
+            return Err("this command always fails".into());
+        } else {
+            return Err(format!("no command {}", invocation.path.join(" ")));
+        };
+        if let Err(error) = message.print() {
+            self.say(format!("cannot print: {}", error.message));
+        }
+        Ok(())
     }
 
     fn run_job(name: &str, input: Vec<u8>) -> Result<Vec<u8>, String> {

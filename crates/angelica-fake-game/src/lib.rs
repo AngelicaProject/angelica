@@ -31,6 +31,11 @@ pub struct ScriptedGame {
     pub excel_available: AtomicBool,
     pub case_available: AtomicBool,
     pub files_available: AtomicBool,
+    pub commands_available: AtomicBool,
+    /// False until the chat log exists.
+    pub chat_available: AtomicBool,
+    /// Every message printed in the chat log, as the game's text.
+    pub printed: Mutex<Vec<Vec<u8>>>,
 }
 
 impl Default for ScriptedGame {
@@ -40,6 +45,9 @@ impl Default for ScriptedGame {
             excel_available: AtomicBool::new(true),
             case_available: AtomicBool::new(true),
             files_available: AtomicBool::new(true),
+            commands_available: AtomicBool::new(true),
+            chat_available: AtomicBool::new(true),
+            printed: Mutex::new(Vec::new()),
         }
     }
 }
@@ -71,6 +79,38 @@ impl Game for ScriptedGame {
         } else {
             Err("map entry text.utf8_string.to_upper is absent".into())
         }
+    }
+
+    fn enable_commands(&self) -> Result<(), String> {
+        if self.commands_available.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err("map entry shell.command_module.execute_command_inner is absent".into())
+        }
+    }
+
+    fn print(&self, message: &[u8]) -> Result<(), String> {
+        if !self.chat_available.load(Ordering::Acquire) {
+            return Err("the chat log does not exist yet".into());
+        }
+        self.printed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(message.to_vec());
+        Ok(())
+    }
+}
+
+impl ScriptedGame {
+    /// The printed messages as plain text, without colors.
+    #[must_use]
+    pub fn printed_text(&self) -> Vec<String> {
+        self.printed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|message| runtime::chat::plain(message))
+            .collect()
     }
 }
 
@@ -158,6 +198,8 @@ impl TestHost {
             )),
             excel: Arc::new(ExcelText::default()),
             case: Arc::new(TextCase::default()),
+            commands: Arc::new(runtime::commands::Commands::default()),
+            chat: Arc::new(runtime::chat::Chat::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
         });
@@ -210,6 +252,15 @@ impl TestHost {
         for _ in 0..count {
             self.host.frame(1.0 / 60.0);
         }
+    }
+
+    /// The player sends `line` from the chat box: a plugin's command runs in
+    /// the next frame, which this runs; false when the game would handle
+    /// the line itself.
+    pub fn command(&self, line: &str) -> bool {
+        let taken = self.services().commands.submit(line.as_bytes());
+        self.host.frame(1.0 / 60.0);
+        taken
     }
 
     pub fn event(&self, plugin: &str, event: Event) {

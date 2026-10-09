@@ -8,6 +8,7 @@ pub struct WindowsGame {
     pub excel: Arc<ExcelText>,
     pub case: Arc<TextCase>,
     pub files: Arc<crate::file_replacements::FileReplacements>,
+    pub commands: Arc<crate::commands::Commands>,
     pub version: String,
 }
 
@@ -36,5 +37,13 @@ impl Game for WindowsGame {
 
     fn enable_file_replacements(&self) -> Result<(), String> {
         super::file_reads::install(&self.catalog, self.base, self.files.clone())
+    }
+
+    fn enable_commands(&self) -> Result<(), String> {
+        super::chat::install_commands(&self.catalog, self.base, self.commands.clone())
+    }
+
+    fn print(&self, message: &[u8]) -> Result<(), String> {
+        super::chat::print(&self.catalog, self.base, message)
     }
 }
