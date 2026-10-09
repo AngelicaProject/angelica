@@ -32,7 +32,8 @@ interface jobs {
     }
 
     /// Starts a job. A plugin has at most four jobs at once, counting
-    /// finished jobs whose result `poll` has not returned yet.
+    /// finished jobs whose result `poll` has not returned yet and cancelled
+    /// jobs until they stop.
     /// Called from the main instance only.
     start: func(name: string, input: list<u8>) -> result<u64, error>;
 
@@ -40,7 +41,8 @@ interface jobs {
     /// been returned once. Called from the main instance only.
     poll: func(id: u64) -> result<state, error>;
 
-    /// Stops a running job; a later `poll` reports it failed.
+    /// Stops a running job; a later `poll` reports it failed, until the
+    /// job is forgotten once it has stopped.
     cancel: func(id: u64) -> result<_, error>;
 
     /// Called from inside a job: progress that `poll` returns.

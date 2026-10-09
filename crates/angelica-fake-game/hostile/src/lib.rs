@@ -57,6 +57,11 @@ impl Hostile {
                 }
             }
             "fifth" => self.report = outcome(jobs::start("quick", b"")),
+            "start-cancel" => {
+                self.report = outcome(
+                    jobs::start("quick", b"").and_then(|job| jobs::cancel(job).map(|()| job)),
+                );
+            }
             "paths" => {
                 self.report = [
                     "../escape",

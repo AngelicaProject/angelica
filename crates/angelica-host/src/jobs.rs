@@ -44,6 +44,13 @@ impl Slot {
             (fraction.clamp(0.0, 1.0), message);
     }
 
+    fn finished(&self) -> bool {
+        self.result
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
     fn finish(&self, result: std::result::Result<Vec<u8>, String>) {
         *self.result.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
     }
@@ -72,7 +79,7 @@ impl Jobs {
 
     /// # Errors
     /// Refuses a fifth job while four run or wait to be polled, oversized
-    /// input, and an invalid name.
+    /// input, and an invalid name. A cancelled job counts until it stops.
     pub fn start(&self, context: &Arc<Context>, name: &str, input: Vec<u8>) -> Result<u64> {
         if name.is_empty() || name.len() > 256 {
             return Err(Error::invalid("a job name has 1 to 256 bytes"));
@@ -84,8 +91,10 @@ impl Jobs {
             ));
         }
         // A finished job holds its output until it is polled, so it counts
-        // until then.
+        // until then; a cancelled one only until its thread stops, as nobody
+        // needs its result.
         let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        slots.retain(|_, slot| !(slot.cancelled() && slot.finished()));
         if slots.len() >= MAX_RUNNING {
             return Err(Error::new(
                 Kind::LimitExceeded,

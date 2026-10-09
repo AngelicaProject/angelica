@@ -152,6 +152,17 @@ fn finished_jobs_count_until_they_are_polled() {
 }
 
 #[test]
+fn cancelled_jobs_stop_counting_once_they_stop() {
+    let test = started(Limits::default());
+    for _ in 0..8 {
+        click(&test, "start-cancel");
+        assert_eq!(report(&test), "ok");
+        // The cancelled job's thread stops.
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[test]
 fn storage_paths_stay_in_the_folder() {
     let test = started(Limits::default());
     click(&test, "paths");
