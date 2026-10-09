@@ -279,9 +279,27 @@ fn publish_plugin(args: &PublishArgs) -> Result<serde_json::Value, String> {
     }
     let packed = pack_plugin(&args.folder, &args.component, args.key.as_ref())?;
     let link = github_link(repository, &packed.id);
-    // Players update from the link: it must move to a newer version of
-    // the same author.
-    if let Ok(current) = installer::fetch(&link) {
+    // Players update from the link: it must move to a newer version of the
+    // same author. The release is read through gh, never through the link,
+    // whose answer GitHub caches: a "not found" asked before the upload
+    // would hide the file from players for a while.
+    let exists = gh(&["release", "view", &packed.id, "--repo", repository])?.is_some();
+    let current = if exists {
+        gh(&[
+            "release",
+            "download",
+            &packed.id,
+            "--repo",
+            repository,
+            "--pattern",
+            &format!("{}.angelica", packed.id),
+            "--output",
+            "-",
+        ])?
+    } else {
+        None
+    };
+    if let Some(current) = current {
         let current = author::open(&current)?;
         if author::open(&packed.file)?.author != current.author {
             return Err(format!(
@@ -302,7 +320,7 @@ fn publish_plugin(args: &PublishArgs) -> Result<serde_json::Value, String> {
     let folder = std::env::temp_dir().join(format!("angelica-publish-{}", std::process::id()));
     let file = folder.join(format!("{}.angelica", packed.id));
     installer::write(&file, &packed.file)?;
-    let published = upload(repository, &packed, &file);
+    let published = upload(repository, &packed, &file, exists);
     let _ = std::fs::remove_dir_all(&folder);
     published?;
     Ok(serde_json::json!({
@@ -314,50 +332,50 @@ fn publish_plugin(args: &PublishArgs) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// Runs gh; its standard output when it succeeds, `None` when it fails.
+fn gh(arguments: &[&str]) -> Result<Option<Vec<u8>>, String> {
+    let output = Command::new("gh")
+        .args(arguments)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("gh: {e}; install the GitHub command and sign in"))?;
+    Ok(output.status.success().then_some(output.stdout))
+}
+
 /// Creates the release `<id>` when missing and replaces its file.
-fn upload(repository: &str, packed: &Packed, file: &Path) -> Result<(), String> {
-    let gh = |arguments: &[&std::ffi::OsStr]| -> Result<bool, String> {
-        Command::new("gh")
-            .args(arguments)
-            .status()
-            .map(|status| status.success())
-            .map_err(|e| format!("gh: {e}; install the GitHub command and sign in"))
-    };
-    let exists = gh(&[
-        "release".as_ref(),
-        "view".as_ref(),
-        packed.id.as_ref(),
-        "--repo".as_ref(),
-        repository.as_ref(),
-    ])?;
+fn upload(repository: &str, packed: &Packed, file: &Path, exists: bool) -> Result<(), String> {
     if !exists
-        && !gh(&[
-            "release".as_ref(),
-            "create".as_ref(),
-            packed.id.as_ref(),
-            "--repo".as_ref(),
-            repository.as_ref(),
-            "--title".as_ref(),
-            packed.name.as_ref(),
-            "--notes".as_ref(),
-            packed.description.as_ref(),
+        && gh(&[
+            "release",
+            "create",
+            &packed.id,
+            "--repo",
+            repository,
+            "--title",
+            &packed.name,
+            "--notes",
+            &packed.description,
         ])?
+        .is_none()
     {
         return Err(format!(
             "gh could not create the release {} in {repository}",
             packed.id
         ));
     }
-    if !gh(&[
-        "release".as_ref(),
-        "upload".as_ref(),
-        packed.id.as_ref(),
-        file.as_os_str(),
-        "--clobber".as_ref(),
-        "--repo".as_ref(),
-        repository.as_ref(),
-    ])? {
-        return Err(format!("gh could not upload {}", file.display()));
+    let file = file.to_str().ok_or("the temporary folder is not Unicode")?;
+    if gh(&[
+        "release",
+        "upload",
+        &packed.id,
+        file,
+        "--clobber",
+        "--repo",
+        repository,
+    ])?
+    .is_none()
+    {
+        return Err(format!("gh could not upload {file}"));
     }
     Ok(())
 }
