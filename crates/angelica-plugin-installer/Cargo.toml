@@ -1,0 +1,25 @@
+[package]
+name = "angelica-plugin-installer"
+description = "plugin-installer.exe: installs, updates, and compiles plugins from their authors outside the game, for the host."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "plugin-installer"
+path = "src/main.rs"
+
+[dependencies]
+angelica-host.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

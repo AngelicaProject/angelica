@@ -117,6 +117,22 @@ fn initialize() -> Result<(), String> {
     if let Some(problem) = problem {
         host.diagnostic(problem);
     }
+    let installer = Arc::new(crate::plugin_installer::PluginInstaller::new(
+        runtime_path
+            .parent()
+            .ok_or("runtime has no directory")?
+            .join("plugin-installer.exe"),
+        RELEASE_KEY,
+        root.to_path_buf(),
+        Arc::new(|line: &str| super::log(line)),
+    ));
+    host.set_plugin_installer(installer.clone());
+    // Without the program, only what the player asks for reports that.
+    installer.start(
+        installer
+            .program_exists()
+            .then_some(crate::plugin_installer::UPDATE_INTERVAL),
+    );
     discover_plugins(&config, &sandbox, &trust, &mut host);
     let map_data = MapData {
         directory: config.map_directory.clone(),
@@ -128,6 +144,7 @@ fn initialize() -> Result<(), String> {
         config.plugin_directory.clone(),
         sandbox.clone(),
         trust,
+        installer,
         map_data,
     )));
 
@@ -277,10 +294,13 @@ fn load_map(
 }
 
 /// An authenticated package from its folder in the plugin directory.
+/// A plugin from its author whose compiled component this runtime cannot
+/// load is added to `repairs`, to be compiled again outside the game.
 fn load_package(
     folder: &Path,
     sandbox: &Sandbox,
     trust: &Trust,
+    repairs: &mut Vec<String>,
 ) -> Result<(Manifest, wasmtime::component::Component), String> {
     let package = crate::package::authenticate_plugin(folder, trust)?;
     // SAFETY: authenticate_plugin verified every byte with the release
@@ -289,7 +309,12 @@ fn load_package(
     // artifacts the Angelica installer compiled on this computer from the
     // author's component. Native code never comes from a plugin author.
     let component =
-        unsafe { super::component::load_authenticated(&sandbox.engine, &package.artifact) }?;
+        unsafe { super::component::load_authenticated(&sandbox.engine, &package.artifact) }
+            .inspect_err(|_| {
+                if package.manifest.origin == crate::manifest::Origin::Author {
+                    repairs.push(package.manifest.id().to_owned());
+                }
+            })?;
     Ok((package.manifest, component))
 }
 
@@ -333,6 +358,7 @@ fn package_folders(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> 
 }
 
 fn discover_plugins(config: &Config, sandbox: &Sandbox, trust: &Trust, host: &mut Host) {
+    let mut repairs = Vec::new();
     let folders = match package_folders(&config.plugin_directory) {
         Ok(folders) => folders,
         Err(error) => {
@@ -341,11 +367,16 @@ fn discover_plugins(config: &Config, sandbox: &Sandbox, trust: &Trust, host: &mu
         }
     };
     for folder in folders {
-        let result = load_package(&folder, sandbox, trust)
+        let result = load_package(&folder, sandbox, trust, &mut repairs)
             .and_then(|(manifest, component)| host.install(manifest, &component));
         if let Err(error) = result {
             host.diagnostic(format!("{}: {error}", folder.display()));
         }
+    }
+    if let Some(installer) = host.plugin_installer()
+        && !repairs.is_empty()
+    {
+        installer.repair(repairs);
     }
 }
 
@@ -355,6 +386,7 @@ struct FolderPackages {
     directory: std::path::PathBuf,
     sandbox: Arc<Sandbox>,
     trust: Trust,
+    installer: Arc<crate::plugin_installer::PluginInstaller>,
     /// The signed file list of every package folder, as last seen.
     seen: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
     checked: std::time::Instant,
@@ -404,6 +436,7 @@ impl FolderPackages {
         directory: std::path::PathBuf,
         sandbox: Arc<Sandbox>,
         trust: Trust,
+        installer: Arc<crate::plugin_installer::PluginInstaller>,
         mut map: MapData,
     ) -> Self {
         // The map and the packages present now were loaded at start.
@@ -412,6 +445,7 @@ impl FolderPackages {
             directory,
             sandbox,
             trust,
+            installer,
             seen: std::collections::BTreeMap::new(),
             checked: std::time::Instant::now(),
             map,
@@ -451,13 +485,19 @@ impl crate::host::Updates for FolderPackages {
             return Vec::new();
         }
         self.checked = std::time::Instant::now();
-        self.look()
+        let mut repairs = Vec::new();
+        let packages = self
+            .look()
             .into_iter()
             .map(|folder| {
-                load_package(&folder, &self.sandbox, &self.trust)
+                load_package(&folder, &self.sandbox, &self.trust, &mut repairs)
                     .map_err(|error| format!("{}: {error}", folder.display()))
             })
-            .collect()
+            .collect();
+        if !repairs.is_empty() {
+            self.installer.repair(repairs);
+        }
+        packages
     }
 }
 

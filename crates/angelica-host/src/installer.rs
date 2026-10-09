@@ -115,6 +115,17 @@ pub fn install(
     })
 }
 
+/// Compiles the installed plugin file of `id` again, as after an update
+/// of the runtime, whose engine its compiled component no longer matches.
+///
+/// # Errors
+/// As [`install`]; a plugin not installed from its author.
+pub fn repair(installation: &Installation, id: &str) -> Result<Installed, String> {
+    let path = installation.plugins.join(id).join("plugin.angelica");
+    let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    install(installation, file, None)
+}
+
 /// Updates every installed plugin that came from a link: a newer version
 /// from the same link and the same author is installed. `fetch` downloads
 /// a link, normally [`fetch`].
@@ -427,6 +438,13 @@ mod tests {
             crate::package::authenticate_plugin(&installation.plugins.join("timers"), &trust)
                 .unwrap();
         assert_eq!(package.manifest.plugin.version, "1.1.0");
+
+        // Compiling again keeps the version and the link.
+        let repaired = repair(&installation, "timers").unwrap();
+        assert_eq!(repaired.version, "1.1.0");
+        assert!(!repaired.new_author);
+        let pin = Pin::read(&installation.keys, "timers").unwrap().unwrap();
+        assert_eq!(pin.url.as_deref(), Some(LINK));
 
         // A plugin the player removed is not brought back.
         std::fs::remove_dir_all(installation.plugins.join("timers")).unwrap();

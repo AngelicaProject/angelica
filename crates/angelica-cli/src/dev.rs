@@ -43,6 +43,9 @@ pub struct InstallArgs {
     /// `runtime.dll` built with this key's public half.
     #[arg(long)]
     runtime: Option<PathBuf>,
+    /// `plugin-installer.exe` from the same build, placed beside the runtime.
+    #[arg(long)]
+    installer: Option<PathBuf>,
     /// The game map folder, with `map.toml`.
     #[arg(long)]
     map: Option<PathBuf>,
@@ -118,6 +121,17 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
             &key.sign(&bytes).to_bytes(),
         )?;
         report.insert("runtime".into(), folder.display().to_string().into());
+    }
+    if let Some(path) = &args.installer {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Beside the runtime the proxy loads at the next start.
+        let folder = args.installation.join("staged");
+        write(&folder.join("plugin-installer.exe"), &bytes)?;
+        write(
+            &folder.join("plugin-installer.exe.sig"),
+            &key.sign(&bytes).to_bytes(),
+        )?;
+        report.insert("installer".into(), folder.display().to_string().into());
     }
     if let Some(map) = &args.map {
         let mut files = BTreeMap::new();

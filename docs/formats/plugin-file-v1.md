@@ -31,7 +31,7 @@ The installer downloads from any public `https` host, with the rules of the plug
 
 ## Installation
 
-`angelica plugin install <file or link> --installation <folder>` installs a plugin file into a [host installation](./host-installation-v1.md):
+A player installs from a link in the Angelica menu, where the host runs the plugin installer outside the game ([plugins from their authors](../architecture/plugins.md#plugins-from-their-authors)); `angelica plugin install <file or link> --installation <folder>` does the same from the command line. Either installs a plugin file into a [host installation](./host-installation-v1.md):
 
 1. It verifies the signature and the manifest.
 2. The first installation of a plugin id binds the id to the author's key in `keys/authors/<plugin-id>.json`: `{"format": 1, "plugin_id": "timers", "author_key": "<lowercase hex>", "url": "<link>"}`, where `url` is the link the plugin was last installed from and is absent for a file. A file of the same id signed by another key is refused, and so is a plugin id already installed from the catalog.
@@ -39,7 +39,7 @@ The installer downloads from any public `https` host, with the rules of the plug
 
 ## Updates
 
-`angelica plugin update --installation <folder>` checks the link of every installed plugin that has one. A file from the same author with the same plugin id and a newer `plugin.version` is installed as above; the same or an older version leaves the plugin as it is; another author's file or another plugin at the link is refused and reported. A plugin whose package folder the player removed is not brought back.
+The host checks the link of every installed plugin that has one at game start and every 6 hours; `angelica plugin update --installation <folder>` does it at once. A file from the same author with the same plugin id and a newer `plugin.version` is installed as above; the same or an older version leaves the plugin as it is; another author's file or another plugin at the link is refused and reported. A plugin whose package folder the player removed is not brought back.
 
 ## Loading
 

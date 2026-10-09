@@ -22,11 +22,12 @@ const MAX_ICONS: usize = 512;
 /// The time a frame may spend reading and decoding icons.
 const ICON_BUDGET: Duration = Duration::from_millis(2);
 
-/// State the panel keeps between frames: the text the player is editing
-/// and the icons it has decoded.
+/// State the panel keeps between frames: the text the player is editing,
+/// the plugin link being typed, and the icons it has decoded.
 #[derive(Default)]
 pub struct Panel {
     inputs: HashMap<(String, String, String), String>,
+    link: String,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -98,6 +99,7 @@ impl Panel {
     pub fn new(map_status: Vec<String>) -> Self {
         Self {
             inputs: HashMap::new(),
+            link: String::new(),
             icons: Icons::default(),
             map_status,
         }
@@ -115,6 +117,9 @@ impl Panel {
                 ui.separator();
                 for plugin in &host.plugins() {
                     draw_plugin(host, plugin, ui);
+                }
+                if let Some(installer) = host.plugin_installer() {
+                    draw_link(installer, &mut self.link, ui);
                 }
                 let diagnostics = host.diagnostics();
                 if !diagnostics.is_empty() {
@@ -251,6 +256,42 @@ fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
                 });
         }
     });
+}
+
+/// Installing a plugin from its author's link, and what the installer
+/// reported.
+fn draw_link(
+    installer: &crate::plugin_installer::PluginInstaller,
+    link: &mut String,
+    ui: &mut egui::Ui,
+) {
+    egui::CollapsingHeader::new("Install a plugin from a link")
+        .id_salt("angelica-install-link")
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "Plugins from a link come from their authors, not from the Angelica catalog.                      You approve what they may do before they run.",
+                )
+                .weak(),
+            );
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(link).hint_text("https://…"));
+                let busy = installer.busy();
+                let label = if busy { "Installing…" } else { "Install" };
+                if ui
+                    .add_enabled(!busy && !link.trim().is_empty(), egui::Button::new(label))
+                    .clicked()
+                {
+                    match installer.install(link) {
+                        Ok(()) => link.clear(),
+                        Err(error) => installer.report(&error),
+                    }
+                }
+            });
+            for message in installer.messages().iter().rev() {
+                ui.label(egui::RichText::new(message).weak());
+            }
+        });
 }
 
 /// What a plugin awaiting approval asks for, by class, and the approval

@@ -164,6 +164,8 @@ pub struct Host {
     diagnostics: Mutex<VecDeque<String>>,
     log_sink: Arc<dyn Fn(&str) + Send + Sync>,
     opener: Box<dyn Fn(&Path) + Send + Sync>,
+    /// Installs plugins from links outside the game; none in tests.
+    plugin_installer: std::sync::OnceLock<Arc<crate::plugin_installer::PluginInstaller>>,
 }
 
 impl Host {
@@ -190,7 +192,18 @@ impl Host {
             diagnostics: Mutex::new(VecDeque::new()),
             log_sink,
             opener,
+            plugin_installer: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Gives the host the installer of plugins from links.
+    pub fn set_plugin_installer(&self, installer: Arc<crate::plugin_installer::PluginInstaller>) {
+        let _ = self.plugin_installer.set(installer);
+    }
+
+    #[must_use]
+    pub fn plugin_installer(&self) -> Option<&Arc<crate::plugin_installer::PluginInstaller>> {
+        self.plugin_installer.get()
     }
 
     /// The engine components must be compiled with.

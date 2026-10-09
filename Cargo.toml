@@ -7,6 +7,7 @@ members = [
   "crates/angelica-text",
   "crates/angelica-sqpack",
   "crates/angelica-cli",
+  "crates/angelica-plugin-installer",
   "crates/angelica-proxy",
   "crates/angelica-host",
   "crates/angelica-sdk",

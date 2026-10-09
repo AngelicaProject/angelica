@@ -18,6 +18,7 @@ The Angelica menu lists:
 
 - the game map for the running build: whether a signed build record verified it, and every absent entry with the reason;
 - each installed plugin: name, id, version, description, and state. A plugin from its author, outside the catalog, says so. A plugin awaiting approval shows its permissions in plain words, grouped by [class](./permissions.md), and an approval button; a new version of an approved plugin shows only what it adds. An approved plugin has Enable or Disable, Open (which sends the plugin `open-requested`), Open plugin folder, and its recent log. A faulted plugin shows the reason, Retry, and Keep disabled;
+- **Install a plugin from a link**: a field for an `https` link to a [plugin file](../formats/plugin-file-v1.md), an Install button, and what the plugin installer reported: installations, updates, and plugins compiled again. The installed plugin appears in the list within a second and waits for approval;
 - recent host diagnostics.
 
 Enabling, disabling, approving, and retrying apply in the current session, on the main thread at the next frame.

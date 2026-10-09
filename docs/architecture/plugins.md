@@ -6,6 +6,16 @@ A plugin is a WebAssembly component of the `plugin` world in [`wit/`](../../wit)
 
 The release pipeline compiles each component outside the game with `angelica plugin compile` and signs the source and the compiled artifact together ([installation](../formats/host-installation-v1.md)). A plugin from its author, outside the catalog, comes as a [plugin file](../formats/plugin-file-v1.md) signed with the author's key; the installer compiles it on the player's computer and signs the package with the installation's key. The host loads only authenticated artifacts and never compiles in the game.
 
+## Plugins from their authors
+
+A plugin outside the catalog comes from its author's link ([plugin file](../formats/plugin-file-v1.md)). The host never downloads or compiles one in the game process: it runs `plugin-installer.exe`, which ships beside `runtime.dll`, is signed like it, and is built with the same engine. The host checks the program's signature with the release key and holds it open, without write or delete sharing, until the process has started. One job runs at a time on a host thread:
+
+- **install**, when the player gives a link in the Angelica menu: download, check the author, compile, write the package; the reload below picks it up and it waits for approval;
+- **update**, at game start and every 6 hours: newer versions of the same author from each plugin's link, installed the same way; a version that declares more waits for approval;
+- **repair**, when this runtime cannot load the compiled component of a plugin from its author, as after a runtime update: the installed plugin file is compiled again, once per game session.
+
+The menu shows what each job did. Without the program, the menu says so when the player installs from a link, and nothing is updated.
+
 ## Isolation
 
 - A plugin sees only its own linear memory and the host's imports. Game memory is never mapped into it; everything a plugin gives or gets is copied.

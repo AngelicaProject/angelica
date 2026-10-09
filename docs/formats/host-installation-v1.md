@@ -1,6 +1,6 @@
 # Host installation format 1
 
-The installation folder contains `runtime.dll` and its detached release signature, as specified in [loading](../architecture/loading.md), or a newer pair in `staged/`.
+The installation folder contains `runtime.dll` and its detached release signature, as specified in [loading](../architecture/loading.md), or a newer pair in `staged/`. Beside the runtime are `plugin-installer.exe` from the same build and its detached release signature `plugin-installer.exe.sig` (64 raw Ed25519 bytes over the file), which the host runs to install [plugins from their authors](../architecture/plugins.md#plugins-from-their-authors).
 
 ## Configuration
 
@@ -60,4 +60,4 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 ## Development installations
 
-`angelica dev key` creates a development signing key, and `angelica dev install` signs a runtime, a map, and plugins with it into an installation folder (the runtime into `staged/`). The proxy and runtime must be built with that key's public half in `ANGELICA_RELEASE_PUBLIC_KEY`. A development key is never a release key.
+`angelica dev key` creates a development signing key, and `angelica dev install` signs a runtime, the plugin installer, a map, and plugins with it into an installation folder (the runtime and the plugin installer into `staged/`). The proxy and runtime must be built with that key's public half in `ANGELICA_RELEASE_PUBLIC_KEY`. A development key is never a release key.

@@ -27,6 +27,7 @@ pub mod manifest;
 mod mutations;
 pub mod package;
 pub mod panel;
+pub mod plugin_installer;
 pub mod sandbox;
 pub mod sheets;
 pub mod state;
