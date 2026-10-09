@@ -20,7 +20,7 @@ Everything that runs in the game is Rust or WebAssembly. A dependency is added w
 
 `angelica-hook` uses `iced-x86` with `encoder`, `block_encoder`, and `instr_info` to move instructions into trampolines, and `windows-sys` (MIT OR Apache-2.0) for memory protection, executable memory, and thread suspension.
 
-`angelica-cli` uses `clap` (MIT OR Apache-2.0) for its arguments, `serde_json` (MIT OR Apache-2.0) for `--json` output, `sha2` for `exe_sha256`, and `ed25519-dalek` with `getrandom` 0.4.3 (MIT OR Apache-2.0) to create development keys and sign development installations.
+`angelica-cli` uses `clap` (MIT OR Apache-2.0) for its arguments, `iced-x86` with its Intel formatter for `angelica exe`, `serde_json` (MIT OR Apache-2.0) for `--json` output, `sha2` for `exe_sha256`, and `ed25519-dalek` with `getrandom` 0.4.3 (MIT OR Apache-2.0) to create development keys and sign development installations.
 
 Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
 
