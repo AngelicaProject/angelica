@@ -26,6 +26,7 @@ pub mod installer;
 pub mod jobs;
 pub mod language;
 pub mod manifest;
+pub mod menu;
 #[cfg(test)]
 mod mutations;
 pub mod package;

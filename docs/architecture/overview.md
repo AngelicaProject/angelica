@@ -62,7 +62,7 @@ Each crate owns one boundary:
 
 `angelica-host` separates the platform-independent host from the Windows adapter:
 
-- `host` owns installed plugins, their lifecycle, grants, settings, and the work of each frame; `sandbox` and `jobs` own wasmtime stores, the imports, and per-call limits; `storage` the plugins' folders; `ui` and `panel` the windows and the Angelica menu.
+- `host` owns installed plugins, their lifecycle, grants, settings, and the work of each frame; `sandbox` and `jobs` own wasmtime stores, the imports, and per-call limits; `storage` the plugins' folders; `ui` and `panel` plugin windows; `menu` the Angelica menu, `language` its English and Russian strings and the player's settings, and `theme`, `fonts`, and `feather` Angelica's look.
 - `game_data` reads the installed game's files and sheets through `angelica-sqpack` and caches decoded sheets.
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
 - `game::Game` is the boundary to the game process: the version and the adapters a service needs.

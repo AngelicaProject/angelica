@@ -21,6 +21,69 @@ const MESSAGES: usize = 16;
 const MAX_PROGRAM: u64 = 128 * 1024 * 1024;
 const MAX_OUTPUT: u64 = 1024 * 1024;
 
+/// What the installer reported, for the menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Report {
+    /// Installing from the link has started.
+    Installing(String),
+    Installed {
+        plugin: String,
+        version: String,
+    },
+    Updated {
+        plugin: String,
+        from: String,
+        to: String,
+    },
+    /// A plugin compiled again for this runtime.
+    Compiled(String),
+    /// A job or part of one failed, with the reason.
+    Failed(Failure, String),
+}
+
+/// What failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    /// The installer could not start.
+    Start,
+    /// Installing from the link.
+    Install(String),
+    /// Checking updates.
+    Updates,
+    /// Updating the plugin.
+    Update(String),
+    /// Compiling plugins again.
+    Compiling,
+    /// Compiling the plugin again.
+    Compile(String),
+}
+
+impl std::fmt::Display for Report {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Installing(url) => write!(f, "Installing from {url}"),
+            Self::Installed { plugin, version } => write!(
+                f,
+                "Installed {plugin} {version}; it appears in the list within a second"
+            ),
+            Self::Updated { plugin, from, to } => write!(f, "Updated {plugin} from {from} to {to}"),
+            Self::Compiled(plugin) => {
+                write!(f, "Compiled {plugin} again for this version of Angelica")
+            }
+            Self::Failed(failure, reason) => match failure {
+                Failure::Start => write!(f, "the plugin installer could not start: {reason}"),
+                Failure::Install(url) => write!(f, "Could not install from {url}: {reason}"),
+                Failure::Updates => write!(f, "Could not check plugin updates: {reason}"),
+                Failure::Update(plugin) => write!(f, "Could not update {plugin}: {reason}"),
+                Failure::Compiling => write!(f, "Could not compile plugins again: {reason}"),
+                Failure::Compile(plugin) => {
+                    write!(f, "Could not compile {plugin} again: {reason}")
+                }
+            },
+        }
+    }
+}
+
 /// A job for the installer program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Job {
@@ -37,7 +100,9 @@ pub struct PluginInstaller {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     /// Whether a job the player started is running or waiting.
     busy: Arc<Mutex<usize>>,
-    messages: Arc<Mutex<VecDeque<String>>>,
+    /// The latest reports, each with its number in the session.
+    messages: Arc<Mutex<VecDeque<(u64, Report)>>>,
+    reported: Mutex<u64>,
     /// The plugins compiled again this session: once each.
     repaired: Mutex<BTreeSet<String>>,
     log: Arc<dyn Fn(&str) + Send + Sync>,
@@ -60,6 +125,7 @@ impl PluginInstaller {
             jobs: Mutex::new(None),
             busy: Arc::new(Mutex::new(0)),
             messages: Arc::new(Mutex::new(VecDeque::new())),
+            reported: Mutex::new(0),
             repaired: Mutex::new(BTreeSet::new()),
             log,
         }
@@ -98,13 +164,8 @@ impl PluginInstaller {
                 }
             });
         if let Err(error) = spawned {
-            self.note(format!("the plugin installer could not start: {error}"));
+            self.note(Report::Failed(Failure::Start, error.to_string()));
         }
-    }
-
-    /// Shows a message to the player with the installer's own.
-    pub fn report(&self, message: &str) {
-        self.note(message.to_owned());
     }
 
     /// Whether the installer program is there.
@@ -126,7 +187,7 @@ impl PluginInstaller {
             return Err("a plugin link starts with https:// and has no spaces".into());
         }
         *self.busy.lock().unwrap_or_else(PoisonError::into_inner) += 1;
-        self.note(format!("Installing from {url}"));
+        self.note(Report::Installing(url.to_owned()));
         self.send(Job::Install(url.to_owned()));
         Ok(())
     }
@@ -150,9 +211,10 @@ impl PluginInstaller {
         *self.busy.lock().unwrap_or_else(PoisonError::into_inner) > 0
     }
 
-    /// What the installer reported, oldest first.
+    /// What the installer reported, oldest first, each with its number in
+    /// the session.
     #[must_use]
-    pub fn messages(&self) -> Vec<String> {
+    pub fn messages(&self) -> Vec<(u64, Report)> {
         self.messages
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -173,13 +235,15 @@ impl PluginInstaller {
         }
     }
 
-    fn note(&self, message: String) {
-        (self.log)(&message);
+    fn note(&self, report: Report) {
+        (self.log)(&report.to_string());
+        let mut reported = self.reported.lock().unwrap_or_else(PoisonError::into_inner);
+        *reported += 1;
         let mut messages = self.messages.lock().unwrap_or_else(PoisonError::into_inner);
         if messages.len() == MESSAGES {
             messages.pop_front();
         }
-        messages.push_back(message);
+        messages.push_back((*reported, report));
     }
 
     fn run(&self, job: &Job) {
@@ -205,32 +269,32 @@ impl PluginInstaller {
         let report = match result {
             Ok(report) => report,
             Err(error) => {
-                self.note(match job {
-                    Job::Install(url) => format!("Could not install from {url}: {error}"),
-                    Job::Update => format!("Could not check plugin updates: {error}"),
-                    Job::Repair(_) => format!("Could not compile plugins again: {error}"),
-                });
+                let failure = match job {
+                    Job::Install(url) => Failure::Install(url.clone()),
+                    Job::Update => Failure::Updates,
+                    Job::Repair(_) => Failure::Compiling,
+                };
+                self.note(Report::Failed(failure, error));
                 return;
             }
         };
         if let Some(installed) = report.get("installed") {
-            self.note(format!(
-                "Installed {} {}; it appears in the list within a second",
-                text(&installed["plugin"]),
-                text(&installed["version"])
-            ));
+            self.note(Report::Installed {
+                plugin: text(&installed["plugin"]),
+                version: text(&installed["version"]),
+            });
         }
         if let Some(updates) = report.get("updates").and_then(|u| u.as_object()) {
             for (id, outcome) in updates {
                 match outcome["outcome"].as_str() {
-                    Some("updated") => self.note(format!(
-                        "Updated {id} from {} to {}",
-                        text(&outcome["from"]),
-                        text(&outcome["to"])
-                    )),
-                    Some("failed") => self.note(format!(
-                        "Could not update {id}: {}",
-                        text(&outcome["reason"])
+                    Some("updated") => self.note(Report::Updated {
+                        plugin: id.clone(),
+                        from: text(&outcome["from"]),
+                        to: text(&outcome["to"]),
+                    }),
+                    Some("failed") => self.note(Report::Failed(
+                        Failure::Update(id.clone()),
+                        text(&outcome["reason"]),
                     )),
                     _ => {}
                 }
@@ -239,8 +303,8 @@ impl PluginInstaller {
         if let Some(repaired) = report.get("repaired").and_then(|r| r.as_object()) {
             for (id, outcome) in repaired {
                 self.note(match outcome.get("error") {
-                    Some(error) => format!("Could not compile {id} again: {}", text(error)),
-                    None => format!("Compiled {id} again for this version of Angelica"),
+                    Some(error) => Report::Failed(Failure::Compile(id.clone()), text(error)),
+                    None => Report::Compiled(id.clone()),
                 });
             }
         }

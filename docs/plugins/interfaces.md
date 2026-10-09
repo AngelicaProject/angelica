@@ -184,4 +184,4 @@ Leave a trace for the player and for debugging.
 
 - SDK: `angelica_sdk::info`, `warning`, `error`.
 - Permission: none. Instance: main and job.
-- The log is shown under Diagnostics in the Angelica menu.
+- The log is shown under Settings → For developers in the Angelica menu.

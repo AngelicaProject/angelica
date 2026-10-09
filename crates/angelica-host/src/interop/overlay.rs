@@ -295,17 +295,7 @@ impl Overlay {
             return Ok(());
         };
         if frames.is_none() {
-            let context = egui::Context::default();
-            context.set_fonts(overlay_fonts()?);
-            self.input.attach(description.OutputWindow.0 as usize)?;
-            *frames = Some(Frames {
-                painter: Painter::new(chain)?,
-                context,
-                panel: Panel::new(self.map_status.clone()),
-                started: Instant::now(),
-                last: Instant::now(),
-                window: description.OutputWindow.0 as usize,
-            });
+            *frames = Some(self.attach(chain, description.OutputWindow.0 as usize)?);
             super::log("overlay attached to a process swap chain");
         }
         let frame = frames.as_mut().ok_or("renderer initialization failed")?;
@@ -354,20 +344,24 @@ impl Overlay {
             .entry(egui::ViewportId::ROOT)
             .or_default()
             .native_pixels_per_point = Some(scale);
-        let visible = self.input.visible.load(Ordering::Acquire);
+        let menu = self.input.menu.load(Ordering::Acquire);
         let panel = &mut frame.panel;
+        let mut keep = menu;
         let mut output = frame.context.run_ui(input, |ui| {
-            if visible {
-                panel.draw(&self.host, ui.ctx());
-            }
+            keep = panel.draw(&self.host, ui.ctx(), menu);
         });
+        if menu && !keep {
+            self.input.menu.store(false, Ordering::Release);
+        }
         self.copy(std::mem::take(&mut output.platform_output.commands));
         self.input
             .mouse
             .store(frame.context.egui_wants_pointer_input(), Ordering::Release);
-        self.input
-            .keyboard
-            .store(frame.context.egui_wants_keyboard_input(), Ordering::Release);
+        // The open menu takes the keyboard from the game.
+        self.input.keyboard.store(
+            frame.context.egui_wants_keyboard_input() || keep,
+            Ordering::Release,
+        );
         let primitives = frame
             .context
             .tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
@@ -380,6 +374,23 @@ impl Overlay {
         output.textures_delta.clear();
         result
     }
+    /// The renderer, egui with Angelica's fonts and style, and the panel
+    /// for the game's `window`, whose input it starts receiving.
+    fn attach(&self, chain: &IDXGISwapChain, window: usize) -> Result<Frames, String> {
+        let context = egui::Context::default();
+        context.set_fonts(crate::fonts::definitions(system_fonts()?));
+        crate::theme::apply(&context);
+        self.input.attach(window)?;
+        Ok(Frames {
+            painter: Painter::new(chain)?,
+            context,
+            panel: Panel::new(&self.host, self.map_status.clone(), system_language()),
+            started: Instant::now(),
+            last: Instant::now(),
+            window,
+        })
+    }
+
     /// Puts the text the player copied on the clipboard.
     fn copy(&self, commands: Vec<egui::OutputCommand>) {
         for command in commands {
@@ -400,9 +411,18 @@ impl Overlay {
     }
 }
 
-fn overlay_fonts() -> Result<egui::FontDefinitions, String> {
+/// The language of the system's interface.
+fn system_language() -> crate::language::Language {
+    // SAFETY: returns the user's interface language without preconditions.
+    let language = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    crate::language::Language::from_windows(language)
+}
+
+/// The system's fonts for what Angelica's own fonts do not cover: Segoe UI,
+/// and the first Japanese font found.
+fn system_fonts() -> Result<Vec<(String, Vec<u8>)>, String> {
     use std::os::windows::ffi::OsStringExt;
-    let mut fonts = egui::FontDefinitions::default();
+    let mut fonts = Vec::new();
     let mut path = vec![0u16; 32768];
     // SAFETY: writable output array has the supplied Windows path capacity.
     let len = unsafe {
@@ -415,24 +435,12 @@ fn overlay_fonts() -> Result<egui::FontDefinitions, String> {
         return Err("Windows font directory is unavailable".into());
     }
     let root = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..len])).join("Fonts");
-    let regular =
-        std::fs::read(root.join("segoeui.ttf")).map_err(|e| format!("Windows UI font: {e}"))?;
-    fonts.font_data.insert(
-        "system-ui".into(),
-        Arc::new(egui::FontData::from_owned(regular)),
-    );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts.families.insert(family, vec!["system-ui".into()]);
+    if let Ok(bytes) = std::fs::read(root.join("segoeui.ttf")) {
+        fonts.push(("system-ui".to_owned(), bytes));
     }
     for name in ["meiryo.ttc", "msgothic.ttc", "YuGothR.ttc"] {
         if let Ok(bytes) = std::fs::read(root.join(name)) {
-            fonts.font_data.insert(
-                "japanese".into(),
-                Arc::new(egui::FontData::from_owned(bytes)),
-            );
-            for names in fonts.families.values_mut() {
-                names.push("japanese".into());
-            }
+            fonts.push(("japanese".to_owned(), bytes));
             break;
         }
     }

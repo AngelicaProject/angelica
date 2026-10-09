@@ -196,6 +196,28 @@ impl Host {
         }
     }
 
+    /// The folder of the host's and the player's settings.
+    #[must_use]
+    pub fn state_directory(&self) -> &Path {
+        &self.directories.state
+    }
+
+    /// The memory each instance of the plugin has.
+    #[must_use]
+    pub fn memory_bytes(&self, plugin: &Plugin) -> u64 {
+        plugin
+            .manifest
+            .plugin
+            .memory_bytes
+            .unwrap_or(self.limits.memory_bytes)
+    }
+
+    /// The guest time a plugin's calls may take in one frame.
+    #[must_use]
+    pub fn frame_time(&self) -> std::time::Duration {
+        self.limits.call_time
+    }
+
     /// Gives the host the installer of plugins from links.
     pub fn set_plugin_installer(&self, installer: Arc<crate::plugin_installer::PluginInstaller>) {
         let _ = self.plugin_installer.set(installer);

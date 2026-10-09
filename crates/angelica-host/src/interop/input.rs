@@ -18,7 +18,8 @@ use windows_sys::Win32::{
 
 pub struct Input {
     pub raw: Mutex<egui::RawInput>,
-    pub visible: AtomicBool,
+    /// Whether the Angelica menu is open; `Insert` toggles it.
+    pub menu: AtomicBool,
     pub mouse: AtomicBool,
     pub keyboard: AtomicBool,
     window: AtomicUsize,
@@ -28,7 +29,7 @@ impl Default for Input {
     fn default() -> Self {
         Self {
             raw: Mutex::new(egui::RawInput::default()),
-            visible: AtomicBool::new(true),
+            menu: AtomicBool::new(false),
             mouse: AtomicBool::new(false),
             keyboard: AtomicBool::new(false),
             window: AtomicUsize::new(0),
@@ -84,12 +85,9 @@ impl Input {
 
     fn event(&self, message: u32, wparam: usize, lparam: isize) -> bool {
         if message == WM_KEYDOWN && wparam == 0x2d && (lparam.cast_unsigned() & (1 << 30)) == 0 {
-            self.visible.fetch_xor(true, Ordering::AcqRel);
+            self.menu.fetch_xor(true, Ordering::AcqRel);
             self.release();
             return true;
-        }
-        if !self.visible.load(Ordering::Acquire) {
-            return false;
         }
         let Ok(mut input) = self.raw.try_lock() else {
             return false;
@@ -178,8 +176,10 @@ impl Input {
             | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
                 self.mouse.load(Ordering::Acquire)
             }
-            WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP | WM_CHAR => {
-                self.keyboard.load(Ordering::Acquire)
+            WM_KEYDOWN | WM_KEYUP | WM_CHAR => self.keyboard.load(Ordering::Acquire),
+            // The open menu leaves system keys such as Alt+F4 to the game.
+            WM_SYSKEYDOWN | WM_SYSKEYUP => {
+                self.keyboard.load(Ordering::Acquire) && !self.menu.load(Ordering::Acquire)
             }
             _ => false,
         }

@@ -50,6 +50,10 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 `state/<plugin-id>.json` holds `{"format": 1, "enabled": false}` when the player turned the plugin off; without the file an approved plugin is enabled. Faults do not change it. An unreadable file or another format refuses the plugin.
 
+## Angelica settings
+
+`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru"}`, where `language` is `en` or `ru` and is left out when the player has not chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
+
 ## Storage
 
 `storage/<plugin-id>/` is the plugin's folder ([storage](./plugin-api-v1.md#storage)).

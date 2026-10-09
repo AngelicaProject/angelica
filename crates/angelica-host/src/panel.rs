@@ -1,15 +1,14 @@
 //! The Angelica menu and plugin windows, drawn with egui. Player actions go
 //! back to the host as queued actions and events; nothing here calls a
-//! plugin.
+//! plugin. The menu itself is in [`crate::menu`].
 #![forbid(unsafe_code)]
 use crate::{
-    host::{Action, Event, Host, Plugin, Status},
-    sandbox::bindings::angelica::plugin::{
-        runtime::Level,
-        ui::{
-            Choice, Chosen, Edited, Icon, Number, NumberSet, Table, Tabs, TextInput, Toggled, Tone,
-            Widget, WidgetRef,
-        },
+    host::{Event, Host, Plugin, Status},
+    language::Language,
+    menu::Menu,
+    sandbox::bindings::angelica::plugin::ui::{
+        Choice, Chosen, Edited, Icon, Number, NumberSet, Table, Tabs, TextInput, Toggled, Tone,
+        Widget, WidgetRef,
     },
 };
 use std::{
@@ -22,12 +21,11 @@ const MAX_ICONS: usize = 512;
 /// The time a frame may spend reading and decoding icons.
 const ICON_BUDGET: Duration = Duration::from_millis(2);
 
-/// State the panel keeps between frames: the text the player is editing,
-/// the plugin link being typed, and the icons it has decoded.
-#[derive(Default)]
+/// State the panel keeps between frames: the menu, the text the player is
+/// editing in plugin windows, and the icons it has decoded.
 pub struct Panel {
+    menu: Menu,
     inputs: HashMap<(String, String, String), String>,
-    link: String,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -95,41 +93,26 @@ impl Icons {
 }
 
 impl Panel {
+    /// The panel with the player's settings; `system` is the language of
+    /// the system.
     #[must_use]
-    pub fn new(map_status: Vec<String>) -> Self {
+    pub fn new(host: &Host, map_status: Vec<String>, system: Language) -> Self {
         Self {
+            menu: Menu::new(host, system),
             inputs: HashMap::new(),
-            link: String::new(),
             icons: Icons::default(),
             map_status,
         }
     }
 
-    pub fn draw(&mut self, host: &Host, context: &egui::Context) {
+    /// Draws the menu when `menu` is true, otherwise the plugins' windows
+    /// and Angelica's sign. Returns whether the menu stays open.
+    pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {
         self.icons.begin_frame();
-        egui::Window::new("Angelica")
-            .default_width(420.0)
-            .vscroll(true)
-            .show(context, |ui| {
-                for line in &self.map_status {
-                    ui.label(egui::RichText::new(line).weak());
-                }
-                ui.separator();
-                for plugin in &host.plugins() {
-                    draw_plugin(host, plugin, ui);
-                }
-                if let Some(installer) = host.plugin_installer() {
-                    draw_link(installer, &mut self.link, ui);
-                }
-                let diagnostics = host.diagnostics();
-                if !diagnostics.is_empty() {
-                    egui::CollapsingHeader::new("Diagnostics").show(ui, |ui| {
-                        for line in diagnostics.iter().rev() {
-                            ui.label(line);
-                        }
-                    });
-                }
-            });
+        let keep = self.menu.draw(host, context, &self.map_status, menu);
+        if menu {
+            return keep;
+        }
         for plugin in &host.plugins() {
             if plugin.status() != Status::Running {
                 continue;
@@ -138,6 +121,7 @@ impl Panel {
                 self.draw_window(host, plugin, &window, context);
             }
         }
+        keep
     }
 
     fn draw_window(
@@ -172,151 +156,6 @@ impl Panel {
         if !open {
             host.queue_event(id, Event::Closed(window.id.clone()));
         }
-    }
-}
-
-fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
-    let manifest = &plugin.manifest;
-    let id = manifest.id().to_owned();
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.strong(&manifest.plugin.name);
-            ui.label(egui::RichText::new(format!("{} {}", id, manifest.plugin.version)).weak());
-        });
-        ui.label(&manifest.plugin.description);
-        if manifest.origin == crate::manifest::Origin::Author {
-            let by = if manifest.plugin.authors.is_empty() {
-                "its author".to_owned()
-            } else {
-                manifest.plugin.authors.join(", ")
-            };
-            ui.label(
-                egui::RichText::new(format!("From {by}, not from the Angelica catalog")).weak(),
-            );
-        }
-        let status = plugin.status();
-        match &status {
-            Status::AwaitingApproval => draw_approval(host, plugin, ui),
-            Status::Disabled => {
-                if ui.button("Enable").clicked() {
-                    host.queue(Action::Enable(id.clone()));
-                }
-            }
-            Status::Running => {
-                ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
-                        host.queue_event(&id, Event::OpenRequested);
-                    }
-                    if ui.button("Disable").clicked() {
-                        host.queue(Action::Disable(id.clone()));
-                    }
-                });
-            }
-            Status::Faulted(reason) => {
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!("Stopped after a failure: {reason}"),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("Retry").clicked() {
-                        host.queue(Action::Enable(id.clone()));
-                    }
-                    if ui.button("Keep disabled").clicked() {
-                        host.queue(Action::Disable(id.clone()));
-                    }
-                });
-            }
-        }
-        if status != Status::AwaitingApproval && ui.button("Open plugin folder").clicked() {
-            host.queue(Action::OpenFolder(id.clone()));
-        }
-        let lines = plugin.log.lines();
-        if !lines.is_empty() {
-            egui::CollapsingHeader::new("Log")
-                .id_salt(("angelica-log", &id))
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for line in lines {
-                                let text = egui::RichText::new(line.text);
-                                match line.level {
-                                    Level::Error => {
-                                        ui.colored_label(ui.visuals().error_fg_color, text)
-                                    }
-                                    Level::Warning => {
-                                        ui.colored_label(ui.visuals().warn_fg_color, text)
-                                    }
-                                    Level::Debug => ui.label(text.weak()),
-                                    Level::Info => ui.label(text),
-                                };
-                            }
-                        });
-                });
-        }
-    });
-}
-
-/// Installing a plugin from its author's link, and what the installer
-/// reported.
-fn draw_link(
-    installer: &crate::plugin_installer::PluginInstaller,
-    link: &mut String,
-    ui: &mut egui::Ui,
-) {
-    egui::CollapsingHeader::new("Install a plugin from a link")
-        .id_salt("angelica-install-link")
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(
-                    "Plugins from a link come from their authors, not from the Angelica catalog.                      You approve what they may do before they run.",
-                )
-                .weak(),
-            );
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(link).hint_text("https://…"));
-                let busy = installer.busy();
-                let label = if busy { "Installing…" } else { "Install" };
-                if ui
-                    .add_enabled(!busy && !link.trim().is_empty(), egui::Button::new(label))
-                    .clicked()
-                {
-                    match installer.install(link) {
-                        Ok(()) => link.clear(),
-                        Err(error) => installer.report(&error),
-                    }
-                }
-            });
-            for message in installer.messages().iter().rev() {
-                ui.label(egui::RichText::new(message).weak());
-            }
-        });
-}
-
-/// What a plugin awaiting approval asks for, by class, and the approval
-/// button.
-fn draw_approval(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
-    let requests = plugin.requests();
-    if plugin.approved_before() {
-        ui.label("This version also wants to:");
-    } else {
-        ui.label("Not approved yet. It may:");
-    }
-    if requests.is_empty() {
-        ui.label("  • show windows and keep files in its own folder");
-    }
-    for (class, requests) in requests {
-        ui.strong(class.title());
-        for request in requests {
-            ui.label(format!("  • {}", request.permission.description()));
-            for host in request.hosts {
-                ui.label(format!("      {host}"));
-            }
-        }
-    }
-    if ui.button("Approve and enable").clicked() {
-        host.queue(Action::Approve(plugin.manifest.id().to_owned()));
     }
 }
 
@@ -435,7 +274,7 @@ impl Drawer<'_> {
                 match text.tone {
                     Tone::Normal => ui.label(rich),
                     Tone::Muted => ui.label(rich.weak()),
-                    Tone::Good => ui.colored_label(egui::Color32::from_rgb(0x5c, 0xb8, 0x5c), rich),
+                    Tone::Good => ui.colored_label(crate::theme::ON, rich),
                     Tone::Warning => ui.colored_label(ui.visuals().warn_fg_color, rich),
                     Tone::Bad => ui.colored_label(ui.visuals().error_fg_color, rich),
                 }

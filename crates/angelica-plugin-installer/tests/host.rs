@@ -26,7 +26,11 @@ fn program(folder: &Path, key: &SigningKey) -> PathBuf {
 fn wait_for(installer: &PluginInstaller, text: &str) -> Vec<String> {
     let start = Instant::now();
     loop {
-        let messages = installer.messages();
+        let messages: Vec<String> = installer
+            .messages()
+            .iter()
+            .map(|(_, report)| report.to_string())
+            .collect();
         if messages.iter().any(|message| message.contains(text)) {
             return messages;
         }
