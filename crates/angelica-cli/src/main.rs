@@ -4,6 +4,7 @@ mod compile;
 mod dev;
 mod excel;
 mod exe;
+mod new;
 mod verify;
 
 use std::process::ExitCode;
@@ -40,6 +41,8 @@ enum Command {
 enum PluginCommand {
     /// Compile a component outside the game for the trusted package builder.
     Compile(compile::CompileArgs),
+    /// Create a plugin project: code, manifest, tests, and agent guidance.
+    New(new::NewArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -61,6 +64,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
+        Command::Plugin(PluginCommand::New(args)) => new::run(&args),
         Command::Dev(command) => dev::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),

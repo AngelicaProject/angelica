@@ -7,6 +7,8 @@
 //! [`Letters`]: runtime::text_case::Letters
 pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
+/// The host the tests run plugins in.
+pub use runtime;
 use runtime::{
     excel_text::{ExcelText, Rewrite, SheetInfo},
     game::Game,
