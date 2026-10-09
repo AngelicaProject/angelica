@@ -1,9 +1,9 @@
 //! An example plugin that uses every interface of the plugin API: a window
 //! with each kind of widget, files in its storage, a job, the game's files
-//! and sheets, a text table, and letter case. The host's integration tests drive it through its window.
+//! and sheets, a text table, letter case, and a replaced game file. The host's integration tests drive it through its window.
 use angelica_sdk::{
     Plugin,
-    api::{excel, excel_text, game_files, jobs, runtime, storage, text_case},
+    api::{excel, excel_text, file_replacements, game_files, jobs, runtime, storage, text_case},
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -73,6 +73,23 @@ impl Hello {
                     }
                     (Err(error), _) => self.say(format!("cannot read Item: {error}")),
                     (_, Err(error)) => self.say(format!("cannot read the font: {}", error.message)),
+                }
+            }
+            "texture" => {
+                // The font texture with its last pixel changed.
+                let result = game_files::read("common/font/font1.tex")
+                    .and_then(|mut texture| {
+                        if let Some(last) = texture.last_mut() {
+                            *last ^= 0xFF;
+                        }
+                        storage::write("font1.tex", &texture)
+                    })
+                    .and_then(|()| {
+                        file_replacements::replace("common/font/font1.tex", "font1.tex")
+                    });
+                match result {
+                    Ok(()) => self.say("texture replaced"),
+                    Err(error) => self.say(format!("texture refused: {}", error.message)),
                 }
             }
             "status" => match excel_text::status("example") {
@@ -204,6 +221,7 @@ impl Plugin for Hello {
                             .button("status", "Table status")
                             .button("letters", "Add letters")
                             .button("read", "Read game data")
+                            .button("texture", "Replace a texture")
                     })
                 })
                 .separator()

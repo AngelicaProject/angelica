@@ -43,7 +43,7 @@ pub mod ui;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        excel, excel_text, game_files, jobs, runtime, storage, text_case, types,
+        excel, excel_text, file_replacements, game_files, jobs, runtime, storage, text_case, types,
     };
 }
 

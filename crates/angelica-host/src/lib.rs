@@ -6,6 +6,8 @@ pub mod catalog;
 pub mod config;
 pub mod error;
 pub mod excel_text;
+pub mod file_formats;
+pub mod file_replacements;
 pub mod game;
 pub mod game_data;
 pub mod host;

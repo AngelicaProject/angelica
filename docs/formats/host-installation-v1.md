@@ -4,7 +4,7 @@ The installation folder contains `runtime.dll` and its detached release signatur
 
 ## Configuration
 
-`host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally an absolute `state_directory`. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, and `state` under the installation folder.
+`host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally absolute `state_directory` and `cache_directory` paths. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, `state`, and `cache` under the installation folder.
 
 Optional limits:
 
@@ -47,6 +47,10 @@ A plugin runs only when its grant covers every permission its manifest declares.
 ## Storage
 
 `storage/<plugin-id>/` is the plugin's folder ([storage](./plugin-api-v1.md#storage)).
+
+## Cache
+
+`cache/files/` holds the replacement game files plugins activated, named by the first 16 bytes of their SHA-256 in hex and their extension. The game reads them from there with its own disk reader, which takes paths of at most 259 characters; a cache path that would be longer refuses replacements. Files there are never trusted as input: each one is checked again when a plugin activates it.
 
 ## Development installations
 

@@ -7,6 +7,7 @@ pub struct WindowsGame {
     pub base: usize,
     pub excel: Arc<ExcelText>,
     pub case: Arc<TextCase>,
+    pub files: Arc<crate::file_replacements::FileReplacements>,
     pub version: String,
 }
 
@@ -31,5 +32,9 @@ impl Game for WindowsGame {
 
     fn enable_text_case(&self) -> Result<(), String> {
         super::text_case::install(&self.catalog, self.base, self.case.clone())
+    }
+
+    fn enable_file_replacements(&self) -> Result<(), String> {
+        super::file_reads::install(&self.catalog, self.base, self.files.clone())
     }
 }

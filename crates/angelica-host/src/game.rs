@@ -19,4 +19,11 @@ pub trait Game: Send + Sync {
     /// # Errors
     /// Names the map entries the game build lacks.
     fn enable_text_case(&self) -> Result<(), String>;
+
+    /// Makes the game read the plugins' replacement files when it loads
+    /// them.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks.
+    fn enable_file_replacements(&self) -> Result<(), String>;
 }

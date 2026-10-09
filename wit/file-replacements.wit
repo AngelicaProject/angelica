@@ -1,0 +1,26 @@
+package angelica:plugin@1.0.0;
+
+/// Game files the plugin replaces.
+///
+/// The host checks a replacement against the game's original file before
+/// serving it, and serves only formats it can check: font tables (`.fdt`)
+/// keep the original's headers and kerning and keep every glyph inside the
+/// font's atlas; textures (`.tex`) keep the original's header and size, so
+/// only their pixels change. When the game then loads the file, it reads
+/// the replacement. Files the game loaded before keep what it read until it
+/// loads them again; a plugin that replaces files in `start` while the game
+/// starts covers everything the game loads.
+///
+/// Requires `files.replace`. Called from the main instance only.
+interface file-replacements {
+    use types.{error};
+
+    /// Serves the file at `storage-path` in the plugin's storage whenever
+    /// the game loads `game-path`, such as `common/font/AXIS_12.fdt`.
+    /// Refused when the game has no such file, the format cannot be
+    /// checked, the check fails, or another plugin replaces the file.
+    replace: func(game-path: string, storage-path: string) -> result<_, error>;
+
+    /// Serves the game's own file again from its next load.
+    restore: func(game-path: string) -> result<_, error>;
+}

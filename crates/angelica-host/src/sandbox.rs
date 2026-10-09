@@ -139,6 +139,7 @@ impl Drop for Sandbox {
 /// The game-facing services every plugin shares.
 pub struct Services {
     pub data: Arc<crate::game_data::GameData>,
+    pub files: Arc<crate::file_replacements::FileReplacements>,
     pub excel: Arc<ExcelText>,
     pub case: Arc<TextCase>,
     pub game: Arc<dyn crate::game::Game>,
@@ -532,6 +533,44 @@ impl api::excel::Host for State {
                 .row(&name, language, (key.row, key.subrow)))
         })?;
         Ok(row.map(sheet_row))
+    }
+}
+
+impl api::file_replacements::Host for State {
+    fn replace(&mut self, game_path: String, storage_path: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::FilesReplace))?;
+        self.host(|state| {
+            let services = &state.context.services;
+            services
+                .game
+                .enable_file_replacements()
+                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            let contents = state.context.storage.read_unbounded(&storage_path)?;
+            services
+                .files
+                .replace(&state.context.id, &game_path, &contents, &services.data)
+        })
+        .map_err(Into::into)
+    }
+
+    fn restore(&mut self, game_path: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::FilesReplace))?;
+        if self
+            .context
+            .services
+            .files
+            .restore(&self.context.id, &game_path)
+        {
+            Ok(())
+        } else {
+            Err(Error::new(
+                Kind::NotFound,
+                format!("the plugin does not replace {game_path}"),
+            )
+            .into())
+        }
     }
 }
 

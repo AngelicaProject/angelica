@@ -18,6 +18,9 @@ pub enum Permission {
     /// Add letters to the game's letter case conversion.
     #[serde(rename = "text.case")]
     TextCase,
+    /// Serve replacement game files.
+    #[serde(rename = "files.replace")]
+    FilesReplace,
 }
 
 impl Permission {
@@ -26,6 +29,7 @@ impl Permission {
         match self {
             Self::ExcelText => "excel.text",
             Self::TextCase => "text.case",
+            Self::FilesReplace => "files.replace",
         }
     }
 
@@ -35,6 +39,7 @@ impl Permission {
         match self {
             Self::ExcelText => "Replaces text the game shows from its data sheets",
             Self::TextCase => "Changes how the game capitalizes letters",
+            Self::FilesReplace => "Replaces game files: fonts and textures",
         }
     }
 }

@@ -30,6 +30,19 @@ fn approved(manifest: &str) -> TestHost {
     test
 }
 
+/// The example's manifest without these permissions.
+fn without_permissions(names: &[&str]) -> String {
+    MANIFEST
+        .lines()
+        .filter(|line| {
+            !names
+                .iter()
+                .any(|name| line.starts_with(&format!("\"{name}\"")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn click(test: &TestHost, id: &str) {
     test.event(
         "hello",
@@ -196,9 +209,7 @@ fn letters_apply_until_the_plugin_stops() {
 
 #[test]
 fn operations_need_their_permission_and_the_game_entries() {
-    let without = MANIFEST
-        .replace("\"excel.text\" = true\n", "")
-        .replace("\"text.case\" = true\n", "");
+    let without = without_permissions(&["excel.text", "text.case"]);
     let test = approved(&without);
     click(&test, "table");
     assert_eq!(
@@ -282,5 +293,49 @@ fn plugins_read_the_games_files_and_sheets() {
     assert_eq!(
         message(&test),
         "Item 1 is Potion; the font file has 100 bytes"
+    );
+}
+
+#[test]
+fn plugins_replace_game_files_the_host_can_check() {
+    use angelica_fake_game::game_files::FakeGame;
+    let test = approved(MANIFEST);
+    let mut texture = vec![0u8; 80 + 32];
+    texture[4] = 0x40;
+    texture[5] = 0x14;
+    FakeGame::new("2026.09.15.0000.0000")
+        .with_file("common/font/font1.tex", texture.clone())
+        .write(&test.game_folder())
+        .unwrap();
+    click(&test, "texture");
+    assert_eq!(message(&test), "texture replaced");
+    let served = test
+        .services()
+        .files
+        .lookup(b"common/font/font1.tex")
+        .unwrap();
+    let cache = String::from_utf16(&served[..served.len() - 1]).unwrap();
+    let mut expected = texture;
+    *expected.last_mut().unwrap() ^= 0xFF;
+    assert_eq!(std::fs::read(cache).unwrap(), expected);
+
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert!(
+        test.services()
+            .files
+            .lookup(b"common/font/font1.tex")
+            .is_none()
+    );
+
+    let test = approved(&without_permissions(&["files.replace"]));
+    FakeGame::new("2026.09.15.0000.0000")
+        .with_file("common/font/font1.tex", vec![0u8; 80 + 32])
+        .write(&test.game_folder())
+        .unwrap();
+    click(&test, "texture");
+    assert_eq!(
+        message(&test),
+        "texture refused: the plugin does not hold files.replace"
     );
 }

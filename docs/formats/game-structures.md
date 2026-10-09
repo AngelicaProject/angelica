@@ -34,6 +34,18 @@ The new buffer is allocated with the environment's `allocate(environment, size, 
 
 The detours stay installed until the process exits; without active tables they only pass rows on. A failure inside the detour leaves the row as the game built it.
 
+## Game file loads
+
+The game loads every resource file as a job on a file thread. A job's descriptor names its mode: 11 reads the resource's file from the archives by the game path in the resource handle; modes below 9 read a file on disk named by the descriptor's own path. The adapter detours the job function and, for an archive job whose resource is replaced, turns it into a disk job for the replacement in the host's cache before the original runs: it writes the cache path into the descriptor's path, gives the job a zeroed file object of its own for the duration of the call, and sets the mode to 0. The game's own disk reader then opens and reads the file into the resource, as it does for any file on disk.
+
+| Entry | Kind | Use |
+| --- | --- | --- |
+| `file.file_thread.do_job` | function `(ptr thread, ptr descriptor, i32 priority, u8 sync) -> u8` | detoured |
+| `file.descriptor.mode` (`u8`), `.file_interface` (`ptr`), `.resource_handle` (`ptr`), `.path` (`u16`) | fields of a job descriptor | the job's mode, file object, resource, and the first of 260 UTF-16 path units |
+| `file.resource_handle.file_name` | field of a resource handle | the resource's game path |
+
+The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
+
 ## Letter case
 
 `Utf8String::ToUpper` and `ToLower` convert a string in place. The adapter detours both, calls the original, then applies the plugins' letters to the same string with the same rule.

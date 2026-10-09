@@ -3,6 +3,7 @@ mod component;
 mod crash;
 mod entries;
 mod excel_rows;
+mod file_reads;
 mod game;
 mod input;
 pub mod memory;

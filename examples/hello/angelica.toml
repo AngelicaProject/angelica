@@ -11,3 +11,4 @@ authors = ["AngelicaProject contributors"]
 [permissions]
 "excel.text" = true
 "text.case" = true
+"files.replace" = true

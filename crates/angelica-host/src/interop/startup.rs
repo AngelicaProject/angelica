@@ -99,18 +99,27 @@ fn initialize() -> Result<(), String> {
     let excel = Arc::new(ExcelText::default());
 
     let case = Arc::new(TextCase::default());
+    let files = Arc::new(crate::file_replacements::FileReplacements::new(
+        &config
+            .cache_directory
+            .clone()
+            .unwrap_or_else(|| root.join("cache"))
+            .join("files"),
+    ));
     let executable = module_path(base)?;
     let game = Arc::new(WindowsGame {
         catalog: catalog.clone(),
         base,
         excel: excel.clone(),
         case: case.clone(),
+        files: files.clone(),
         version: WindowsGame::read_version(&executable),
     });
     // The executable is in `game/`; the archives are in `game/sqpack`.
     let installation = executable.parent().and_then(std::path::Path::parent);
     let services = Arc::new(Services {
         data: Arc::new(crate::game_data::GameData::new(installation)),
+        files,
         excel,
         case,
         game,

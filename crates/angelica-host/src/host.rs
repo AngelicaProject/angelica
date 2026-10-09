@@ -386,6 +386,7 @@ impl Host {
     fn remove_effects(&self, id: &str) {
         self.services.excel.remove_plugin(id);
         self.services.case.remove_plugin(id);
+        self.services.files.remove_plugin(id);
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {

@@ -33,6 +33,7 @@ world plugin {
     import game-files;
     import excel;
     import excel-text;
+    import file-replacements;
     import text-case;
     export guest;
 }

@@ -30,6 +30,7 @@ pub struct ScriptedGame {
     pub version: String,
     pub excel_available: AtomicBool,
     pub case_available: AtomicBool,
+    pub files_available: AtomicBool,
 }
 
 impl Default for ScriptedGame {
@@ -38,6 +39,7 @@ impl Default for ScriptedGame {
             version: "2026.09.15.0000.0000".into(),
             excel_available: AtomicBool::new(true),
             case_available: AtomicBool::new(true),
+            files_available: AtomicBool::new(true),
         }
     }
 }
@@ -52,6 +54,14 @@ impl Game for ScriptedGame {
             Ok(())
         } else {
             Err("map entry excel.hash_table_page_row_resolver.store_row is absent".into())
+        }
+    }
+
+    fn enable_file_replacements(&self) -> Result<(), String> {
+        if self.files_available.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err("map entry file.file_thread.do_job is absent".into())
         }
     }
 
@@ -143,6 +153,9 @@ impl TestHost {
             data: Arc::new(runtime::game_data::GameData::new(Some(
                 &folder.path().join("game-files"),
             ))),
+            files: Arc::new(runtime::file_replacements::FileReplacements::new(
+                &folder.path().join("cache"),
+            )),
             excel: Arc::new(ExcelText::default()),
             case: Arc::new(TextCase::default()),
             game: game.clone(),

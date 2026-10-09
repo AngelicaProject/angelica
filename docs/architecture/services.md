@@ -14,7 +14,7 @@ An operation is as narrow as its verified contract. A game structure the map doe
 
 | Kind | Example | Rule |
 | --- | --- | --- |
-| Declarative game rules | text tables, letter case | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
+| Declarative game rules | text tables, letter case, replacement files | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
 | Game data | game files, Excel sheets | read-only originals from the installed archives, never another plugin's changes; bounded and cached by the host |
 | Host resources | storage, jobs, windows | bounded per plugin, confined to the plugin |
 

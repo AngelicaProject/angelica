@@ -16,6 +16,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `excel` | the game's Excel sheets as its files hold them | — |
 | `excel-text` | replacement text for cells of the game's Excel sheets | `excel.text` |
 | `text-case` | letters added to the game's letter case conversion | `text.case` |
+| `file-replacements` | replacement game files the game reads instead of its own | `files.replace` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -68,6 +69,15 @@ From then on, whenever the game builds a row of a sheet a table lists, the host 
 When several active tables list a cell, they are tried by descending `priority`, then by plugin id and table name; the first whose guard matches applies. `deactivate` and disabling the plugin remove the plugin's tables; rows built afterwards keep the game's text.
 
 `status` returns counters since activation: rows changed, cells replaced, guard mismatches, rows refused because their buffer did not have the expected layout, and the listed sheets the game loaded that did not match the table, with the reason.
+
+## Replacement files
+
+`file-replacements.replace(game-path, storage-path)` reads a file from the plugin's storage, checks it against the game's original file, copies it into the host's cache, and from then on the game reads it whenever it loads `game-path`. Only formats the host can check are accepted:
+
+- font tables (`.fdt`): the original's file and font headers (texture size, font size, line height, ascent) and kerning stay; glyph records stay sorted and lie inside the atlas, on one of the 28 pages of the game's seven font textures;
+- textures (`.tex`): the original's 80-byte header and size stay, so only pixels change.
+
+A file the game has no original for, another format, a failed check, and a file another plugin replaces are refused. Files the game loaded before keep what it read until it loads them again; replacing files in `start` while the game starts covers everything it loads. `restore` and disabling the plugin serve the game's own file from its next load. A plugin replaces at most 1024 files.
 
 ## Letter case
 
