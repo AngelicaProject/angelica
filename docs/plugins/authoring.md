@@ -16,6 +16,7 @@ angelica plugin new <id>
 | `src/lib.rs` | the plugin: a type that implements `angelica_sdk::Plugin`, exported with `angelica_sdk::plugin!` |
 | `tests/plugin.rs` | tests that run the component in the real host against a scripted game |
 | `AGENTS.md` | the work loop and rules for a coding agent, pointing here |
+| `.claude/skills/angelica-plugin/SKILL.md` | the same work loop as a skill for coding agents that load skills |
 | `rust-toolchain.toml` | the compiler the host's components are built with |
 
 The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica checkout the command came from (`--angelica <checkout>` for another). Each plugin lives in its own repository.

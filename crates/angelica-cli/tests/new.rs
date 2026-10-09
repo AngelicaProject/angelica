@@ -26,6 +26,9 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
     assert!(read("src/lib.rs").contains("angelica_sdk::plugin!(LootNotes);"));
     assert!(read("tests/plugin.rs").contains("\"/loot-notes\""));
     assert!(read("AGENTS.md").contains("target/wasm32-wasip2/release/loot_notes.wasm"));
+    let skill = read(".claude/skills/angelica-plugin/SKILL.md");
+    assert!(skill.starts_with("---") && skill.contains("name: angelica-plugin"));
+    assert!(skill.contains("# Working on Loot Notes") && !skill.contains("{angelica}"));
     assert!(read("rust-toolchain.toml").contains("wasm32-wasip2"));
     assert!(!read("Cargo.toml").contains("{angelica}"));
 
