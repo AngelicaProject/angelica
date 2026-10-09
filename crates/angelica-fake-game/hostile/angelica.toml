@@ -1,0 +1,13 @@
+manifest = 1
+
+[plugin]
+id = "hostile"
+name = "Hostile"
+version = "0.1.0"
+api = "1.0"
+description = "A test plugin that tries to break every boundary of the host."
+
+[permissions]
+"excel.text" = true
+"chat.print" = true
+"files.replace" = true

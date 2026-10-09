@@ -119,7 +119,7 @@ Do long work without stalling the game: bulk sheet reads, parsing downloads, req
 
 - SDK: `jobs::start::<Output>(name, &input)` returns a `Job`; poll it in `tick` with `job.poll()`; in `Plugin::run_job` do the work with `jobs::run(&input, |input: Input| ...)`. Inputs and outputs are any serde types. `jobs::report(fraction, message)` reports progress.
 - Permission: none. Instance: started from main; runs in a job instance.
-- A job has its own memory and never runs `start`: pass it everything it needs in its input, or in storage. At most four jobs of a plugin run at once; dropping a `Job` cancels it.
+- A job has its own memory and never runs `start`: pass it everything it needs in its input, or in storage. A plugin has at most four jobs at once, counting finished ones until they are polled; dropping a `Job` cancels it.
 - A job may read storage, game files, sheets, and the internet; it cannot change the game, print, or read state.
 - Contract: [calls into the plugin](../formats/plugin-api-v1.md#calls-into-the-plugin).
 

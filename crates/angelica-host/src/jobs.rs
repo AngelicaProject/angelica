@@ -71,7 +71,8 @@ impl Jobs {
     }
 
     /// # Errors
-    /// Refuses a fifth running job, oversized input, and an invalid name.
+    /// Refuses a fifth job while four run or wait to be polled, oversized
+    /// input, and an invalid name.
     pub fn start(&self, context: &Arc<Context>, name: &str, input: Vec<u8>) -> Result<u64> {
         if name.is_empty() || name.len() > 256 {
             return Err(Error::invalid("a job name has 1 to 256 bytes"));
@@ -82,20 +83,15 @@ impl Jobs {
                 "a job's input is at most 16 MiB",
             ));
         }
+        // A finished job holds its output until it is polled, so it counts
+        // until then.
         let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-        let running = slots
-            .values()
-            .filter(|slot| {
-                slot.result
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .is_none()
-            })
-            .count();
-        if running >= MAX_RUNNING {
+        if slots.len() >= MAX_RUNNING {
             return Err(Error::new(
                 Kind::LimitExceeded,
-                format!("at most {MAX_RUNNING} jobs run at once"),
+                format!(
+                    "at most {MAX_RUNNING} jobs run at once, counting finished jobs not yet polled"
+                ),
             ));
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
@@ -190,20 +186,21 @@ fn run(
     input: &[u8],
 ) -> std::result::Result<Vec<u8>, String> {
     let mut store = sandbox::store(sandbox, context, Role::Job(slot.clone()));
-    sandbox::budget(&mut store, time, u64::MAX);
-    let bindings = pre
-        .instantiate(&mut store)
-        .map_err(|e| sandbox::describe_trap(&e))?;
-    let result = bindings
-        .angelica_plugin_guest()
-        .call_run_job(&mut store, name, input)
-        .map_err(|e| {
-            if slot.cancelled() {
-                "the job was cancelled".to_owned()
-            } else {
-                sandbox::describe_trap(&e)
-            }
-        })?;
+    // A job's host calls, such as requests, have their own limits.
+    sandbox::budget(&mut store, time, Duration::MAX, u64::MAX);
+    let result = sandbox::call(&mut store, |store| {
+        let bindings = pre.instantiate(&mut *store)?;
+        bindings
+            .angelica_plugin_guest()
+            .call_run_job(&mut *store, name, input)
+    })
+    .map_err(|e| {
+        if slot.cancelled() {
+            "the job was cancelled".to_owned()
+        } else {
+            sandbox::describe_trap(&store, &e)
+        }
+    })?;
     let output = result?;
     if output.len() > MAX_DATA {
         return Err("the job's output is larger than 16 MiB".into());

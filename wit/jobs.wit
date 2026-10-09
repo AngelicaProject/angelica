@@ -31,7 +31,8 @@ interface jobs {
         message: string,
     }
 
-    /// Starts a job. At most four jobs of a plugin run at once.
+    /// Starts a job. A plugin has at most four jobs at once, counting
+    /// finished jobs whose result `poll` has not returned yet.
     /// Called from the main instance only.
     start: func(name: string, input: list<u8>) -> result<u64, error>;
 

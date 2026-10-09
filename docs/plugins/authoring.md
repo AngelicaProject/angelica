@@ -48,7 +48,7 @@ The host calls the plugin's main instance on the game's main thread ([calls into
 
 Rules that keep a plugin within its limits:
 
-- Frame calls have about 20 ms of guest time. Anything that reads many sheet rows, parses a large file, or makes a request runs in a [job](./interfaces.md#jobs).
+- The calls of one frame share about 20 ms of guest time. Anything that reads many sheet rows, parses a large file, or makes a request runs in a [job](./interfaces.md#jobs).
 - Windows are declared every frame from the plugin's state; widgets are controlled, so the plugin stores every value it shows.
 - An error returned from `start` or `tick`, or a trap, faults the plugin: it stops, everything it activated is removed, and the player sees the reason. Return errors from `command` (printed to the player) and handle the rest.
 - `?` converts a host error into the `String` the plugin's methods return.

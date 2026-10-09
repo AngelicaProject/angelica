@@ -39,15 +39,28 @@ fn io(path: &str, error: &std::io::Error) -> Error {
     Error::new(kind, format!("{path}: {error}"))
 }
 
+/// Whether a name is a serial or parallel port device: `com` or `lpt` and
+/// one digit, or a superscript one, two, or three.
+fn port(stem: &str) -> bool {
+    let Some(number) = stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt"))
+    else {
+        return false;
+    };
+    let mut chars = number.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+    )
+}
+
 /// Whether `path` is a relative path that stays inside the folder: `/`
 /// separators, no empty, `.` or `..` parts, no characters Windows treats
 /// specially, no device names, no trailing dots or spaces.
 #[must_use]
 pub fn valid_path(path: &str) -> bool {
-    const DEVICES: [&str; 22] = [
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-    ];
+    const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
     path.len() <= MAX_PATH
         && path.split('/').count() <= MAX_DEPTH
         && !path.ends_with(TEMPORARY)
@@ -62,6 +75,7 @@ pub fn valid_path(path: &str) -> bool {
                     c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
                 })
                 && !DEVICES.contains(&stem.trim_end())
+                && !port(stem.trim_end())
         })
 }
 
@@ -386,6 +400,10 @@ mod tests {
             "con",
             "nul.txt",
             "Com1.log",
+            "CONIN$",
+            "conout$.txt",
+            "lpt0",
+            "com\u{b9}.log",
             "a.",
             "a ",
             "a\0b",

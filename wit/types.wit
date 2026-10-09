@@ -20,7 +20,10 @@ interface types {
         /// The operation is not offered in this context: a main-instance
         /// operation called from a job, or the reverse.
         wrong-context,
-        /// The game build lacks a map entry the operation needs.
+        /// The game cannot serve the operation now: the game build lacks a
+        /// map entry it needs, the game has not created what it needs yet
+        /// (such as the chat log during the game's start), or the game's
+        /// data it needs is missing.
         unavailable,
         /// A size, count, or storage quota would be exceeded.
         limit-exceeded,

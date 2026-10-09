@@ -13,7 +13,7 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 ```text
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo clippy -p angelica-sdk -p angelica-hello --target wasm32-wasip2 --all-features --locked -- -D warnings
+cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile --target wasm32-wasip2 --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo deny --locked check
 ```
