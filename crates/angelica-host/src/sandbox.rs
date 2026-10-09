@@ -146,6 +146,8 @@ pub struct Services {
     pub case: Arc<TextCase>,
     pub commands: Arc<Commands>,
     pub chat: Arc<Chat>,
+    /// Names of sheet columns from the game map.
+    pub sheets: Arc<crate::sheets::Sheets>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -466,7 +468,8 @@ impl api::game_files::Host for State {
     }
 }
 
-fn sheet_row(row: crate::game_data::Row) -> api::excel::SheetRow {
+/// The values of the columns at `indexes` in a row.
+fn sheet_row(row: &crate::game_data::Row, indexes: &[u16]) -> api::excel::SheetRow {
     use crate::game_data::{Cell, Value as V};
     use api::excel::Value;
     api::excel::SheetRow {
@@ -474,17 +477,62 @@ fn sheet_row(row: crate::game_data::Row) -> api::excel::SheetRow {
             row: row.row,
             subrow: row.subrow,
         },
-        values: row
-            .cells
-            .into_iter()
+        values: indexes
+            .iter()
+            .filter_map(|&index| row.cells.get(usize::from(index)))
             .map(|cell| match cell {
-                Cell::Text(bytes) => Value::Text(bytes),
-                Cell::Value(V::Boolean(value)) => Value::Boolean(value),
-                Cell::Value(V::Signed(value)) => Value::Signed(value),
-                Cell::Value(V::Unsigned(value)) => Value::Unsigned(value),
-                Cell::Value(V::Float(value)) => Value::Float(value),
+                Cell::Text(bytes) => Value::Text(bytes.clone()),
+                Cell::Value(V::Boolean(value)) => Value::Boolean(*value),
+                Cell::Value(V::Signed(value)) => Value::Signed(*value),
+                Cell::Value(V::Unsigned(value)) => Value::Unsigned(*value),
+                Cell::Value(V::Float(value)) => Value::Float(*value),
             })
             .collect(),
+    }
+}
+
+fn column_kind(kind: angelica_map::ColumnType) -> api::excel::ColumnKind {
+    use angelica_map::ColumnType as T;
+    use api::excel::ColumnKind;
+    match kind {
+        T::Text => ColumnKind::Text,
+        T::Bool => ColumnKind::Boolean,
+        T::Int8 => ColumnKind::Int8,
+        T::Uint8 => ColumnKind::Uint8,
+        T::Int16 => ColumnKind::Int16,
+        T::Uint16 => ColumnKind::Uint16,
+        T::Int32 => ColumnKind::Int32,
+        T::Uint32 => ColumnKind::Uint32,
+        T::Float32 => ColumnKind::Float32,
+        T::Int64 => ColumnKind::Int64,
+        T::Uint64 => ColumnKind::Uint64,
+        T::PackedBool(bit) => ColumnKind::PackedBoolean(bit),
+    }
+}
+
+impl State {
+    /// The indexes of `columns` in the running game's layout of `sheet`.
+    fn column_indexes(&self, sheet: &str, columns: &[String]) -> crate::error::Result<Vec<u16>> {
+        if columns.is_empty() {
+            return Ok(Vec::new());
+        }
+        let services = &self.context.services;
+        let fields = services.sheets.fields(sheet, &services.data)?;
+        columns
+            .iter()
+            .map(|name| {
+                fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .map(|field| field.index)
+                    .ok_or_else(|| {
+                        Error::new(
+                            Kind::NotFound,
+                            format!("the game map names no column {name} of sheet {sheet}"),
+                        )
+                    })
+            })
+            .collect()
     }
 }
 
@@ -494,9 +542,16 @@ impl api::excel::Host for State {
     }
 
     fn sheet(&mut self, name: String) -> ApiResult<api::excel::SheetInfo> {
-        use angelica_sqpack::excel::ColumnKind as K;
-        use api::excel::ColumnKind;
-        let info = self.host(|state| api(state.context.services.data.sheet(&name)))?;
+        let (info, fields) = self.host(|state| {
+            let services = &state.context.services;
+            let info = api(services.data.sheet(&name))?;
+            let fields = services
+                .sheets
+                .fields(&name, &services.data)
+                .unwrap_or_default();
+            Ok::<_, api::types::Error>((info, fields))
+        })?;
+        let layout = info.layout();
         Ok(api::excel::SheetInfo {
             name: info.name,
             variant: if info.subrows {
@@ -504,27 +559,22 @@ impl api::excel::Host for State {
             } else {
                 api::excel::SheetVariant::Rows
             },
-            columns: info
+            columns: layout
                 .columns
                 .iter()
                 .enumerate()
                 .map(|(index, &(kind, offset))| api::excel::Column {
                     index: u16::try_from(index).unwrap_or(u16::MAX),
-                    kind: match kind {
-                        K::String => ColumnKind::Text,
-                        K::Bool => ColumnKind::Boolean,
-                        K::Int8 => ColumnKind::Int8,
-                        K::UInt8 => ColumnKind::Uint8,
-                        K::Int16 => ColumnKind::Int16,
-                        K::UInt16 => ColumnKind::Uint16,
-                        K::Int32 => ColumnKind::Int32,
-                        K::UInt32 => ColumnKind::Uint32,
-                        K::Float32 => ColumnKind::Float32,
-                        K::Int64 => ColumnKind::Int64,
-                        K::UInt64 => ColumnKind::Uint64,
-                        K::PackedBool(bit) => ColumnKind::PackedBoolean(bit),
-                    },
+                    kind: column_kind(kind),
                     offset,
+                })
+                .collect(),
+            fields: fields
+                .into_iter()
+                .map(|field| api::excel::Field {
+                    name: field.name,
+                    kind: column_kind(field.column_type),
+                    index: field.index,
                 })
                 .collect(),
             languages: info.languages,
@@ -536,34 +586,38 @@ impl api::excel::Host for State {
         &mut self,
         name: String,
         language: u8,
+        columns: Vec<String>,
         after: Option<api::excel::RowKey>,
         limit: u32,
     ) -> ApiResult<Vec<api::excel::SheetRow>> {
         let after = after.map(|key| (key.row, key.subrow));
-        let rows = self.host(|state| {
-            api(state
+        self.host(|state| {
+            let indexes = api(state.column_indexes(&name, &columns))?;
+            let rows = api(state
                 .context
                 .services
                 .data
-                .rows(&name, language, after, limit))
-        })?;
-        Ok(rows.into_iter().map(sheet_row).collect())
+                .rows(&name, language, after, limit))?;
+            Ok(rows.iter().map(|row| sheet_row(row, &indexes)).collect())
+        })
     }
 
     fn row(
         &mut self,
         name: String,
         language: u8,
+        columns: Vec<String>,
         key: api::excel::RowKey,
     ) -> ApiResult<Option<api::excel::SheetRow>> {
-        let row = self.host(|state| {
-            api(state
+        self.host(|state| {
+            let indexes = api(state.column_indexes(&name, &columns))?;
+            let row = api(state
                 .context
                 .services
                 .data
-                .row(&name, language, (key.row, key.subrow)))
-        })?;
-        Ok(row.map(sheet_row))
+                .row(&name, language, (key.row, key.subrow)))?;
+            Ok(row.as_ref().map(|row| sheet_row(row, &indexes)))
+        })
     }
 }
 

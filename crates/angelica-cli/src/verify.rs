@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -59,15 +60,21 @@ impl VerifyError {
     }
 }
 
+/// Each schema's sheet: the layout the game has, and whether the schema
+/// knows it.
+type SheetReport = BTreeMap<String, (Option<String>, Result<(), String>)>;
+
 pub fn run(args: &VerifyArgs) -> ExitCode {
     match verify(args) {
-        Ok((record, written)) => {
+        Ok((record, sheets, written)) => {
             if args.output.json {
-                println!("{}", report_json(&record, written.as_deref()));
+                println!("{}", report_json(&record, &sheets, written.as_deref()));
             } else {
-                print!("{}", report_text(&record, written.as_deref()));
+                print!("{}", report_text(&record, &sheets, written.as_deref()));
             }
-            if record.resolution.absent().next().is_none() {
+            if record.resolution.absent().next().is_none()
+                && sheets.values().all(|(_, known)| known.is_ok())
+            {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
@@ -84,7 +91,7 @@ pub fn run(args: &VerifyArgs) -> ExitCode {
     }
 }
 
-fn verify(args: &VerifyArgs) -> Result<(BuildRecord, Option<PathBuf>), VerifyError> {
+fn verify(args: &VerifyArgs) -> Result<(BuildRecord, SheetReport, Option<PathBuf>), VerifyError> {
     let map = Map::load(&args.map)?;
 
     let executable_path = args.game.join(EXECUTABLE);
@@ -115,6 +122,24 @@ fn verify(args: &VerifyArgs) -> Result<(BuildRecord, Option<PathBuf>), VerifyErr
         resolution: map.resolve(&image, image.image_base()),
     };
 
+    let mut sheets = SheetReport::new();
+    if map.sheets().next().is_some() {
+        let data = runtime::game_data::GameData::new(args.game.parent());
+        for schema in map.sheets() {
+            let report = match data.sheet(&schema.sheet) {
+                Ok(info) => {
+                    let layout = info.layout();
+                    (
+                        Some(layout.fingerprint()),
+                        schema.resolve(&layout).map(drop),
+                    )
+                }
+                Err(error) => (None, Err(error.message)),
+            };
+            sheets.insert(schema.sheet.clone(), report);
+        }
+    }
+
     let written = if args.write {
         let path = args
             .map
@@ -125,10 +150,23 @@ fn verify(args: &VerifyArgs) -> Result<(BuildRecord, Option<PathBuf>), VerifyErr
     } else {
         None
     };
-    Ok((record, written))
+    Ok((record, sheets, written))
 }
 
-fn report_json(record: &BuildRecord, written: Option<&Path>) -> Json {
+fn report_json(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path>) -> Json {
+    let sheets = sheets
+        .iter()
+        .map(|(name, (layout, known))| {
+            (
+                name.clone(),
+                json!({
+                    "layout": layout,
+                    "known": known.is_ok(),
+                    "reason": known.as_ref().err(),
+                }),
+            )
+        })
+        .collect::<JsonObject<_, _>>();
     let present = record
         .resolution
         .present()
@@ -146,11 +184,12 @@ fn report_json(record: &BuildRecord, written: Option<&Path>) -> Json {
         "present": present,
         "absent": absent,
         "constant_offsets": record.resolution.constant_offsets(),
+        "sheets": sheets,
         "written": written.map(|path| path.display().to_string()),
     })
 }
 
-fn report_text(record: &BuildRecord, written: Option<&Path>) -> String {
+fn report_text(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path>) -> String {
     let present = record.resolution.present().count();
     let absent = record.resolution.absent().collect::<Vec<_>>();
     let mut text = format!(
@@ -163,6 +202,19 @@ fn report_text(record: &BuildRecord, written: Option<&Path>) -> String {
     }
     for name in record.resolution.constant_offsets() {
         let _ = writeln!(text, "  constant offset {name}");
+    }
+    if !sheets.is_empty() {
+        let unknown = sheets.values().filter(|(_, known)| known.is_err()).count();
+        let _ = writeln!(
+            text,
+            "sheets: {} known, {unknown} unknown",
+            sheets.len() - unknown
+        );
+        for (name, (_, known)) in sheets {
+            if let Err(reason) = known {
+                let _ = writeln!(text, "  unknown {name}: {reason}");
+            }
+        }
     }
     if let Some(path) = written {
         let _ = writeln!(text, "wrote {}", path.display());

@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 angelica-host.workspace = true
+angelica-map.workspace = true
 angelica-text.workspace = true
 angelica-sqpack = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

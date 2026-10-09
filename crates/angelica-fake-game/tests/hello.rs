@@ -351,6 +351,12 @@ fn plugins_read_the_games_files_and_sheets() {
     click(&test, "read");
     assert_eq!(
         message(&test),
+        "cannot read Item: the game map names no columns of sheet Item"
+    );
+    test.name_columns("Item", &[("name", 0)]);
+    click(&test, "read");
+    assert_eq!(
+        message(&test),
         "Item 1 is Potion; the font file has 100 bytes"
     );
 }

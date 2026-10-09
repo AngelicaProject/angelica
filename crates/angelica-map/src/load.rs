@@ -15,6 +15,7 @@ pub const FORMAT: i64 = 1;
 #[derive(Debug, Clone)]
 pub struct Map {
     entries: BTreeMap<String, Entry>,
+    sheets: BTreeMap<String, crate::SheetSchema>,
     /// Entry names, each after every entry it references.
     order: Vec<String>,
     entries_sha256: String,
@@ -27,7 +28,8 @@ struct RawMapFile {
 }
 
 impl Map {
-    /// Reads a map directory: `map.toml` and every file in `entries/`.
+    /// Reads a map directory: `map.toml`, every file in `entries/`, and
+    /// every file under `sheets/`.
     ///
     /// # Errors
     ///
@@ -54,12 +56,16 @@ impl Map {
                 files.push((format!("entries/{file_name}"), read_text(&path)?));
             }
         }
+        let sheets_directory = directory.join("sheets");
+        if sheets_directory.exists() {
+            collect_sheets(&sheets_directory, "sheets", &mut files)?;
+        }
         Self::from_sources(&map_toml, &files)
     }
 
-    /// Builds a map from the text of `map.toml` and of each entries file,
-    /// given with its path relative to the map directory
-    /// (`entries/<area>.toml`).
+    /// Builds a map from the text of `map.toml` and of each entries and
+    /// sheet schema file, given with its path relative to the map directory
+    /// (`entries/<area>.toml`, `sheets/<sheet>.toml`).
     ///
     /// # Errors
     ///
@@ -76,7 +82,19 @@ impl Map {
             });
         }
 
-        let mut sorted = files.iter().collect::<Vec<_>>();
+        let mut sheets = BTreeMap::new();
+        for (relative, text) in files.iter().filter(|(path, _)| path.starts_with("sheets/")) {
+            let schema =
+                crate::sheets::parse(relative, text).map_err(|message| MapError::InvalidSheet {
+                    path: PathBuf::from(relative),
+                    message,
+                })?;
+            sheets.insert(schema.sheet.clone(), schema);
+        }
+        let mut sorted = files
+            .iter()
+            .filter(|(path, _)| !path.starts_with("sheets/"))
+            .collect::<Vec<_>>();
         sorted.sort_by(|left, right| left.0.cmp(&right.0));
 
         let mut entries = BTreeMap::new();
@@ -115,6 +133,7 @@ impl Map {
         let order = dependency_order(&entries)?;
         Ok(Self {
             entries,
+            sheets,
             order,
             entries_sha256: content_hash(map_toml, &sorted),
         })
@@ -128,6 +147,17 @@ impl Map {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&Entry> {
         self.entries.get(name)
+    }
+
+    /// Every sheet schema, by sheet name.
+    pub fn sheets(&self) -> impl Iterator<Item = &crate::SheetSchema> {
+        self.sheets.values()
+    }
+
+    /// The schema of a sheet.
+    #[must_use]
+    pub fn sheet(&self, name: &str) -> Option<&crate::SheetSchema> {
+        self.sheets.get(name)
     }
 
     #[must_use]
@@ -151,6 +181,36 @@ impl Map {
     pub(crate) fn order(&self) -> &[String] {
         &self.order
     }
+}
+
+/// Adds every `.toml` file under `directory`, by its path relative to the
+/// map as `prefix/...`, to `files`.
+fn collect_sheets(
+    directory: &Path,
+    prefix: &str,
+    files: &mut Vec<(String, String)>,
+) -> Result<(), MapError> {
+    let listing = std::fs::read_dir(directory).map_err(|error| io_error(directory, &error))?;
+    for item in listing {
+        let path = item.map_err(|error| io_error(directory, &error))?.path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        if path.is_dir() {
+            collect_sheets(&path, &format!("{prefix}/{name}"), files)?;
+        } else if path.is_file()
+            && path
+                .extension()
+                .is_some_and(|extension| extension == "toml")
+        {
+            files.push((format!("{prefix}/{name}"), read_text(&path)?));
+        } else {
+            return Err(MapError::UnexpectedFile { path });
+        }
+    }
+    Ok(())
 }
 
 /// Lowercase dotted words of at least two parts, each starting with a letter

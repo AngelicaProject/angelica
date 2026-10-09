@@ -2,6 +2,7 @@
 
 mod compile;
 mod dev;
+mod excel;
 mod verify;
 
 use std::process::ExitCode;
@@ -23,6 +24,9 @@ enum Command {
     /// Plugin tools.
     #[command(subcommand)]
     Plugin(PluginCommand),
+    /// The installed game's Excel sheets.
+    #[command(subcommand)]
+    Excel(excel::ExcelCommand),
     /// A signed local installation for development.
     #[command(subcommand)]
     Dev(dev::DevCommand),
@@ -54,5 +58,6 @@ fn main() -> ExitCode {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
         Command::Dev(command) => dev::run(&command),
+        Command::Excel(command) => excel::run(&command),
     }
 }

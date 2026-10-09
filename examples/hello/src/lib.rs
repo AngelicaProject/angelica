@@ -5,11 +5,10 @@
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
-    api::{
-        excel, excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case,
-    },
+    api::{excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
+    excel,
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -63,14 +62,14 @@ impl Hello {
                 }
             }
             "read" => {
-                let text = excel::row("Item", 2, excel::RowKey { row: 1, subrow: 0 })
+                let text = excel::row("Item", excel::ENGLISH, &["name"], 1)
                     .map_err(|e| e.message)
                     .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
-                    .map(|row| match row.values.first() {
-                        Some(excel::Value::Text(bytes)) => {
-                            String::from_utf8_lossy(bytes).into_owned()
-                        }
-                        _ => "not text".to_owned(),
+                    .map(|values| {
+                        values.first().and_then(excel::Value::text).map_or_else(
+                            || "not text".to_owned(),
+                            |bytes| String::from_utf8_lossy(bytes).into_owned(),
+                        )
                     });
                 let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
                 match (text, font) {

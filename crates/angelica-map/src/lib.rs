@@ -10,9 +10,11 @@ mod load;
 mod model;
 mod record;
 mod resolve;
+mod sheets;
 
 pub use error::MapError;
 pub use load::{FORMAT, Map};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};
+pub use sheets::{ColumnType, KnownLayout, NamedColumn, SheetLayout, SheetSchema};

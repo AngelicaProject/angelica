@@ -5,6 +5,7 @@ The game map is a directory of UTF-8 TOML files in the `angelica-gamemap` reposi
 ```text
 map.toml                 format version
 entries/<area>.toml      hand-maintained entries, one file per area
+sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
 builds/<version>.toml    generated build records, one per game executable
 ```
 
@@ -89,6 +90,34 @@ Then its checks are evaluated in order.
 ## Origin
 
 `origin` records where an entry came from when it was not found in this repository's own work, as `{ source = "<name>", commit = "<id>" }`. An entry with an origin is used like any other once it is verified; the origin keeps the provenance the source's license requires.
+
+## Sheet schemas
+
+A sheet schema names columns of one of the game's Excel sheets. Its path is `sheets/` followed by the sheet's name as the game lists it and `.toml`; a sheet name with `/` is a path with folders.
+
+```toml
+sheet = "Item"
+doc = "Every item: its names and description."
+
+[columns.name]
+type = "text"
+doc = "The name as menus and tooltips show it."
+
+[[layouts]]
+fingerprint = "eaea5cde48d5801d"
+columns = { name = 9 }
+```
+
+- `sheet`: the sheet's name, equal to the file's path without `sheets/` and `.toml`.
+- `doc`, and each column's `doc`: what the sheet or column holds, not how it was found; not blank.
+- `columns`: at least one named column. A name is a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes. `type` is the column's type in the game's sheet header: `text`, `bool`, `int8`, `uint8`, `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, or `packed_bool_0` to `packed_bool_7` for one bit of a byte.
+- `layouts`: at least one layout of the sheet the names were checked against. `fingerprint` identifies the layout; `columns` gives every named column its position among the sheet's columns, each position once.
+
+A layout is the sheet's variant and every column's type and byte offset, as the game's sheet header lists them. Its fingerprint is 16 lowercase hexadecimal digits: the first 8 bytes of the SHA-256 of the ASCII text `rows` or `subrows` followed, for every column in order, by `;<type>@<offset>` with the offset in decimal.
+
+A name applies in a game build only when the build's layout of the sheet has the fingerprint of one of the schema's layouts and the column at the name's position has the name's type. Otherwise every name of the sheet is absent in that build: a patch that moves, adds, or retypes any column of the sheet leaves its names absent until a layout for the new build is added. A name never reads another column.
+
+A schema that breaks a rule makes the whole map invalid. Sheet schemas are not part of `entries_sha256`: they do not affect how entries resolve against the executable.
 
 ## Build records
 

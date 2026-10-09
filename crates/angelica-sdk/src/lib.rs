@@ -40,6 +40,7 @@ pub mod bindings {
 
 pub mod chat;
 pub mod commands;
+pub mod excel;
 pub mod ui;
 
 /// The host's interfaces, as generated from `wit/`.

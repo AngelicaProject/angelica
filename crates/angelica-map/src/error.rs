@@ -9,7 +9,7 @@ pub enum MapError {
     Toml { path: PathBuf, message: String },
     #[error("map.toml: format {found:?} is not supported; this reader supports format {supported}")]
     Format { found: Option<i64>, supported: i64 },
-    #[error("{path}: only `.toml` files belong in `entries/`")]
+    #[error("{path}: only `.toml` files belong in `entries/` and `sheets/`")]
     UnexpectedFile { path: PathBuf },
     #[error("{path}: `{name}` is not a valid entry name")]
     InvalidName { path: PathBuf, name: String },
@@ -27,6 +27,8 @@ pub enum MapError {
     },
     #[error("entries depend on each other in a cycle: {}", names.join(" -> "))]
     Cycle { names: Vec<String> },
+    #[error("{path}: {message}")]
+    InvalidSheet { path: PathBuf, message: String },
 }
 
 impl MapError {
@@ -44,6 +46,7 @@ impl MapError {
             Self::InvalidEntry { .. } => "invalid-entry",
             Self::BadReference { .. } => "bad-reference",
             Self::Cycle { .. } => "cycle",
+            Self::InvalidSheet { .. } => "invalid-sheet",
         }
     }
 
@@ -55,7 +58,8 @@ impl MapError {
             | Self::Toml { path, .. }
             | Self::UnexpectedFile { path }
             | Self::InvalidName { path, .. }
-            | Self::WrongArea { path, .. } => Some(path),
+            | Self::WrongArea { path, .. }
+            | Self::InvalidSheet { path, .. } => Some(path),
             _ => None,
         }
     }

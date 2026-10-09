@@ -51,6 +51,7 @@ dependencies = [
  "angelica-host",
  "angelica-map",
  "angelica-pe",
+ "angelica-sqpack",
  "clap",
  "ed25519-dalek",
  "getrandom",
@@ -66,6 +67,7 @@ name = "angelica-fake-game"
 version = "0.1.0"
 dependencies = [
  "angelica-host",
+ "angelica-map",
  "angelica-sqpack",
  "angelica-text",
  "tempfile",

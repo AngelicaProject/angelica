@@ -21,6 +21,16 @@ An entry is present for a build when:
 
 Otherwise the entry is absent, with a reason. There is no partial or best-effort result.
 
+## Sheet schemas
+
+Plugins read the game's Excel sheets by column name. The map's sheet schemas give those names, each for the exact layouts of the sheet it was checked against ([format](../formats/game-map-v1.md#sheet-schemas)). The layout comes from the sheet's header in the installed game's archives, not from the executable, so it is checked against the game's data:
+
+- the host computes the fingerprint of each sheet's layout when a plugin first reads the sheet by name, and uses the schema's positions only for a layout the schema lists;
+- `angelica map verify` checks every schema against the game data next to the executable, reports each sheet as known or unknown with the reason, and fails when a sheet is unknown;
+- `angelica excel show <sheet> --map <map>` shows a sheet's layout and fingerprint, every column with its type, offset, and name, and rows of values — what a maintainer needs to name a column or to add the layout of a new build.
+
+A column is named when a plugin needs it, from the values it holds, never speculatively.
+
 ## Build records
 
 A build record maps the hash of one executable to the resolved address of every entry and the result of every check. It is produced offline by `angelica map verify` and published with the map. With a record for the running executable, the host does not scan: it checks the hash and uses the recorded addresses.

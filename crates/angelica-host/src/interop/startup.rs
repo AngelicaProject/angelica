@@ -91,7 +91,7 @@ fn initialize() -> Result<(), String> {
     let _ = LOG_DIRECTORY.set(config.log_directory.clone());
 
     let (base, snapshot, hash) = executable_snapshot()?;
-    let (catalog, map_status) = load_map(&config, base, &snapshot, hash);
+    let (catalog, schemas, map_status) = load_map(&config, base, &snapshot, hash);
     for line in &map_status {
         super::log(line);
     }
@@ -126,6 +126,7 @@ fn initialize() -> Result<(), String> {
         case,
         commands,
         chat: Arc::new(crate::chat::Chat::default()),
+        sheets: Arc::new(crate::sheets::Sheets::new(schemas)),
         game,
         starting: AtomicBool::new(false),
     });
@@ -182,15 +183,23 @@ fn initialize() -> Result<(), String> {
     Ok(())
 }
 
-/// The signed map resolved for this executable, and the lines the menu
-/// shows about it. Without a usable map every entry is absent.
-fn load_map(config: &Config, base: usize, snapshot: &[u8], hash: String) -> (Catalog, Vec<String>) {
+/// The signed map resolved for this executable, its sheet schemas, and the
+/// lines the menu shows about it. Without a usable map every entry is
+/// absent and no sheet has names.
+fn load_map(
+    config: &Config,
+    base: usize,
+    snapshot: &[u8],
+    hash: String,
+) -> (Catalog, Vec<angelica_map::SheetSchema>, Vec<String>) {
     let mut map_status = Vec::new();
+    let mut schemas = Vec::new();
     let catalog = match FileSet::load(&config.map_directory, RELEASE_KEY.as_ref())
         .map_err(|e| e.to_string())
         .and_then(|files| Catalog::from_signed_files(&files, snapshot, base as u64, hash.clone()))
     {
-        Ok((_, catalog)) => {
+        Ok((map, catalog)) => {
+            schemas = map.sheets().cloned().collect();
             map_status.push(format!(
                 "Game map: {} for this build, {} entries present, {} absent",
                 if catalog.verified {
@@ -217,7 +226,7 @@ fn load_map(config: &Config, base: usize, snapshot: &[u8], hash: String) -> (Cat
             }
         }
     };
-    (catalog, map_status)
+    (catalog, schemas, map_status)
 }
 
 fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {

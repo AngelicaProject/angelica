@@ -200,6 +200,7 @@ impl TestHost {
             case: Arc::new(TextCase::default()),
             commands: Arc::new(runtime::commands::Commands::default()),
             chat: Arc::new(runtime::chat::Chat::default()),
+            sheets: Arc::new(runtime::sheets::Sheets::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
         });
@@ -252,6 +253,44 @@ impl TestHost {
         for _ in 0..count {
             self.host.frame(1.0 / 60.0);
         }
+    }
+
+    /// Names columns of a sheet of the game in `game_folder`, as a game map
+    /// schema that knows the sheet's layout there would.
+    ///
+    /// # Panics
+    /// When the game has no such sheet or no column at an index.
+    pub fn name_columns(&self, sheet: &str, names: &[(&str, u16)]) {
+        let services = self.services();
+        let layout = services
+            .data
+            .sheet(sheet)
+            .unwrap_or_else(|error| panic!("sheet {sheet}: {}", error.message))
+            .layout();
+        let columns = names
+            .iter()
+            .map(|(name, index)| ((*name).to_owned(), *index))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        services.sheets.insert(angelica_map::SheetSchema {
+            sheet: sheet.to_owned(),
+            doc: "A test schema.".into(),
+            columns: columns
+                .iter()
+                .map(|(name, index)| {
+                    (
+                        name.clone(),
+                        angelica_map::NamedColumn {
+                            column_type: layout.columns[usize::from(*index)].0,
+                            doc: "A test column.".into(),
+                        },
+                    )
+                })
+                .collect(),
+            layouts: vec![angelica_map::KnownLayout {
+                fingerprint: layout.fingerprint(),
+                columns,
+            }],
+        });
     }
 
     /// The player sends `line` from the chat box: a plugin's command runs in

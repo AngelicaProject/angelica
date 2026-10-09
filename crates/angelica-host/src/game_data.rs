@@ -54,6 +54,38 @@ pub struct SheetInfo {
     pub rows: u32,
 }
 
+impl SheetInfo {
+    /// The sheet's layout as the game map describes layouts.
+    #[must_use]
+    pub fn layout(&self) -> angelica_map::SheetLayout {
+        use angelica_map::ColumnType;
+        angelica_map::SheetLayout {
+            subrows: self.subrows,
+            columns: self
+                .columns
+                .iter()
+                .map(|(kind, offset)| {
+                    let column_type = match kind {
+                        ColumnKind::String => ColumnType::Text,
+                        ColumnKind::Bool => ColumnType::Bool,
+                        ColumnKind::Int8 => ColumnType::Int8,
+                        ColumnKind::UInt8 => ColumnType::Uint8,
+                        ColumnKind::Int16 => ColumnType::Int16,
+                        ColumnKind::UInt16 => ColumnType::Uint16,
+                        ColumnKind::Int32 => ColumnType::Int32,
+                        ColumnKind::UInt32 => ColumnType::Uint32,
+                        ColumnKind::Float32 => ColumnType::Float32,
+                        ColumnKind::Int64 => ColumnType::Int64,
+                        ColumnKind::UInt64 => ColumnType::Uint64,
+                        ColumnKind::PackedBool(bit) => ColumnType::PackedBool(*bit),
+                    };
+                    (column_type, *offset)
+                })
+                .collect(),
+        }
+    }
+}
+
 /// `(row, subrow)` of each row, sorted, with its position in `Sheet::rows`.
 type Order = Arc<Vec<((u32, u16), usize)>>;
 

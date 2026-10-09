@@ -194,6 +194,7 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
                 );
             }
         }
+        add_sheets(&map.join("sheets"), "sheets", &mut files)?;
         package(&args.installation.join("map"), &files, &key)?;
         report.insert("map_files".into(), files.len().into());
     }
@@ -227,4 +228,30 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
     }
     report.insert("plugins".into(), plugins.into());
     Ok(serde_json::Value::Object(report))
+}
+
+/// Adds every `.toml` file under `folder`, by its path relative to the map,
+/// to `files`.
+fn add_sheets(
+    folder: &Path,
+    prefix: &str,
+    files: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    if !folder.exists() {
+        return Ok(());
+    }
+    let listing = std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    for item in listing.filter_map(Result::ok) {
+        let path = item.path();
+        let name = item.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            add_sheets(&path, &format!("{prefix}/{name}"), files)?;
+        } else if path.extension().is_some_and(|e| e == "toml") {
+            files.insert(
+                format!("{prefix}/{name}"),
+                std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
+            );
+        }
+    }
+    Ok(())
 }
