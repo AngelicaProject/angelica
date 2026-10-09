@@ -79,6 +79,31 @@ fn without_permissions(names: &[&str]) -> String {
         .join("\n")
 }
 
+/// The example's manifest without `http.get` and its hosts.
+fn without_http() -> String {
+    without_permissions(&["http.get"])
+        .lines()
+        .filter(|line| *line != "[http]" && !line.starts_with("hosts ="))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
+/// Clicks a job's button and waits for the job's message.
+fn run_job(test: &TestHost, id: &str) -> String {
+    click(test, id);
+    for _ in 0..3000 {
+        if message(test).starts_with("job") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        test.frames(1);
+    }
+    message(test)
+}
+
 fn click(test: &TestHost, id: &str) {
     test.event(
         "hello",
@@ -516,4 +541,28 @@ fn commands_are_removed_with_the_plugin() {
     test.host.queue(Action::Disable("hello".into()));
     test.frames(1);
     assert!(!test.command("/hello"));
+}
+
+#[test]
+fn requests_need_their_permission() {
+    let test = approved(&without_http());
+    assert_eq!(
+        run_job(&test, "fetch"),
+        "job failed: the plugin does not hold http.get"
+    );
+}
+
+/// Needs the internet.
+#[test]
+#[ignore = "needs the internet"]
+fn jobs_fetch_from_the_listed_hosts() {
+    let test = approved(MANIFEST);
+    let message = run_job(&test, "fetch");
+    assert!(message.starts_with("job finished: 200 with "), "{message}");
+    let saved = std::fs::read(test.folder.path().join("storage/hello/example.html")).unwrap();
+    assert!(
+        message.ends_with(&format!("saved {} bytes with 200", saved.len())),
+        "{message}"
+    );
+    assert!(String::from_utf8_lossy(&saved).contains("Example Domain"));
 }

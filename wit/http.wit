@@ -1,0 +1,53 @@
+package angelica:plugin@1.0.0;
+
+/// HTTPS requests to the hosts the plugin's manifest lists.
+///
+/// The manifest names the hosts (`[http] hosts`), the player approves them
+/// with the plugin, and no other host is reachable, also through a
+/// redirect. Only `https` on port 443 is used; a host that resolves to a
+/// loopback, private, link-local, or other non-public address is refused.
+/// The host sends no cookies and no credentials and sets the user agent.
+/// Requires `http.get`. Requests block, so they are made from jobs only;
+/// the main instance gets `wrong-context`.
+interface http {
+    use types.{error};
+
+    record header {
+        /// Lower-case.
+        name: string,
+        value: string,
+    }
+
+    record request {
+        /// An absolute `https://` URL without user name or password.
+        url: string,
+        /// Only `accept`, `accept-language`, `if-none-match`,
+        /// `if-modified-since`, and `range`, each at most once and at most
+        /// 1024 bytes.
+        headers: list<header>,
+    }
+
+    /// The final response, after at most 5 redirects.
+    record head {
+        status: u16,
+        headers: list<header>,
+    }
+
+    record response {
+        head: head,
+        /// The body, decompressed when the server compressed it.
+        body: list<u8>,
+    }
+
+    /// Sends a GET request and returns the response, whatever its status.
+    /// The body is at most 16 MiB; the request takes at most 60 seconds.
+    get: func(request: request) -> result<response, error>;
+
+    /// Sends a GET request and, when the status is 2xx, writes the body to
+    /// `path` in the plugin's storage, replacing the file only when the
+    /// whole body arrived. Another status leaves the file as it was. The
+    /// body is at most 1 GiB and counts against the storage quota; the
+    /// request takes at most 15 minutes. Returns the response's head and
+    /// the bytes written.
+    download: func(request: request, path: string) -> result<tuple<head, u64>, error>;
+}

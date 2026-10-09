@@ -14,3 +14,7 @@ authors = ["AngelicaProject contributors"]
 "files.replace" = true
 "chat.commands" = true
 "chat.print" = true
+"http.get" = true
+
+[http]
+hosts = ["example.com"]

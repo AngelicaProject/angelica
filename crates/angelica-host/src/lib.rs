@@ -13,6 +13,7 @@ pub mod file_replacements;
 pub mod game;
 pub mod game_data;
 pub mod host;
+pub mod http;
 pub mod jobs;
 pub mod manifest;
 pub mod package;

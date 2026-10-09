@@ -113,6 +113,11 @@ fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
                         permission.description(),
                         permission.name()
                     ));
+                    if *permission == crate::manifest::Permission::HttpGet {
+                        for host in manifest.http_hosts() {
+                            ui.label(format!("      {host}"));
+                        }
+                    }
                 }
                 if ui.button("Approve and enable").clicked() {
                     host.queue(Action::Approve(id.clone()));

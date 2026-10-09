@@ -30,6 +30,8 @@ getrandom.workspace = true
 wasmtime.workspace = true
 egui.workspace = true
 num-traits.workspace = true
+ureq.workspace = true
+native-tls.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 angelica-hook.workspace = true

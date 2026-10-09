@@ -10,6 +10,7 @@ pub enum Kind {
     Unavailable,
     LimitExceeded,
     Io,
+    Network,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -19,10 +19,11 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `file-replacements` | replacement game files the game reads instead of its own | `files.replace` |
 | `commands` | chat commands the host parses for the plugin | `chat.commands` |
 | `chat` | messages in the player's chat log | `chat.print` |
+| `http` | HTTPS GET requests to the hosts the manifest lists | `http.get` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
-Every fallible call returns `types.error`: a stable `kind` for programs and a `message` that names the path, table, or value involved. A guest that ignores an error keeps running; a trap disables it.
+Every fallible call returns `types.error`: a stable `kind` for programs and a `message` that names the path, table, URL, or value involved. A guest that ignores an error keeps running; a trap disables it.
 
 ## Calls into the plugin
 
@@ -36,7 +37,7 @@ Each call has a time limit counted in guest time only (time spent in host calls 
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -96,6 +97,16 @@ The host answers some lines itself, as the plugin's message in the chat log: `/<
 ## Chat
 
 `chat.print` adds a message to the chat log, in the Echo channel. A message is a list of spans of plain text, each in a tone — `normal`, `accent`, `muted`, `good`, `warning`, or `bad` — and optionally italic; a line break starts a new line, and no other control character is allowed. A message has at most 64 spans and 2000 bytes of text, and is not empty. The host renders the tones with colors of the game's interface theme and starts every message with `[<plugin name>]` in a color no tone uses, so a plugin cannot pass its message off as the game's or another plugin's ([game structures](./game-structures.md#chat)). A plugin prints at most 20 messages in any second; past that `print` returns `limit-exceeded`. Before the game's chat log exists, during the game's start, it returns `unavailable`.
+
+## HTTP
+
+A plugin with `http.get` sends HTTPS GET requests to the hosts its manifest lists in `[http] hosts` ([manifest](./plugin-manifest-v1.md)), which the player approves with the plugin. Requests block, so they are made from jobs; the main instance gets `wrong-context`. Time spent in a request does not count against the job's 10 minutes.
+
+Before anything is sent, the host checks the request: an absolute `https://` URL of at most 4096 bytes, without user name or password, on port 443, to a listed host — otherwise `invalid-argument`, or `permission-denied` for a host the manifest does not list. A plugin sets only the headers `accept`, `accept-language`, `if-none-match`, `if-modified-since`, and `range`, each once, with values of at most 1024 bytes and no control characters. The host sets the user agent (`Angelica/<version> (plugin <id>/<version>)`), asks for gzip and decompresses it, sends no cookies or credentials, and ignores proxies configured on the system.
+
+The same rules hold for every connection, including each of at most 5 redirects: the scheme is `https`, the port 443, and the host a listed one. A host name is resolved and only public addresses are used; a name that resolves only to loopback, private, shared, link-local, multicast, documentation, or reserved addresses is refused with `permission-denied`, so a plugin cannot reach the player's computer or network. TLS is the operating system's, with its certificate store and TLS 1.2 or later; a certificate the system does not trust fails the request.
+
+`get` returns the final response's status, headers (names in lower case), and body, at most 16 MiB, within 60 seconds. `download` writes a 2xx response's body to a file in the plugin's storage, at most 1 GiB and within the storage quota, within 15 minutes; the file is replaced only when the whole body arrived, and another status leaves it as it was. Any status is a response, not an error. A request that does not complete — the name does not resolve, the connection or TLS fails, the time runs out, the job is cancelled — returns `network`; a body over its limit returns `limit-exceeded`. Resolution and connection each take at most 15 seconds, and the response's head arrives within 30.
 
 ## WASI
 

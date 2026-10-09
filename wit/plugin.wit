@@ -43,5 +43,6 @@ world plugin {
     import text-case;
     import commands;
     import chat;
+    import http;
     export guest;
 }

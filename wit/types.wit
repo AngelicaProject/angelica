@@ -26,5 +26,9 @@ interface types {
         limit-exceeded,
         /// The operating system refused a file operation.
         io,
+        /// A request did not complete: the name did not resolve, the
+        /// connection or TLS failed, the server broke the protocol, the
+        /// time ran out, or the job was cancelled.
+        network,
     }
 }

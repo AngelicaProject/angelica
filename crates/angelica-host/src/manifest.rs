@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 pub const API_VERSIONS: &[&str] = &["1.0"];
 /// The largest memory a plugin instance may request.
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
+/// Hosts a manifest lists for `http.get`.
+pub const MAX_HOSTS: usize = 32;
 
 /// What a plugin may do beyond its own windows, storage, and jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -27,6 +29,9 @@ pub enum Permission {
     /// Print messages in the chat log.
     #[serde(rename = "chat.print")]
     ChatPrint,
+    /// Send HTTPS GET requests to the hosts the manifest lists.
+    #[serde(rename = "http.get")]
+    HttpGet,
 }
 
 impl Permission {
@@ -38,6 +43,7 @@ impl Permission {
             Self::FilesReplace => "files.replace",
             Self::ChatCommands => "chat.commands",
             Self::ChatPrint => "chat.print",
+            Self::HttpGet => "http.get",
         }
     }
 
@@ -50,6 +56,7 @@ impl Permission {
             Self::FilesReplace => "Replaces game files: fonts and textures",
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
+            Self::HttpGet => "Downloads from these internet hosts",
         }
     }
 }
@@ -69,6 +76,13 @@ pub struct Plugin {
     pub memory_bytes: Option<u64>,
 }
 
+/// The hosts `http.get` reaches.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Http {
+    pub hosts: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -76,6 +90,8 @@ pub struct Manifest {
     pub plugin: Plugin,
     #[serde(default)]
     permissions: toml::Table,
+    #[serde(default)]
+    http: Option<Http>,
     #[serde(skip)]
     pub declared: BTreeSet<Permission>,
 }
@@ -143,8 +159,35 @@ impl Manifest {
                 _ => return fail(format!("permission {name} is true or false")),
             }
         }
+        let hosts = manifest
+            .http
+            .as_ref()
+            .map_or(&[][..], |http| &http.hosts[..]);
+        if declared.contains(&Permission::HttpGet) == hosts.is_empty() {
+            return fail("http.get and a non-empty http.hosts come together".into());
+        }
+        if hosts.len() > MAX_HOSTS {
+            return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
+        }
+        let mut unique = BTreeSet::new();
+        for host in hosts {
+            crate::http::check_host_pattern(host)
+                .map_err(|problem| ManifestError(format!("http.hosts: {host:?} {problem}")))?;
+            if !unique.insert(host) {
+                return fail(format!("http.hosts lists {host} twice"));
+            }
+        }
         manifest.declared = declared;
         Ok(manifest)
+    }
+
+    /// The hosts `http.get` reaches, as the manifest lists them.
+    #[must_use]
+    pub fn http_hosts(&self) -> BTreeSet<String> {
+        self.http
+            .iter()
+            .flat_map(|http| http.hosts.iter().cloned())
+            .collect()
     }
 
     /// The permissions the manifest declares.
@@ -166,6 +209,9 @@ pub struct Grants {
     pub format: u32,
     pub plugin_id: String,
     pub permissions: BTreeSet<Permission>,
+    /// The hosts approved for `http.get`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub http_hosts: BTreeSet<String>,
 }
 
 impl Grants {
@@ -175,6 +221,7 @@ impl Grants {
             format: 1,
             plugin_id: manifest.id().into(),
             permissions: manifest.permissions().clone(),
+            http_hosts: manifest.http_hosts(),
         }
     }
 
@@ -184,6 +231,7 @@ impl Grants {
         self.format == 1
             && self.plugin_id == manifest.id()
             && manifest.permissions().is_subset(&self.permissions)
+            && manifest.http_hosts().is_subset(&self.http_hosts)
     }
 }
 
@@ -217,6 +265,62 @@ description = "Community translations."
         let mut fewer = grants.clone();
         fewer.permissions.remove(&Permission::TextCase);
         assert!(!fewer.cover(&manifest));
+    }
+
+    #[test]
+    fn http_hosts_come_with_their_permission_and_need_approval() {
+        let with = |hosts: &str| {
+            format!(
+                "{VALID}\"http.get\" = true
+[http]
+hosts = [{hosts}]
+"
+            )
+        };
+        let manifest = Manifest::parse(&with("\"example.com\", \"*.cdn.example.org\"")).unwrap();
+        assert!(manifest.permissions().contains(&Permission::HttpGet));
+        assert_eq!(
+            manifest.http_hosts().into_iter().collect::<Vec<_>>(),
+            ["*.cdn.example.org", "example.com"]
+        );
+        let grants = Grants::for_manifest(&manifest);
+        assert!(grants.cover(&manifest));
+        let json = serde_json::to_string(&grants).unwrap();
+        assert!(
+            json.contains("\"http_hosts\":[\"*.cdn.example.org\",\"example.com\"]"),
+            "{json}"
+        );
+
+        let more = Manifest::parse(&with("\"example.com\", \"example.net\"")).unwrap();
+        assert!(!grants.cover(&more), "a new host needs approval again");
+        let without = Grants::for_manifest(&Manifest::parse(VALID).unwrap());
+        assert!(
+            !serde_json::to_string(&without)
+                .unwrap()
+                .contains("http_hosts"),
+            "grants without hosts keep their format"
+        );
+
+        for hosts in [
+            "",
+            "\"localhost\"",
+            "\"127.0.0.1\"",
+            "\"Example.com\"",
+            "\"example.com\", \"example.com\"",
+            "\"*.com\"",
+            "\"https://example.com\"",
+        ] {
+            assert!(Manifest::parse(&with(hosts)).is_err(), "{hosts}");
+        }
+        assert!(
+            Manifest::parse(&format!(
+                "{VALID}[http]
+hosts = [\"example.com\"]
+"
+            ))
+            .is_err(),
+            "hosts without the permission"
+        );
     }
 
     #[test]

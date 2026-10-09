@@ -252,6 +252,57 @@ impl Storage {
         })
     }
 
+    /// Checks `path` without touching the folder.
+    ///
+    /// # Errors
+    /// Fails for paths `write` refuses.
+    pub fn check(&self, path: &str) -> Result<()> {
+        self.resolve(path).map(drop)
+    }
+
+    /// Writes a file with `fill`, which receives the temporary file and the
+    /// bytes it may write: what the quota leaves, counting the file it
+    /// replaces. The file is replaced only when `fill` succeeds and the
+    /// written size fits the quota. Returns `fill`'s result and the size.
+    ///
+    /// # Errors
+    /// Fails for invalid paths, a full quota, file system errors, and
+    /// `fill`'s error.
+    pub fn write_with<T>(
+        &self,
+        path: &str,
+        fill: impl FnOnce(&mut fs::File, u64) -> Result<T>,
+    ) -> Result<(T, u64)> {
+        let location = self.resolve(path)?;
+        let existing = Self::existing_size(&location);
+        let room = {
+            let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
+            let current = used.unwrap_or_else(|| folder_size(&self.root));
+            *used = Some(current);
+            self.quota.saturating_sub(current).saturating_add(existing)
+        };
+        Self::parent(path, &location)?;
+        let mut temporary = location.clone().into_os_string();
+        temporary.push(TEMPORARY);
+        let result = (|| {
+            let mut output = fs::File::create(&temporary).map_err(|e| io(path, &e))?;
+            let value = fill(&mut output, room)?;
+            output.sync_all().map_err(|e| io(path, &e))?;
+            let size = output.metadata().map_err(|e| io(path, &e))?.len();
+            drop(output);
+            self.charge(size, existing)?;
+            if let Err(e) = fs::rename(&temporary, &location) {
+                *self.used.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                return Err(io(path, &e));
+            }
+            Ok((value, size))
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
     /// # Errors
     /// Fails for invalid paths, a full quota, and file system errors.
     pub fn append(&self, path: &str, contents: &[u8]) -> Result<()> {

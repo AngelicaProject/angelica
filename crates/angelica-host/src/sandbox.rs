@@ -216,6 +216,8 @@ pub struct Context {
     pub services: Arc<Services>,
     pub log: Arc<Log>,
     pub jobs: Arc<Jobs>,
+    /// Requests to the approved hosts; `None` without `http.get`.
+    pub http: Option<Arc<crate::http::Client>>,
 }
 
 /// Which instance a store belongs to.
@@ -316,6 +318,23 @@ impl State {
         }
     }
 
+    /// The plugin's HTTP client and the job that calls it.
+    fn http(&self) -> crate::error::Result<(Arc<crate::http::Client>, Arc<Slot>)> {
+        let Role::Job(slot) = &self.role else {
+            return Err(Error::new(
+                Kind::WrongContext,
+                "requests are made from jobs",
+            ));
+        };
+        self.permitted(Permission::HttpGet)?;
+        let client = self
+            .context
+            .http
+            .clone()
+            .ok_or_else(|| Error::new(Kind::PermissionDenied, "the plugin lists no hosts"))?;
+        Ok((client, slot.clone()))
+    }
+
     fn permitted(&self, permission: Permission) -> crate::error::Result<()> {
         if self.context.permissions.contains(&permission) {
             Ok(())
@@ -339,6 +358,7 @@ impl From<Error> for api::types::Error {
                 Kind::Unavailable => ErrorKind::Unavailable,
                 Kind::LimitExceeded => ErrorKind::LimitExceeded,
                 Kind::Io => ErrorKind::Io,
+                Kind::Network => ErrorKind::Network,
             },
             message: error.message,
         }
@@ -767,6 +787,93 @@ pub fn invocation_to_api(invocation: crate::commands::Invocation) -> api::comman
                 },
             })
             .collect(),
+    }
+}
+
+fn http_request(request: api::http::Request) -> crate::http::Request {
+    crate::http::Request {
+        url: request.url,
+        headers: request
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value))
+            .collect(),
+    }
+}
+
+fn http_head(head: crate::http::Head) -> api::http::Head {
+    api::http::Head {
+        status: head.status,
+        headers: head
+            .headers
+            .into_iter()
+            .map(|(name, value)| api::http::Header { name, value })
+            .collect(),
+    }
+}
+
+impl api::http::Host for State {
+    fn get(&mut self, request: api::http::Request) -> ApiResult<api::http::Response> {
+        let (client, slot) = api(self.http())?;
+        let request = http_request(request);
+        let (head, body) = self.host(|_| api(client.get(&request, move || slot.cancelled())))?;
+        Ok(api::http::Response {
+            head: http_head(head),
+            body,
+        })
+    }
+
+    fn download(
+        &mut self,
+        request: api::http::Request,
+        path: String,
+    ) -> ApiResult<(api::http::Head, u64)> {
+        let (client, slot) = api(self.http())?;
+        let request = http_request(request);
+        self.host(|state| {
+            let storage = &state.context.storage;
+            storage.check(&path)?;
+            let (head, mut body) = client.send(
+                &request,
+                crate::http::DOWNLOAD_TIME,
+                crate::http::MAX_DOWNLOAD,
+                move || slot.cancelled(),
+            )?;
+            if !(200..300).contains(&head.status) {
+                return Ok((http_head(head), 0));
+            }
+            let ((), size) =
+                storage.write_with(&path, |file, room| copy_body(&mut body, file, room, &path))?;
+            Ok((http_head(head), size))
+        })
+        .map_err(|error: Error| error.into())
+    }
+}
+
+/// Copies a response body into a file, at most `room` bytes.
+fn copy_body(
+    body: &mut crate::http::BodyReader,
+    file: &mut std::fs::File,
+    room: u64,
+    path: &str,
+) -> crate::error::Result<()> {
+    use std::io::{Read, Write};
+    let mut buffer = vec![0; 64 * 1024];
+    let mut written = 0u64;
+    loop {
+        let read = body.read(&mut buffer).map_err(crate::http::read_failure)?;
+        if read == 0 {
+            return Ok(());
+        }
+        written += read as u64;
+        if written > room {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("{path}: the plugin's storage would exceed its quota"),
+            ));
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|e| Error::new(Kind::Io, format!("{path}: {e}")))?;
     }
 }
 

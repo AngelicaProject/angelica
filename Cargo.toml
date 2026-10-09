@@ -50,6 +50,8 @@ wasmtime = { version = "49.0.2", default-features = false, features = ["std", "r
 egui = { version = "0.36.2", default-features = false }
 num-traits = "0.2.19"
 windows = { version = "0.62.2", default-features = false }
+ureq = { version = "=3.4.2", default-features = false, features = ["gzip"] }
+native-tls = "0.2.18"
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["macros", "realloc", "std"] }
 
 [workspace.lints.rust]

@@ -35,10 +35,10 @@ Paths use forward slashes and are relative. Traversal, empty parts, links, Windo
 `grants/<plugin-id>.json` records the player's approval:
 
 ```json
-{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "text.case"]}
+{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"]}
 ```
 
-A plugin runs only when its grant covers every permission its manifest declares. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+`http_hosts` lists the approved hosts of `http.get` and is left out when there are none. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
 
 ## Plugin settings
 

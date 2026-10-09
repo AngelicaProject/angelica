@@ -43,7 +43,11 @@ cargo test -p angelica-pe --test game -- --ignored
 
 Run them after changing the PE model or the resolver. They are not part of CI, which has no game installation.
 
-The archive and sheet reader is checked the same way: `cargo test -p angelica-host --lib game_data -- --ignored` reads the sheet list, `Item` and `Quest`, a font table, and a font texture from the installation. `angelica-sqpack` and the host's `game_data` module otherwise run against synthetic installations that `angelica_sqpack::testing::FakeGame` writes, and `TestHost::game_folder` gives a plugin test its own.
+The archive and sheet reader is checked the same way: `cargo test -p angelica-host --lib game_data -- --ignored` reads the sheet list, `Item` and `Quest`, `TextCommand` in every installed language, a font table, and a font texture from the installation. `angelica-sqpack` and the host's `game_data` module otherwise run against synthetic installations that `angelica_sqpack::testing::FakeGame` writes, and `TestHost::game_folder` gives a plugin test its own.
+
+## Tests over the internet
+
+The HTTP service is checked against real servers with ignored tests that need the internet: `cargo test -p angelica-host --lib http -- --ignored` fetches a page, follows a redirect to a host that is not listed, and meets an expired certificate; `cargo test -p angelica-fake-game --test hello -- --ignored` fetches and downloads a page from a plugin's job. Run them after changing the HTTP service. CI does not run them; every other HTTP test checks requests before anything is sent.
 
 ## In-game checks
 

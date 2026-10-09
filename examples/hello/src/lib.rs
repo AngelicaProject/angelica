@@ -1,11 +1,13 @@
 //! An example plugin that uses every interface of the plugin API: a window
 //! with each kind of widget, files in its storage, a job, the game's files
-//! and sheets, a text table, letter case, a replaced game file, and chat
-//! commands that print in the chat log. The host's integration tests drive
+//! and sheets, a text table, letter case, a replaced game file, chat
+//! commands that print in the chat log, and HTTPS requests from a job. The host's integration tests drive
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
-    api::{excel, excel_text, file_replacements, game_files, jobs, runtime, storage, text_case},
+    api::{
+        excel, excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case,
+    },
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
     text::{
@@ -44,7 +46,7 @@ impl Hello {
                     self.say(format!("cannot save: {}", error.message));
                 }
             }
-            "count" | "fail" => match jobs::start(id, b"hello job") {
+            "count" | "fail" | "fetch" => match jobs::start(id, b"hello job") {
                 Ok(job) => self.job = Some(job),
                 Err(error) => self.say(format!("job refused: {}", error.message)),
             },
@@ -255,6 +257,7 @@ impl Plugin for Hello {
                         .row(|row| {
                             row.button_enabled("count", "Run a job", self.job.is_none())
                                 .button_enabled("fail", "Run a failing job", self.job.is_none())
+                                .button_enabled("fetch", "Fetch example.com", self.job.is_none())
                         })
                         .progress(self.progress, "")
                 })
@@ -348,6 +351,26 @@ impl Plugin for Hello {
                 Ok(format!("{} bytes", input.len()).into_bytes())
             }
             "fail" => Err("this job always fails".into()),
+            "fetch" => {
+                let request = http::Request {
+                    url: "https://example.com/".into(),
+                    headers: vec![http::Header {
+                        name: "accept".into(),
+                        value: "text/html".into(),
+                    }],
+                };
+                let page = http::get(&request).map_err(|e| e.message)?;
+                let (head, saved) =
+                    http::download(&request, "example.html").map_err(|e| e.message)?;
+                Ok(format!(
+                    "{} with {} bytes; saved {} bytes with {}",
+                    page.head.status,
+                    page.body.len(),
+                    saved,
+                    head.status
+                )
+                .into_bytes())
+            }
             _ => Err(format!("no job {name}")),
         }
     }

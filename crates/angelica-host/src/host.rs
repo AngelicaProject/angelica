@@ -6,7 +6,7 @@ use crate::{
     chat::{Span, Tone},
     commands::Outcome,
     jobs::Jobs,
-    manifest::{Grants, Manifest},
+    manifest::{Grants, Manifest, Permission},
     sandbox::{self, Bindings, Context, Limits, Log, PluginPre, Role, Sandbox, Services, State},
     storage::{DEFAULT_QUOTA, Storage},
     ui,
@@ -305,6 +305,13 @@ impl Host {
             services: self.services.clone(),
             log: plugin.log.clone(),
             jobs: jobs.clone(),
+            http: grants.permissions.contains(&Permission::HttpGet).then(|| {
+                Arc::new(crate::http::Client::new(
+                    plugin.manifest.http_hosts().into_iter().collect(),
+                    &id,
+                    &plugin.manifest.plugin.version,
+                ))
+            }),
         });
         let mut store = sandbox::store(&self.sandbox, context, Role::Main);
         sandbox::budget(

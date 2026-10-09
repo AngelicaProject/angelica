@@ -18,6 +18,7 @@ An operation is as narrow as its verified contract. A game structure the map doe
 | Player interaction | chat commands, chat messages | the plugin declares its commands and supplies its messages; the host parses, answers help and mistakes, and presents everything under the plugin's name in the game's own look |
 | Game data | game files, Excel sheets | read-only originals from the installed archives, never another plugin's changes; bounded and cached by the host |
 | Host resources | storage, jobs, windows | bounded per plugin, confined to the plugin |
+| The internet | HTTPS requests | only to the public hosts the manifest names and the player approved, from jobs, with the host's TLS and limits |
 
 Each service that changes the game uses an adapter over verified map entries with a written contract ([game structures](../formats/game-structures.md)). An adapter installs its hooks the first time a plugin needs it and keeps them until the process exits; without active rules they only pass calls on.
 

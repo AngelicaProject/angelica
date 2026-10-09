@@ -5,10 +5,12 @@ package angelica:plugin@1.0.0;
 /// `start` runs the guest's `run-job` export in a new instance of the plugin
 /// on a host thread. That instance has its own memory, shares nothing with
 /// the main instance except the plugin's storage, and is dropped when the
-/// job ends. A job may use `runtime`, `storage`, and `report`; operations
-/// that change the game return `wrong-context`.
+/// job ends. A job may use `runtime`, `storage`, `game-files`, `excel`,
+/// `http`, and `report`; operations that change the game return
+/// `wrong-context`.
 ///
-/// A job runs for at most 10 minutes. Disabling the plugin cancels its
+/// A job runs for at most 10 minutes of its own time; time spent in host
+/// calls such as requests is not counted. Disabling the plugin cancels its
 /// jobs.
 interface jobs {
     use types.{error};
