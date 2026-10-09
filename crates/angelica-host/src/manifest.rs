@@ -353,4 +353,15 @@ hosts = [\"example.com\"]
             assert!(Manifest::parse(&VALID.replace(from, to)).is_err(), "{to}");
         }
     }
+
+    #[test]
+    fn damaged_manifests_are_refused_without_panicking() {
+        let mut mutator = crate::mutations::Mutator::new(13);
+        for _ in 0..20_000 {
+            if let Ok(manifest) = Manifest::parse(&mutator.mutate_text(VALID)) {
+                let _ = Grants::for_manifest(&manifest).cover(&manifest);
+                let _ = manifest.http_hosts();
+            }
+        }
+    }
 }
