@@ -3,6 +3,11 @@
 //! ```ignore
 //! Window::new("main", "Translations")
 //!     .heading("Packs")
+//!     .tabs("view", &["Installed", "Available"], self.tab)
+//!     .table("packs", &["Pack", "Size"], |table| {
+//!         table.text("Russian").tooltip("Community translation").text("12 MB")
+//!     })
+//!     .slider("opacity", "Opacity", self.opacity, 0.0, 1.0)
 //!     .row(|row| row.button("import", "Import").button("remove", "Remove"))
 //!     .section("details", "Details", false, |section| section.muted("..."))
 //! ```
@@ -118,6 +123,85 @@ impl Window {
     #[must_use]
     pub fn separator(self) -> Self {
         self.with(Widget::Separator)
+    }
+
+    /// A number field the player drags or types into, between `min` and
+    /// `max`, with two decimals; use [`Window::with`] and [`Number`] for a
+    /// step or other decimals.
+    #[must_use]
+    pub fn number(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        value: f64,
+        min: f64,
+        max: f64,
+    ) -> Self {
+        self.with(Widget::Number(Number {
+            id: id.into(),
+            label: label.into(),
+            value,
+            min,
+            max,
+            step: 0.0,
+            decimals: 2,
+            slider: false,
+        }))
+    }
+
+    /// A slider between `min` and `max`, with two decimals.
+    #[must_use]
+    pub fn slider(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        value: f64,
+        min: f64,
+        max: f64,
+    ) -> Self {
+        self.with(Widget::Number(Number {
+            id: id.into(),
+            label: label.into(),
+            value,
+            min,
+            max,
+            step: 0.0,
+            decimals: 2,
+            slider: true,
+        }))
+    }
+
+    /// A row of tabs with `selected` chosen; a click on another arrives as
+    /// [`Event::Chosen`]. Add the selected tab's widgets after it.
+    #[must_use]
+    pub fn tabs(self, id: impl Into<String>, labels: &[&str], selected: u32) -> Self {
+        self.with(Widget::Tabs(Tabs {
+            id: id.into(),
+            labels: labels.iter().map(|&label| label.to_owned()).collect(),
+            selected,
+        }))
+    }
+
+    /// A table: each widget (or row) `build` adds fills the next cell, left
+    /// to right, row by row.
+    #[must_use]
+    pub fn table(
+        self,
+        id: impl Into<String>,
+        columns: &[&str],
+        build: impl FnOnce(Self) -> Self,
+    ) -> Self {
+        let begin = Widget::BeginTable(Table {
+            id: id.into(),
+            columns: columns.iter().map(|&column| column.to_owned()).collect(),
+        });
+        build(self.with(begin)).with(Widget::EndTable)
+    }
+
+    /// Text shown when the player points at the widget added last.
+    #[must_use]
+    pub fn tooltip(self, text: impl Into<String>) -> Self {
+        self.with(Widget::Tooltip(text.into()))
     }
 
     /// Widgets side by side.

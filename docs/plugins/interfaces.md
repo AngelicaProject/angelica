@@ -8,14 +8,20 @@ A task the cards do not cover is not available to plugins yet: file an [API requ
 
 Show the plugin's own windows and react to the player.
 
-- SDK: `ui::Window` built in `Plugin::ui`; actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option index), `Closed`, and `OpenRequested`; each names the window and widget.
+- SDK: `ui::Window` built in `Plugin::ui`: headings and texts, buttons, checkboxes, text inputs, choices, numbers (`number`, `slider`), `tabs`, `table`, progress, `row`, `section`, and a `tooltip` for the widget before it. Actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option or a tab, by index), `Set` (a number), `Closed`, and `OpenRequested`; each names the window and widget.
 - Permission: none. Instance: main.
-- Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, and choice value in the plugin and update it from the event.
+- Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, choice, number, and selected tab in the plugin and update it from the event. Tabs only draw the tab row: add the selected tab's widgets after it.
 - `Event::OpenRequested` comes from the plugin's Open button in the Angelica menu; open the main window on it.
 - Contract: [windows](../formats/plugin-api-v1.md#windows).
 
 ```rust
 Window::new("main", "Timers")
+    .tabs("view", &["Running", "Settings"], self.tab)
+    .table("timers", &["Timer", "Left"], |table| {
+        self.timers.iter().fold(table, |table, timer| table.text(&timer.name).text(timer.left()))
+    })
+    .slider("warning", "Warn before (s)", self.warning, 0.0, 30.0)
+    .tooltip("Seconds before the end to print a warning")
     .input("name", "Name", &self.name, "a timer name")
     .row(|row| row.button("add", "Add").button_enabled("clear", "Clear", !self.timers.is_empty()))
 ```

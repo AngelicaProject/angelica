@@ -10,8 +10,11 @@ package angelica:plugin@1.0.0;
 ///
 /// Layout is a flat list. `begin-row` ... `end-row` places the widgets
 /// between them side by side; `begin-section` ... `end-section` puts them
-/// under a heading the player can collapse. Both nest; every `begin` needs
-/// its `end`.
+/// under a heading the player can collapse; `begin-table` ... `end-table`
+/// fills a table's cells left to right, row by row, one widget or one row
+/// per cell. They nest, except that a table holds no sections or tables;
+/// every `begin` needs its `end`. A `tooltip` shows its text when the player
+/// points at the widget right before it.
 interface ui {
     enum tone {
         normal,
@@ -65,6 +68,35 @@ interface ui {
         open-by-default: bool,
     }
 
+    /// A number the player sets, between `min` and `max`.
+    record number {
+        id: string,
+        label: string,
+        value: f64,
+        min: f64,
+        max: f64,
+        /// The smallest change; 0 for any.
+        step: f64,
+        /// Digits shown after the decimal point, at most 6.
+        decimals: u8,
+        /// A slider; otherwise a field the player drags or types into.
+        slider: bool,
+    }
+
+    /// A row of tabs; the plugin shows the selected tab's widgets after it.
+    record tabs {
+        id: string,
+        labels: list<string>,
+        /// Index into `labels`.
+        selected: u32,
+    }
+
+    /// A table with column headings, 1 to 16 columns.
+    record table {
+        id: string,
+        columns: list<string>,
+    }
+
     variant widget {
         heading(string),
         text(text),
@@ -78,6 +110,11 @@ interface ui {
         end-row,
         begin-section(section),
         end-section,
+        number(number),
+        tabs(tabs),
+        begin-table(table),
+        end-table,
+        tooltip(string),
     }
 
     record window {
@@ -93,8 +130,10 @@ interface ui {
         toggled(toggled),
         /// The text of a text input changed.
         edited(edited),
-        /// An option of a choice was selected.
+        /// An option of a choice or a tab was selected.
         chosen(chosen),
+        /// The player set a number.
+        set(number-set),
         /// The player closed the window with its close button.
         closed(string),
         /// The player asked to open the plugin from the Angelica menu.
@@ -122,5 +161,11 @@ interface ui {
         window: string,
         id: string,
         index: u32,
+    }
+
+    record number-set {
+        window: string,
+        id: string,
+        value: f64,
     }
 }

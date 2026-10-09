@@ -762,3 +762,31 @@ fn the_test_kit_drives_windows_jobs_and_restarts() {
     test.event("hello", Event::OpenRequested);
     assert!(test.texts("hello").contains(&"1 clicks".to_owned()));
 }
+
+#[test]
+fn numbers_tabs_tables_and_tooltips() {
+    let test = approved(MANIFEST);
+    test.set_number("hello", "main", "volume", 0.75);
+    assert!(test.texts("hello").contains(&"volume 0.75".to_owned()));
+    let widgets = test.host.plugin("hello").unwrap().windows()[0]
+        .widgets
+        .clone();
+    let slider = widgets
+        .iter()
+        .position(|widget| matches!(widget, Widget::Number(number) if number.slider && number.value == 0.75))
+        .unwrap();
+    assert!(matches!(&widgets[slider + 1], Widget::Tooltip(text) if text == "How loud hello is"));
+
+    test.choose("hello", "main", "tabs", 1);
+    test.click("hello", "main", "click");
+    let widgets = test.host.plugin("hello").unwrap().windows()[0]
+        .widgets
+        .clone();
+    let table = widgets
+        .iter()
+        .position(|widget| matches!(widget, Widget::BeginTable(table) if table.columns == ["Item", "Count"]))
+        .unwrap();
+    assert!(matches!(&widgets[table + 1], Widget::Text(text) if text.text == "Potion"));
+    assert!(matches!(&widgets[table + 3], Widget::Text(text) if text.text == "1"));
+    assert!(matches!(&widgets[table + 4], Widget::EndTable));
+}

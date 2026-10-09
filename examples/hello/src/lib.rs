@@ -36,6 +36,9 @@ struct Hello {
     message: String,
     /// The last message the chat log received, as `sender: text`.
     heard: Option<String>,
+    /// The selected tab of the widgets section.
+    tab: u32,
+    volume: f64,
 }
 
 impl Hello {
@@ -298,6 +301,8 @@ impl Plugin for Hello {
             progress: 0.0,
             message: String::new(),
             heard: None,
+            tab: 0,
+            volume: 0.5,
         };
         if let Err(error) = events::subscribe(&[EventKind::ChatMessage]) {
             hello.say(format!("events refused: {}", error.message));
@@ -366,6 +371,22 @@ impl Plugin for Hello {
                             .button("texture", "Replace a texture")
                     })
                 })
+                .section("widgets", "Widgets", false, |section| {
+                    let section = section.tabs("tabs", &["Numbers", "Table"], self.tab);
+                    if self.tab == 0 {
+                        section
+                            .slider("volume", "Volume", self.volume, 0.0, 1.0)
+                            .tooltip("How loud hello is")
+                            .text(format!("volume {:.2}", self.volume))
+                    } else {
+                        section.table("items", &["Item", "Count"], |table| {
+                            table
+                                .text("Potion")
+                                .tooltip("Restores HP")
+                                .text(self.clicks.to_string())
+                        })
+                    }
+                })
                 .separator()
                 .toned(&self.message, Tone::Muted),
         ]
@@ -378,7 +399,9 @@ impl Plugin for Hello {
             Event::Clicked(target) => self.click(&target.id),
             Event::Toggled(toggled) => self.shout = toggled.checked,
             Event::Edited(edited) => self.name = edited.value,
+            Event::Chosen(chosen) if chosen.id == "tabs" => self.tab = chosen.index,
             Event::Chosen(chosen) => self.color = Some(chosen.index),
+            Event::Set(set) => self.volume = set.value,
         }
     }
 

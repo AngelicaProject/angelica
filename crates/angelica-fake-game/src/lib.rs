@@ -423,6 +423,18 @@ impl TestHost {
         );
     }
 
+    /// The player sets a number field or slider; the frame runs.
+    pub fn set_number(&self, plugin: &str, window: &str, id: &str, value: f64) {
+        self.event(
+            plugin,
+            Event::Set(ui::NumberSet {
+                window: window.into(),
+                id: id.into(),
+                value,
+            }),
+        );
+    }
+
     /// The headings and texts of a plugin's windows as last drawn, in order;
     /// empty when it is not installed.
     #[must_use]

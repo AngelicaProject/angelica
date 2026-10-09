@@ -66,7 +66,7 @@ Rules that keep a plugin within its limits:
 | time to pass | `test.advance(seconds)`: one frame in which `seconds` passed |
 | the player runs a command | `test.command("/<id> ...")`; false when the game would handle the line |
 | the player opens the window | `test.event(id, Event::OpenRequested)` |
-| the player clicks, types, ticks, or picks | `test.click(id, window, widget)`, `test.edit(.., value)`, `test.toggle(.., checked)`, `test.choose(.., index)` |
+| the player clicks, types, ticks, picks, or sets a number | `test.click(id, window, widget)`, `test.edit(.., value)`, `test.toggle(.., checked)`, `test.choose(.., index)` (also a tab), `test.set_number(.., value)` |
 | a job to finish | `test.wait_until(\|test\| ...)`: frames until the condition holds, at most ten seconds |
 | the game to restart | `let test = test.restart()?`: the same folders and packages; grants, settings, and storage carry over |
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
