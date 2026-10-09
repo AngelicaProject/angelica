@@ -36,15 +36,21 @@ The detours stay installed until the process exits; without active tables they o
 
 ## Game file loads
 
-The game loads every resource file as a job on a file thread. A job's descriptor names its mode: 11 reads the resource's file from the archives by the game path in the resource handle; modes below 9 read a file on disk named by the descriptor's own path. The adapter detours the job function and, for an archive job whose resource is replaced, turns it into a disk job for the replacement in the host's cache before the original runs: it writes the cache path into the descriptor's path, gives the job a zeroed file object of its own for the duration of the call, and sets the mode to 0. The game's own disk reader then opens and reads the file into the resource, as it does for any file on disk.
+The game loads every resource file as a job on a file thread. A job's descriptor names its mode: 11 reads the resource's file from the archives by the game path in the resource handle; modes below 9 read a file on disk named by the descriptor's own path. The adapter detours the job function and, for an archive job whose resource is replaced, turns it into a disk job for the replacement in the host's cache before the original runs: it writes the cache path into the descriptor's path, sets its length and start offset to zero (an archive job leaves the archive request's values there, and the disk read takes `min(length, size − start offset)` bytes, all of the rest when the length is zero), gives the job a zeroed file object of its own for the duration of the call, and sets the mode to 0. The game's own disk reader then opens and reads the file into the resource, as it does for any file on disk.
 
 | Entry | Kind | Use |
 | --- | --- | --- |
 | `file.file_thread.do_job` | function `(ptr thread, ptr descriptor, i32 priority, u8 sync) -> u8` | detoured |
-| `file.descriptor.mode` (`u8`), `.file_interface` (`ptr`), `.resource_handle` (`ptr`), `.path` (`u16`) | fields of a job descriptor | the job's mode, file object, resource, and the first of 260 UTF-16 path units |
+| `file.descriptor.mode` (`u8`), `.length` (`u64`), `.start_offset` (`u64`), `.file_interface` (`ptr`), `.resource_handle` (`ptr`), `.path` (`u16`) | fields of a job descriptor | the job's mode, the range a disk read takes, its file object, resource, and the first of 260 UTF-16 path units |
 | `file.resource_handle.file_name` | field of a resource handle | the resource's game path |
+| `file.texture_handle.load` | function `(ptr handle, ptr descriptor, u8 reset) -> u8` | detoured |
+| `file.texture_handle.load_unpacked` | function `(ptr handle, i32 detail, ptr descriptor, u8 reset) -> u8` | called for a refused replacement |
+| `file.texture_handle.flags` (`u8`), `file.resource_handle.category` (`u16`) | fields of a texture handle | the texture's flags and the resource's category |
+| `graphics.config.instance` (`ptr`), `graphics.config.texture_detail` (`u8`) | global and field | the graphics settings and their texture detail level |
 
 The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
+
+A texture is the exception to the game's disk reader: the texture load takes a texture read from disk only from the game's protected file list, and refuses any other with 0xF1 (load state 13) before it sets the handle's flags, so the texture's glyphs or pixels are missing. The adapter detours the texture load. When the original refuses a disk job whose path is a file in the host's cache, it calls the game's loader for plain `.tex` files, which reads the header and the texture from the job's file, and returns its result. It passes the detail level the refused load chose: 0 unless flag bit 0 is set, then the settings' texture detail, 2 when that is 0xFF. Then it sets the flags the refused load left unset: bit 1 when the category is 1 or 2, and bit 2, 3, or 4 when the letter before the game path's extension is `d`, `n`, or `s`. Every other result, and every file outside the cache, is the original's. All entries of this section are needed; without one, file replacements are unavailable.
 
 ## Letter case
 

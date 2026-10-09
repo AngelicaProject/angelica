@@ -174,6 +174,20 @@ impl FileReplacements {
         files.get(&path).map(|served| served.path.clone())
     }
 
+    /// Whether the game is reading `path`, UTF-16 up to its terminator or
+    /// the end, from the host's cache.
+    #[must_use]
+    pub fn is_cached(&self, path: &[u16]) -> bool {
+        let end = path
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(path.len());
+        let Ok(path) = String::from_utf16(&path[..end]) else {
+            return false;
+        };
+        Path::new(&path).parent() == Some(self.cache.as_path())
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.files
@@ -209,6 +223,15 @@ mod tests {
         let cache = String::from_utf16(&served[..served.len() - 1]).unwrap();
         assert_eq!(std::fs::read(cache).unwrap(), painted);
         assert_eq!(*served.last().unwrap(), 0);
+        assert!(files.is_cached(&served));
+        let elsewhere: Vec<u16> = folder
+            .path()
+            .join("game")
+            .join("x.tex")
+            .to_string_lossy()
+            .encode_utf16()
+            .collect();
+        assert!(!files.is_cached(&elsewhere));
 
         assert!(
             files
