@@ -29,7 +29,7 @@ Each service that changes the game uses an adapter over verified map entries wit
 
 The API grows by game domain (the inventory, the party, the chat, the game's own windows), not by plugin. A domain's interface is designed once for every plugin that needs the domain, so a patch that changes the domain is absorbed in one adapter and one set of map entries.
 
-A plugin author whose plugin needs a capability the API lacks does not work around it: there is no raw memory access, no game function call, and no hook to fall back on. The author files an API request that names the game resource, the operation, and the plugins that need it. A platform maintainer adds the capability to its domain as described below. Requests that share a domain are designed together.
+A plugin author whose plugin needs a capability the API lacks does not work around it: there is no raw memory access, no game function call, and no hook to fall back on. The author files an [API request](../plugins/api-requests.md) that names the game resource, the operation, and the plugins that need it. A platform maintainer adds the capability to its domain as described below. Requests that share a domain are designed together.
 
 Published research on the game's structures may serve as a starting point for map entries, under the game map repository's import rules. Angelica never depends on it: nothing is fetched from it at build or run time, and every entry is verified against the game's executable before it is used.
 

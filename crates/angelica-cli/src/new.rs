@@ -183,21 +183,26 @@ const AGENTS: &str = r"# {name}
 
 An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly component.
 
-## Work loop
+## Read first
 
-1. Find the capability in the plugin API: `{angelica}/docs/formats/plugin-api-v1.md`, the WIT files in `{angelica}/wit/`, and the SDK in `{angelica}/crates/angelica-sdk/`. Add the permissions it needs to `angelica.toml`.
-2. Look at the game's data from the command line: `angelica excel sheets --game <game folder>`, `angelica excel show <sheet> --game <game folder> --map <map> --row <row>`. Values are read by the column names the game map gives; the game state by its state tables (`state` interface).
-3. Write the plugin in `src/lib.rs` and a test in `tests/` with the scripted game: `angelica-fake-game` installs the plugin in a real host, plays the game's part (sheets, chat lines, state rows), and shows what the plugin printed and drew.
-4. `cargo test` builds the component and runs the tests. `cargo build --release --target wasm32-wasip2` builds `target/wasm32-wasip2/release/{crate}.wasm`.
-5. Install it in the development installation while the game runs: `angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/{crate}.wasm`. The host loads the new version within a second; a version that declares a new permission waits for approval in the Angelica menu (Insert).
+- `{angelica}/docs/plugins/authoring.md`: the work loop from an idea to a published plugin.
+- `{angelica}/docs/plugins/interfaces.md`: which interface, permission, and SDK call serve each task.
+- `{angelica}/docs/plugins/api-requests.md`: what to file when the API lacks a capability.
+- `{angelica}/docs/formats/plugin-api-v1.md` and `{angelica}/wit/`: the contract; `{angelica}/crates/angelica-sdk/`: the SDK.
+
+## Commands
+
+- `cargo test`: builds the component and runs `tests/` against the scripted game.
+- `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic` and `cargo fmt --check`.
+- `cargo build --release --target wasm32-wasip2` builds `target/wasm32-wasip2/release/{crate}.wasm`.
+- `angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/{crate}.wasm` loads it in the running game within a second.
 
 ## Rules
 
-- Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin. When the API lacks a capability, do not work around it: write an API request naming the game resource, the operation, and why the plugin needs it.
+- Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin. When the API lacks a capability, do not work around it: file an API request.
 - Declare only the permissions the plugin uses; the player sees each one.
-- Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds. Start it with `angelica_sdk::jobs::start`, poll the `Job` in `tick`, and do the work in `Plugin::run_job` with `jobs::run`; inputs and outputs are any serde types (add the `serde` crate with its `derive` feature for your own). Requests use `angelica_sdk::http::get`.
-- Settings and other saved values: `angelica_sdk::storage::load` and `save` (JSON in the plugin's folder).
-- `?` turns a host error into the `String` that the plugin's methods return.
+- Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds.
+- For your own serde types, add the `serde` crate with its `derive` feature.
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 ";

@@ -21,6 +21,7 @@ Then load the canonical project documentation for the affected area:
 - Hooks and code patches: `docs/architecture/hooks.md`
 - The game map as the host uses it: `docs/architecture/game-map.md` and `docs/formats/game-map-v1.md`
 - Plugin runtime: `docs/architecture/plugins.md` and `docs/formats/plugin-manifest-v1.md`
+- Writing a plugin or the SDK: `docs/plugins/README.md`
 - Permissions: `docs/architecture/permissions.md`
 - Host services: `docs/architecture/services.md`
 - In-game interface: `docs/architecture/ui.md`
