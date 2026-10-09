@@ -1,7 +1,7 @@
 //! Checks of the windows a plugin describes (the `ui` interface) before the
 //! host draws them.
 #![forbid(unsafe_code)]
-use crate::sandbox::bindings::angelica::plugin::ui::{Widget, Window};
+use crate::sandbox::bindings::angelica::plugin::ui::{Number, Widget, Window};
 use std::collections::BTreeSet;
 
 pub const MAX_WINDOWS: usize = 16;
@@ -14,6 +14,7 @@ pub const MAX_DEPTH: usize = 16;
 pub const MAX_COLUMNS: usize = 16;
 pub const MAX_TABS: usize = 32;
 pub const MAX_DECIMALS: u8 = 6;
+pub const MAX_ICON_SIZE: u16 = 256;
 
 /// What a `begin` opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +28,7 @@ enum Group {
 /// Names the first rule a window breaks: too many windows or widgets, text
 /// or ids too long, repeated ids, unbalanced rows, sections, and tables, a
 /// section or table in a table, a tooltip without a widget before it, or a
-/// number, tabs, or table out of their bounds.
+/// number, tabs, table, or icon out of their bounds.
 pub fn validate(windows: &[Window]) -> Result<(), String> {
     if windows.len() > MAX_WINDOWS {
         return Err(format!("more than {MAX_WINDOWS} windows"));
@@ -181,20 +182,7 @@ fn validate_widget<'a>(
         }
         Widget::Number(value) => {
             label(&value.label, "a label")?;
-            let finite = [value.value, value.min, value.max, value.step]
-                .iter()
-                .all(|number| number.is_finite());
-            if !finite
-                || value.min > value.max
-                || !(value.min..=value.max).contains(&value.value)
-                || value.step < 0.0
-                || value.decimals > MAX_DECIMALS
-            {
-                return Err(format!(
-                    "number {} needs finite min <= value <= max, a step of at least 0, and at most {MAX_DECIMALS} decimals",
-                    value.id
-                ));
-            }
+            validate_number(value)?;
             Some(&value.id)
         }
         Widget::Tabs(value) => {
@@ -211,10 +199,7 @@ fn validate_widget<'a>(
         }
         Widget::BeginTable(value) => {
             if value.columns.is_empty() || value.columns.len() > MAX_COLUMNS {
-                return Err(format!(
-                    "table {} has 1 to {MAX_COLUMNS} columns",
-                    value.id
-                ));
+                return Err(format!("table {} has 1 to {MAX_COLUMNS} columns", value.id));
             }
             for column in &value.columns {
                 label(column, "a column heading")?;
@@ -223,6 +208,15 @@ fn validate_widget<'a>(
         }
         Widget::Tooltip(value) => {
             label(value, "a tooltip")?;
+            None
+        }
+        Widget::Icon(value) => {
+            if value.size == 0 || value.size > MAX_ICON_SIZE {
+                return Err(format!(
+                    "icon {} is drawn 1 to {MAX_ICON_SIZE} wide",
+                    value.icon
+                ));
+            }
             None
         }
         Widget::Separator
@@ -234,10 +228,28 @@ fn validate_widget<'a>(
     .map(String::as_str))
 }
 
+fn validate_number(value: &Number) -> Result<(), String> {
+    let finite = [value.value, value.min, value.max, value.step]
+        .iter()
+        .all(|number| number.is_finite());
+    if !finite
+        || value.min > value.max
+        || !(value.min..=value.max).contains(&value.value)
+        || value.step < 0.0
+        || value.decimals > MAX_DECIMALS
+    {
+        return Err(format!(
+            "number {} needs finite min <= value <= max, a step of at least 0, and at most {MAX_DECIMALS} decimals",
+            value.id
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::bindings::angelica::plugin::ui::{Number, Table, Tabs, Text, Tone};
+    use crate::sandbox::bindings::angelica::plugin::ui::{Icon, Table, Tabs, Text, Tone};
 
     fn window(widgets: Vec<Widget>) -> Vec<Window> {
         vec![Window {
@@ -279,6 +291,11 @@ mod tests {
         let valid = window(vec![
             number(2.0, 0.0, 10.0),
             Widget::Tooltip("How loud".into()),
+            Widget::Icon(Icon {
+                icon: 65002,
+                size: 40,
+            }),
+            Widget::Tooltip("Gil".into()),
             Widget::Tabs(Tabs {
                 id: "tabs".into(),
                 labels: vec!["One".into(), "Two".into()],
@@ -322,6 +339,14 @@ mod tests {
                 "table in a table",
             ),
             (vec![table(&["a"]), Widget::EndRow], "mismatched end"),
+            (
+                vec![Widget::Icon(Icon { icon: 1, size: 0 })],
+                "icon of no size",
+            ),
+            (
+                vec![Widget::Icon(Icon { icon: 1, size: 257 })],
+                "icon too large",
+            ),
             (
                 vec![Widget::Tabs(Tabs {
                     id: "tabs".into(),

@@ -379,8 +379,10 @@ impl Plugin for Hello {
                             .tooltip("How loud hello is")
                             .text(format!("volume {:.2}", self.volume))
                     } else {
-                        section.table("items", &["Item", "Count"], |table| {
+                        section.table("items", &["", "Item", "Count"], |table| {
                             table
+                                .icon(65002, 20)
+                                .tooltip("Gil")
                                 .text("Potion")
                                 .tooltip("Restores HP")
                                 .text(self.clicks.to_string())

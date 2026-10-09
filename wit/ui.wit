@@ -97,6 +97,15 @@ interface ui {
         columns: list<string>,
     }
 
+    /// One of the game's icons, by its number (the numbers game sheets
+    /// such as `Item` hold). An icon the game does not have shows as an
+    /// empty frame.
+    record icon {
+        icon: u32,
+        /// The side of the square it is drawn in, 1 to 256.
+        size: u16,
+    }
+
     variant widget {
         heading(string),
         text(text),
@@ -115,6 +124,7 @@ interface ui {
         begin-table(table),
         end-table,
         tooltip(string),
+        icon(icon),
     }
 
     record window {

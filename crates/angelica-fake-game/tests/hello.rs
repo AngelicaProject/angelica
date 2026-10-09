@@ -764,7 +764,7 @@ fn the_test_kit_drives_windows_jobs_and_restarts() {
 }
 
 #[test]
-fn numbers_tabs_tables_and_tooltips() {
+fn numbers_tabs_tables_tooltips_and_icons() {
     let test = approved(MANIFEST);
     test.set_number("hello", "main", "volume", 0.75);
     assert!(test.texts("hello").contains(&"volume 0.75".to_owned()));
@@ -773,9 +773,9 @@ fn numbers_tabs_tables_and_tooltips() {
         .clone();
     let slider = widgets
         .iter()
-        .position(|widget| matches!(widget, Widget::Number(number) if number.slider && number.value == 0.75))
+        .position(|widget| matches!(widget, Widget::Number(number) if number.slider && number.value.to_bits() == 0.75f64.to_bits()))
         .unwrap();
-    assert!(matches!(&widgets[slider + 1], Widget::Tooltip(text) if text == "How loud hello is"));
+    assert!(matches!(&widgets[slider + 1], Widget::Tooltip(tip) if tip == "How loud hello is"));
 
     test.choose("hello", "main", "tabs", 1);
     test.click("hello", "main", "click");
@@ -784,9 +784,13 @@ fn numbers_tabs_tables_and_tooltips() {
         .clone();
     let table = widgets
         .iter()
-        .position(|widget| matches!(widget, Widget::BeginTable(table) if table.columns == ["Item", "Count"]))
+        .position(|widget| matches!(widget, Widget::BeginTable(table) if table.columns == ["", "Item", "Count"]))
         .unwrap();
-    assert!(matches!(&widgets[table + 1], Widget::Text(text) if text.text == "Potion"));
-    assert!(matches!(&widgets[table + 3], Widget::Text(text) if text.text == "1"));
-    assert!(matches!(&widgets[table + 4], Widget::EndTable));
+    assert!(
+        matches!(&widgets[table + 1], Widget::Icon(icon) if icon.icon == 65002 && icon.size == 20)
+    );
+    assert!(matches!(&widgets[table + 2], Widget::Tooltip(tip) if tip == "Gil"));
+    assert!(matches!(&widgets[table + 3], Widget::Text(shown) if shown.text == "Potion"));
+    assert!(matches!(&widgets[table + 5], Widget::Text(shown) if shown.text == "1"));
+    assert!(matches!(&widgets[table + 6], Widget::EndTable));
 }

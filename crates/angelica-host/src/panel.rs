@@ -7,18 +7,90 @@ use crate::{
     sandbox::bindings::angelica::plugin::{
         runtime::Level,
         ui::{
-            Choice, Chosen, Edited, Number, NumberSet, Table, Tabs, TextInput, Toggled, Tone,
+            Choice, Chosen, Edited, Icon, Number, NumberSet, Table, Tabs, TextInput, Toggled, Tone,
             Widget, WidgetRef,
         },
     },
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-/// State the panel keeps between frames: the text the player is editing.
+/// The most icon textures the panel keeps.
+const MAX_ICONS: usize = 512;
+/// The time a frame may spend reading and decoding icons.
+const ICON_BUDGET: Duration = Duration::from_millis(2);
+
+/// State the panel keeps between frames: the text the player is editing
+/// and the icons it has decoded.
 #[derive(Default)]
 pub struct Panel {
     inputs: HashMap<(String, String, String), String>,
+    icons: Icons,
     pub map_status: Vec<String>,
+}
+
+/// Icon textures by icon number, with the frame each was last drawn in;
+/// `None` for an icon the game does not have or the host cannot decode.
+#[derive(Default)]
+struct Icons {
+    textures: HashMap<u32, (Option<egui::TextureHandle>, u64)>,
+    frame: u64,
+    /// When this frame's time for decoding icons ends.
+    until: Option<Instant>,
+}
+
+impl Icons {
+    fn begin_frame(&mut self) {
+        self.frame += 1;
+        self.until = None;
+    }
+
+    /// The icon's texture, decoding it within the frame's budget; `None`
+    /// draws an empty frame.
+    fn texture(
+        &mut self,
+        host: &Host,
+        context: &egui::Context,
+        icon: u32,
+    ) -> Option<egui::TextureId> {
+        if let Some((texture, frame)) = self.textures.get_mut(&icon) {
+            *frame = self.frame;
+            return texture.as_ref().map(egui::TextureHandle::id);
+        }
+        let until = *self
+            .until
+            .get_or_insert_with(|| Instant::now() + ICON_BUDGET);
+        if Instant::now() >= until {
+            context.request_repaint();
+            return None;
+        }
+        let texture = match crate::icons::load(&host.services().data, icon) {
+            Ok(Some(image)) => Some(context.load_texture(
+                format!("angelica-icon-{icon}"),
+                egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.rgba),
+                egui::TextureOptions::LINEAR,
+            )),
+            Ok(None) => None,
+            Err(error) => {
+                host.diagnostic(format!("icon {icon}: {error}"));
+                None
+            }
+        };
+        if self.textures.len() >= MAX_ICONS
+            && let Some(&oldest) = self
+                .textures
+                .iter()
+                .min_by_key(|(_, (_, frame))| *frame)
+                .map(|(icon, _)| icon)
+        {
+            self.textures.remove(&oldest);
+        }
+        let id = texture.as_ref().map(egui::TextureHandle::id);
+        self.textures.insert(icon, (texture, self.frame));
+        id
+    }
 }
 
 impl Panel {
@@ -26,11 +98,13 @@ impl Panel {
     pub fn new(map_status: Vec<String>) -> Self {
         Self {
             inputs: HashMap::new(),
+            icons: Icons::default(),
             map_status,
         }
     }
 
     pub fn draw(&mut self, host: &Host, context: &egui::Context) {
+        self.icons.begin_frame();
         egui::Window::new("Angelica")
             .default_width(420.0)
             .vscroll(true)
@@ -84,6 +158,7 @@ impl Panel {
                 plugin: id,
                 window: &window.id,
                 inputs: &mut self.inputs,
+                icons: &mut self.icons,
                 last: None,
             };
             let mut position = 0;
@@ -193,6 +268,7 @@ struct Drawer<'a> {
     plugin: &'a str,
     window: &'a str,
     inputs: &'a mut HashMap<(String, String, String), String>,
+    icons: &'a mut Icons,
     /// The widget a following tooltip points at.
     last: Option<egui::Response>,
 }
@@ -342,6 +418,7 @@ impl Drawer<'_> {
                     bar.text(&progress.label)
                 })
             }
+            Widget::Icon(icon) => self.icon(ui, *icon),
             Widget::Separator => {
                 ui.separator();
                 return None;
@@ -354,6 +431,22 @@ impl Drawer<'_> {
             | Widget::EndTable
             | Widget::Tooltip(_) => return None,
         })
+    }
+
+    /// Draws an icon, or an empty frame while the game has none for it.
+    fn icon(&mut self, ui: &mut egui::Ui, icon: Icon) -> egui::Response {
+        let size = egui::Vec2::splat(f32::from(icon.size));
+        if let Some(texture) = self.icons.texture(self.host, ui.ctx(), icon.icon) {
+            return ui.add(egui::Image::from_texture((texture, size)));
+        }
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+        ui.painter().rect_stroke(
+            rect,
+            2.0,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        response
     }
 
     fn number(&mut self, ui: &mut egui::Ui, number: &Number) -> egui::Response {

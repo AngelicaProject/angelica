@@ -198,6 +198,13 @@ impl Window {
         build(self.with(begin)).with(Widget::EndTable)
     }
 
+    /// One of the game's icons by its number, in a square `size` wide; an
+    /// icon the game does not have shows as an empty frame.
+    #[must_use]
+    pub fn icon(self, icon: u32, size: u16) -> Self {
+        self.with(Widget::Icon(Icon { icon, size }))
+    }
+
     /// Text shown when the player points at the widget added last.
     #[must_use]
     pub fn tooltip(self, text: impl Into<String>) -> Self {
