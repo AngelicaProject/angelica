@@ -51,3 +51,31 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
     assert!(!new(directory.path(), "Loot").status.success());
     assert!(!new(directory.path(), "9lives").status.success());
 }
+
+#[test]
+fn a_relative_checkout_path_is_resolved() {
+    let directory = tempfile::tempdir().unwrap();
+    let checkout = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    let checkout = checkout.trim_end_matches("/crates/angelica-cli");
+    let output = Command::new(env!("CARGO_BIN_EXE_angelica"))
+        .current_dir(checkout)
+        .args([
+            "plugin",
+            "new",
+            "timers",
+            "--json",
+            "--angelica",
+            ".",
+            "--directory",
+        ])
+        .arg(directory.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let config =
+        std::fs::read_to_string(directory.path().join("timers/.cargo/config.toml")).unwrap();
+    assert!(
+        config.contains(&format!("{checkout}/crates/angelica-sdk")),
+        "{config}"
+    );
+}

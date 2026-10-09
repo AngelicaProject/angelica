@@ -290,7 +290,13 @@ fn create(args: &NewArgs) -> Result<PathBuf, String> {
         );
     }
     let angelica = match &args.angelica {
-        Some(path) => path.clone(),
+        // The project's `.cargo/config.toml` resolves paths from the project.
+        Some(path) => path.canonicalize().map_err(|e| {
+            format!(
+                "{} is not an Angelica checkout; give --angelica: {e}",
+                path.display()
+            )
+        })?,
         None => Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
