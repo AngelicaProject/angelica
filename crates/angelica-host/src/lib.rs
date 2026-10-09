@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod excel_text;
 pub mod game;
+pub mod game_data;
 pub mod host;
 pub mod jobs;
 pub mod manifest;

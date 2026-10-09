@@ -43,6 +43,8 @@ cargo test -p angelica-pe --test game -- --ignored
 
 Run them after changing the PE model or the resolver. They are not part of CI, which has no game installation.
 
+The archive and sheet reader is checked the same way: `cargo test -p angelica-host --lib game_data -- --ignored` reads the sheet list, `Item` and `Quest`, a font table, and a font texture from the installation. `angelica-sqpack` and the host's `game_data` module otherwise run against synthetic installations that `angelica_sqpack::testing::FakeGame` writes, and `TestHost::game_folder` gives a plugin test its own.
+
 ## In-game checks
 
 A change to code that runs in the game process is checked in the running game before review. The pull request names what was checked: the game build, the plugins loaded, and the behavior observed.

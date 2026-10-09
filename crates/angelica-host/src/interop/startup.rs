@@ -107,7 +107,10 @@ fn initialize() -> Result<(), String> {
         case: case.clone(),
         version: WindowsGame::read_version(&executable),
     });
+    // The executable is in `game/`; the archives are in `game/sqpack`.
+    let installation = executable.parent().and_then(std::path::Path::parent);
     let services = Arc::new(Services {
+        data: Arc::new(crate::game_data::GameData::new(installation)),
         excel,
         case,
         game,

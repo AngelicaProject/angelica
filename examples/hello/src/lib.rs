@@ -1,9 +1,9 @@
 //! An example plugin that uses every interface of the plugin API: a window
-//! with each kind of widget, files in its storage, a job, a text table, and
-//! letter case. The host's integration tests drive it through its window.
+//! with each kind of widget, files in its storage, a job, the game's files
+//! and sheets, a text table, and letter case. The host's integration tests drive it through its window.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, jobs, runtime, storage, text_case},
+    api::{excel, excel_text, game_files, jobs, runtime, storage, text_case},
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -54,6 +54,25 @@ impl Hello {
                         info.sheets, info.cells
                     )),
                     Err(error) => self.say(format!("table refused: {error}")),
+                }
+            }
+            "read" => {
+                let text = excel::row("Item", 2, excel::RowKey { row: 1, subrow: 0 })
+                    .map_err(|e| e.message)
+                    .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
+                    .map(|row| match row.values.first() {
+                        Some(excel::Value::Text(bytes)) => {
+                            String::from_utf8_lossy(bytes).into_owned()
+                        }
+                        _ => "not text".to_owned(),
+                    });
+                let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
+                match (text, font) {
+                    (Ok(text), Ok(size)) => {
+                        self.say(format!("Item 1 is {text}; the font file has {size} bytes"));
+                    }
+                    (Err(error), _) => self.say(format!("cannot read Item: {error}")),
+                    (_, Err(error)) => self.say(format!("cannot read the font: {}", error.message)),
                 }
             }
             "status" => match excel_text::status("example") {
@@ -184,6 +203,7 @@ impl Plugin for Hello {
                         row.button("table", "Activate the table")
                             .button("status", "Table status")
                             .button("letters", "Add letters")
+                            .button("read", "Read game data")
                     })
                 })
                 .separator()

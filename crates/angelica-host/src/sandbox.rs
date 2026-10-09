@@ -138,6 +138,7 @@ impl Drop for Sandbox {
 
 /// The game-facing services every plugin shares.
 pub struct Services {
+    pub data: Arc<crate::game_data::GameData>,
     pub excel: Arc<ExcelText>,
     pub case: Arc<TextCase>,
     pub game: Arc<dyn crate::game::Game>,
@@ -421,6 +422,116 @@ impl api::jobs::Host for State {
             }
             Role::Main => Err(Error::new(Kind::WrongContext, "report is called from a job").into()),
         }
+    }
+}
+
+impl api::game_files::Host for State {
+    fn exists(&mut self, path: String) -> ApiResult<bool> {
+        self.host(|state| api(state.context.services.data.exists(&path)))
+    }
+    fn read(&mut self, path: String) -> ApiResult<Vec<u8>> {
+        self.host(|state| api(state.context.services.data.read(&path)))
+    }
+}
+
+fn sheet_row(row: crate::game_data::Row) -> api::excel::SheetRow {
+    use crate::game_data::{Cell, Value as V};
+    use api::excel::Value;
+    api::excel::SheetRow {
+        key: api::excel::RowKey {
+            row: row.row,
+            subrow: row.subrow,
+        },
+        values: row
+            .cells
+            .into_iter()
+            .map(|cell| match cell {
+                Cell::Text(bytes) => Value::Text(bytes),
+                Cell::Value(V::Boolean(value)) => Value::Boolean(value),
+                Cell::Value(V::Signed(value)) => Value::Signed(value),
+                Cell::Value(V::Unsigned(value)) => Value::Unsigned(value),
+                Cell::Value(V::Float(value)) => Value::Float(value),
+            })
+            .collect(),
+    }
+}
+
+impl api::excel::Host for State {
+    fn sheets(&mut self) -> ApiResult<Vec<String>> {
+        self.host(|state| api(state.context.services.data.sheets()))
+    }
+
+    fn sheet(&mut self, name: String) -> ApiResult<api::excel::SheetInfo> {
+        use angelica_sqpack::excel::ColumnKind as K;
+        use api::excel::ColumnKind;
+        let info = self.host(|state| api(state.context.services.data.sheet(&name)))?;
+        Ok(api::excel::SheetInfo {
+            name: info.name,
+            variant: if info.subrows {
+                api::excel::SheetVariant::Subrows
+            } else {
+                api::excel::SheetVariant::Rows
+            },
+            columns: info
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(index, &(kind, offset))| api::excel::Column {
+                    index: u16::try_from(index).unwrap_or(u16::MAX),
+                    kind: match kind {
+                        K::String => ColumnKind::Text,
+                        K::Bool => ColumnKind::Boolean,
+                        K::Int8 => ColumnKind::Int8,
+                        K::UInt8 => ColumnKind::Uint8,
+                        K::Int16 => ColumnKind::Int16,
+                        K::UInt16 => ColumnKind::Uint16,
+                        K::Int32 => ColumnKind::Int32,
+                        K::UInt32 => ColumnKind::Uint32,
+                        K::Float32 => ColumnKind::Float32,
+                        K::Int64 => ColumnKind::Int64,
+                        K::UInt64 => ColumnKind::Uint64,
+                        K::PackedBool(bit) => ColumnKind::PackedBoolean(bit),
+                    },
+                    offset,
+                })
+                .collect(),
+            languages: info.languages,
+            rows: info.rows,
+        })
+    }
+
+    fn rows(
+        &mut self,
+        name: String,
+        language: u8,
+        after: Option<api::excel::RowKey>,
+        limit: u32,
+    ) -> ApiResult<Vec<api::excel::SheetRow>> {
+        let after = after.map(|key| (key.row, key.subrow));
+        let rows = self.host(|state| {
+            api(state
+                .context
+                .services
+                .data
+                .rows(&name, language, after, limit))
+        })?;
+        Ok(rows.into_iter().map(sheet_row).collect())
+    }
+
+    fn row(
+        &mut self,
+        name: String,
+        language: u8,
+        key: api::excel::RowKey,
+    ) -> ApiResult<Option<api::excel::SheetRow>> {
+        let row = self.host(|state| {
+            api(state
+                .context
+                .services
+                .data
+                .row(&name, language, (key.row, key.subrow)))
+        })?;
+        Ok(row.map(sheet_row))
     }
 }
 

@@ -30,6 +30,8 @@ world plugin {
     import runtime;
     import storage;
     import jobs;
+    import game-files;
+    import excel;
     import excel-text;
     import text-case;
     export guest;

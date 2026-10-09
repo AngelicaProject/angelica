@@ -5,6 +5,7 @@ members = [
   "crates/angelica-map",
   "crates/angelica-hook",
   "crates/angelica-text",
+  "crates/angelica-sqpack",
   "crates/angelica-cli",
   "crates/angelica-proxy",
   "crates/angelica-host",
@@ -26,6 +27,9 @@ authors = ["AngelicaProject contributors"]
 angelica-map = { path = "crates/angelica-map" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
+angelica-sqpack = { path = "crates/angelica-sqpack" }
+crc32fast = "1.5.2"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 angelica-hook = { path = "crates/angelica-hook" }
 angelica-host = { path = "crates/angelica-host" }
 angelica-sdk = { path = "crates/angelica-sdk" }

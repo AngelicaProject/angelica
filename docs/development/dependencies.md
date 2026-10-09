@@ -28,6 +28,8 @@ Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
 
 `angelica-host` uses wasmtime 49.0.2 (Apache-2.0 WITH LLVM-exception) with runtime, Cranelift, and component-model features; semver 1.0.28 (MIT OR Apache-2.0) for manifests; `getrandom` for the random numbers plugins receive through WASI; and the existing signature, hash, and serialization foundations. Its egui 0.36.2 dependency (MIT OR Apache-2.0) disables bundled default fonts and uses installed Windows fonts. `windows` 0.62.2 (MIT OR Apache-2.0) supplies owned Direct3D COM interfaces alongside `windows-sys`. `num-traits` 0.2.19 (MIT OR Apache-2.0) provides checked float-to-integer clipping conversion. `angelica-text` uses `sha2` for guards and `thiserror`. The SDK uses wit-bindgen 0.62.0 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT).
 
+`angelica-sqpack` adapts the AGPL-3.0-only archive and Excel decoder from Aeria with attribution and original file hashes in [NOTICE.md](../../crates/angelica-sqpack/NOTICE.md). It uses crc32fast 1.5.2 and flate2 1.1.10 (both MIT OR Apache-2.0) for archive path hashes and DEFLATE blocks; flate2 uses its pure Rust backend, so no native compression library is loaded.
+
 ## Dependency checks
 
 `cargo deny` (`deny.toml`) enforces the policy: a known vulnerability or a yanked crate fails, every license must be on the allow list of licenses compatible with AGPL-3.0-only, and every crate comes from crates.io.

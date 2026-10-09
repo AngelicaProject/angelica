@@ -42,6 +42,7 @@ Each crate owns one boundary:
 - `angelica-hook`: x64 hooking: entry detours, mid-function hooks, code patches, vtable slot replacement, and chaining with hooks installed by other tools. `unsafe` allowed.
 - `angelica-proxy`: the proxy DLL placed in the game folder. `unsafe` allowed.
 - `angelica-host`: `runtime.dll`: start-up, the plugin runtime, permissions, host services, and the overlay. `unsafe` only in its `interop` module.
+- `angelica-sqpack`: read-only access to the installed game's archives and Excel sheets. No `unsafe`.
 - `angelica-text`: the game's encoded strings and the [text table](../formats/text-table-v1.md) format, shared by the host and plugins. No `unsafe`.
 - `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, and helpers.
 - `angelica-fake-game`: runs plugins in the real host against a scripted game.
@@ -61,6 +62,7 @@ Each crate owns one boundary:
 `angelica-host` separates the platform-independent host from the Windows adapter:
 
 - `host` owns installed plugins, their lifecycle, grants, settings, and the work of each frame; `sandbox` and `jobs` own wasmtime stores, the imports, and per-call limits; `storage` the plugins' folders; `ui` and `panel` the windows and the Angelica menu.
+- `game_data` reads the installed game's files and sheets through `angelica-sqpack` and caches decoded sheets.
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
 - `game::Game` is the boundary to the game process: the version and the adapters a service needs.
 - `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay through a private deferred Direct3D 11 context, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.

@@ -255,3 +255,32 @@ fn the_players_choice_and_grants_persist_across_game_starts() {
         matches!(&plugin.windows()[0].widgets[6], Widget::Text(clicks) if clicks.text == "1 clicks")
     );
 }
+
+#[test]
+fn plugins_read_the_games_files_and_sheets() {
+    use angelica_fake_game::game_files::{FakeGame, FakeRow, FakeSheet, FakeValue};
+    use angelica_sqpack::excel::{ColumnKind, Language};
+    let test = approved(MANIFEST);
+    click(&test, "read");
+    assert!(
+        message(&test).starts_with("cannot read Item:"),
+        "{}",
+        message(&test)
+    );
+
+    let test = approved(MANIFEST);
+    let sheet = FakeSheet::new(vec![ColumnKind::String]).with_rows(
+        Language::English,
+        vec![FakeRow::new(1, vec![FakeValue::String(b"Potion".to_vec())])],
+    );
+    FakeGame::new("2026.09.15.0000.0000")
+        .with_sheet("Item", sheet)
+        .with_file("common/font/AXIS_12.fdt", vec![7; 100])
+        .write(&test.game_folder())
+        .unwrap();
+    click(&test, "read");
+    assert_eq!(
+        message(&test),
+        "Item 1 is Potion; the font file has 100 bytes"
+    );
+}

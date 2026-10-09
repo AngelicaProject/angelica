@@ -5,6 +5,7 @@
 //!
 //! [`SheetBinding`]: runtime::excel_text::SheetBinding
 //! [`Letters`]: runtime::text_case::Letters
+pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
 use runtime::{
     excel_text::{ExcelText, Rewrite, SheetInfo},
@@ -139,6 +140,9 @@ impl TestHost {
     pub fn in_folder(folder: tempfile::TempDir, limits: Limits) -> Self {
         let game = Arc::new(ScriptedGame::default());
         let services = Arc::new(Services {
+            data: Arc::new(runtime::game_data::GameData::new(Some(
+                &folder.path().join("game-files"),
+            ))),
             excel: Arc::new(ExcelText::default()),
             case: Arc::new(TextCase::default()),
             game: game.clone(),
@@ -198,6 +202,14 @@ impl TestHost {
     pub fn event(&self, plugin: &str, event: Event) {
         self.host.queue_event(plugin, event);
         self.host.frame(1.0 / 60.0);
+    }
+
+    /// The folder whose `game/sqpack` the host reads game files from; write
+    /// a synthetic installation there with [`game_files::FakeGame`] before
+    /// a plugin first reads.
+    #[must_use]
+    pub fn game_folder(&self) -> PathBuf {
+        self.folder.path().join("game-files")
     }
 
     #[must_use]

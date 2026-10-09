@@ -1,0 +1,89 @@
+package angelica:plugin@1.0.0;
+
+/// The game's Excel sheets as the game files hold them: the original data,
+/// never the text tables of any plugin.
+///
+/// Read-only; no permission is needed. Reading a sheet the host has not
+/// cached decodes all of its pages, which takes milliseconds to a few
+/// hundred for the largest sheets; read sheets in a job when that matters.
+interface excel {
+    use types.{error};
+
+    enum sheet-variant {
+        /// One row per row id.
+        rows,
+        /// Several subrows per row id.
+        subrows,
+    }
+
+    variant column-kind {
+        text,
+        boolean,
+        int8,
+        uint8,
+        int16,
+        uint16,
+        int32,
+        uint32,
+        float32,
+        int64,
+        uint64,
+        /// One bit, 0 to 7, of a byte.
+        packed-boolean(u8),
+    }
+
+    record column {
+        /// The column's position among the sheet's columns.
+        index: u16,
+        kind: column-kind,
+        /// The byte offset of the column's field in a row.
+        offset: u16,
+    }
+
+    record sheet-info {
+        name: string,
+        %variant: sheet-variant,
+        columns: list<column>,
+        /// The game languages the sheet has data for (1 Japanese, 2
+        /// English, 3 German, 4 French, 5 and 6 Chinese, 7 Korean, 8
+        /// Traditional Chinese); 0 for language-neutral data.
+        languages: list<u8>,
+        /// Rows, without counting subrows.
+        rows: u32,
+    }
+
+    variant value {
+        /// A game string without its terminator, macros encoded.
+        text(list<u8>),
+        boolean(bool),
+        signed(s64),
+        unsigned(u64),
+        float(f32),
+    }
+
+    record row-key {
+        row: u32,
+        subrow: u16,
+    }
+
+    record sheet-row {
+        key: row-key,
+        /// One value per column, in column order.
+        values: list<value>,
+    }
+
+    /// The names of the game's sheets.
+    sheets: func() -> result<list<string>, error>;
+
+    /// A sheet's columns, languages, and size.
+    sheet: func(name: string) -> result<sheet-info, error>;
+
+    /// Up to `limit` rows (1 to 1024) of the sheet in `language`, sorted by
+    /// row and subrow, after `after` or from the first. A sheet without
+    /// data in `language` is read in its language-neutral data; one with
+    /// neither returns `not-found`.
+    rows: func(name: string, language: u8, after: option<row-key>, limit: u32) -> result<list<sheet-row>, error>;
+
+    /// One row, or `none` when the sheet has no such row.
+    row: func(name: string, language: u8, key: row-key) -> result<option<sheet-row>, error>;
+}

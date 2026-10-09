@@ -1,0 +1,18 @@
+package angelica:plugin@1.0.0;
+
+/// The installed game's files as the game ships them in its archives.
+///
+/// Read-only: this never changes the installation and never shows what
+/// another plugin replaces. No permission is needed. Reading an uncached
+/// file takes milliseconds; read many or large files in a job.
+interface game-files {
+    use types.{error};
+
+    /// Whether the game's archives contain the file at the game path, such
+    /// as `common/font/AXIS_12.fdt`. Paths are case-insensitive and use `/`.
+    exists: func(path: string) -> result<bool, error>;
+
+    /// The file's bytes, at most 64 MiB. Standard files and textures are
+    /// supported; other kinds, such as models, return `invalid-argument`.
+    read: func(path: string) -> result<list<u8>, error>;
+}

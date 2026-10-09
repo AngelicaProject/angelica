@@ -12,6 +12,8 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `storage` | the plugin's private folder | — |
 | `ui` | windows the host draws (types used by `guest`) | — |
 | `jobs` | long work in a separate instance on a host thread | — |
+| `game-files` | files from the installed game's archives | — |
+| `excel` | the game's Excel sheets as its files hold them | — |
 | `excel-text` | replacement text for cells of the game's Excel sheets | `excel.text` |
 | `text-case` | letters added to the game's letter case conversion | `text.case` |
 
@@ -31,7 +33,7 @@ Each call has a time limit counted in guest time only (time spent in host calls 
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, and `jobs.report`; `excel-text`, `text-case`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, and `jobs.report`; `excel-text`, `text-case`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -50,6 +52,12 @@ The host checks the windows before drawing them: at most 16 windows and 4096 wid
 Paths are relative, use `/`, and stay inside the plugin's folder: no empty, `.`, or `..` parts, no `\ : * ? " < > |` or control characters, no Windows device names (`con`, `nul`, `com1`, …, with any extension), no trailing dot or space, at most 512 bytes and 16 parts. Links are not followed. `write` replaces a file atomically; `append` and `write` create parent directories. `read` returns at most 64 MiB; `read-range` reads at most 16 MiB from an offset. A plugin's folder holds at most 4 GiB; a write past it returns `limit-exceeded`.
 
 The player can open the folder from the Angelica menu, for example to give the plugin a file.
+
+## Game files and sheets
+
+`game-files` reads a file from the installed game's archives by its game path (`common/font/AXIS_12.fdt`), case-insensitively, up to 64 MiB; standard files and textures are supported. `excel` lists the game's sheets, describes one (its columns with index, kind, and offset, its variant, languages, and row count), and returns rows: up to 1024 per call sorted by row and subrow, or one row by key. Text cells are the game's encoded strings without terminator; numbers are signed or unsigned by their column kind. A sheet without data in the requested language is read in its language-neutral data; with neither the call returns `not-found`. Languages use the game's numbers (0 none, 1 Japanese, 2 English, 3 German, 4 French, 5 and 6 Chinese, 7 Korean, 8 Traditional Chinese).
+
+Both read the original files: never another plugin's text tables or replaced files, and nothing is written. They need no permission and work in the main instance and in jobs. A file or sheet the host has not read yet is decoded from the archives, which takes milliseconds to a few hundred for the largest sheets; the host keeps the 32 most recently read sheets. Bulk reading belongs in a job.
 
 ## Text tables
 
