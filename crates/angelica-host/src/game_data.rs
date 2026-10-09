@@ -99,9 +99,16 @@ struct Cached {
 /// The game's archives, opened on first use.
 pub struct GameData {
     root: Option<std::path::PathBuf>,
-    archives: OnceLock<std::result::Result<Archives, String>>,
+    archives: OnceLock<Archives>,
+    /// Why the archives last failed to open, and when; opening is tried
+    /// again after [`RETRY_OPEN`].
+    failed: Mutex<Option<(std::time::Instant, String)>>,
     sheets: Mutex<VecDeque<Cached>>,
 }
+
+/// How long a failure to open the archives is reported before opening is
+/// tried again.
+const RETRY_OPEN: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn language(code: u8) -> Result<Language> {
     Ok(match code {
@@ -140,18 +147,38 @@ impl GameData {
         Self {
             root: root.map(Path::to_path_buf),
             archives: OnceLock::new(),
+            failed: Mutex::new(None),
             sheets: Mutex::new(VecDeque::new()),
         }
     }
 
     fn archives(&self) -> Result<&Archives> {
-        self.archives
-            .get_or_init(|| match &self.root {
-                Some(root) => Archives::open(root).map_err(|e| e.to_string()),
-                None => Err("the game's files are not available".into()),
-            })
-            .as_ref()
-            .map_err(|reason| Error::new(Kind::Unavailable, reason.clone()))
+        if let Some(archives) = self.archives.get() {
+            return Ok(archives);
+        }
+        let Some(root) = &self.root else {
+            return Err(Error::new(
+                Kind::Unavailable,
+                "the game's files are not available",
+            ));
+        };
+        let mut failed = self.failed.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, reason)) = failed.as_ref()
+            && at.elapsed() < RETRY_OPEN
+        {
+            return Err(Error::new(Kind::Unavailable, reason.clone()));
+        }
+        match Archives::open(root) {
+            Ok(archives) => {
+                *failed = None;
+                Ok(self.archives.get_or_init(|| archives))
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                *failed = Some((std::time::Instant::now(), reason.clone()));
+                Err(Error::new(Kind::Unavailable, reason))
+            }
+        }
     }
 
     /// # Errors
@@ -464,6 +491,27 @@ mod tests {
         let data = GameData::new(None);
         assert_eq!(data.read("a/b").unwrap_err().kind, Kind::Unavailable);
         assert_eq!(data.sheets().unwrap_err().kind, Kind::Unavailable);
+    }
+
+    #[test]
+    fn archives_that_failed_to_open_are_tried_again() {
+        let folder = tempfile::tempdir().unwrap();
+        let data = GameData::new(Some(folder.path()));
+        assert_eq!(data.sheets().unwrap_err().kind, Kind::Unavailable);
+        FakeGame::new("2026.09.15.0000.0000")
+            .with_file("common/font/AXIS_12.fdt", b"fcsv0100".to_vec())
+            .write(folder.path())
+            .unwrap();
+        assert_eq!(
+            data.read("common/font/AXIS_12.fdt").unwrap_err().kind,
+            Kind::Unavailable,
+            "the failure is kept for a while"
+        );
+        let earlier = std::time::Instant::now().checked_sub(RETRY_OPEN).unwrap();
+        if let Some((at, _)) = data.failed.lock().unwrap().as_mut() {
+            *at = earlier;
+        }
+        assert_eq!(data.read("common/font/AXIS_12.fdt").unwrap(), b"fcsv0100");
     }
 
     /// The installed game: `ANGELICA_GAME_PATH` is its `game` folder.

@@ -22,7 +22,8 @@ pub const MAX_PARAMETERS: usize = 16;
 pub const MAX_CHOICES: usize = 64;
 pub const MAX_ALIASES: usize = 8;
 pub const MAX_DESCRIPTION: usize = 256;
-/// Lines waiting for the next frame; further lines are dropped.
+/// Lines waiting for the next frame; the player is told about further
+/// lines, which do not run.
 pub const MAX_PENDING: usize = 32;
 /// The longest line the host parses.
 pub const MAX_LINE: usize = 1000;
@@ -90,6 +91,8 @@ pub struct Commands {
     /// Each plugin's commands, parents before children.
     trees: RwLock<BTreeMap<String, Vec<Command>>>,
     pending: Mutex<VecDeque<Vec<u8>>>,
+    /// The first words of lines that did not fit in `pending`.
+    overflowed: Mutex<BTreeSet<String>>,
     game: OnceLock<BTreeSet<String>>,
 }
 
@@ -170,6 +173,12 @@ impl Commands {
             let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
             if pending.len() < MAX_PENDING {
                 pending.push_back(line.to_vec());
+            } else {
+                // A word is a plugin's root, so the set stays small.
+                self.overflowed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(word);
             }
         }
         ours
@@ -181,6 +190,35 @@ impl Commands {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
+            .collect()
+    }
+
+    /// The host's answers to the lines that did not fit in the queue since
+    /// the last call, one per command word, for the plugin it belongs to.
+    pub fn take_overflowed(&self) -> Vec<(String, Outcome)> {
+        let words = std::mem::take(
+            &mut *self
+                .overflowed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let trees = self.trees.read().unwrap_or_else(PoisonError::into_inner);
+        words
+            .into_iter()
+            .filter_map(|word| {
+                let (plugin, _) = trees
+                    .iter()
+                    .find(|(_, tree)| root_of(tree, &word).is_some())?;
+                Some((
+                    plugin.clone(),
+                    Outcome::Reply(vec![Span::new(
+                        format!(
+                            "/{word}: a line was not run; at most {MAX_PENDING} lines wait for a frame"
+                        ),
+                        Tone::Bad,
+                    )]),
+                ))
+            })
             .collect()
     }
 
@@ -815,6 +853,24 @@ mod tests {
         assert!(commands.take().is_empty());
         commands.remove_plugin("p");
         assert!(!commands.submit(b"/hello"));
+    }
+
+    #[test]
+    fn lines_past_the_queue_are_answered() {
+        let (_folder, data) = data();
+        let commands = Commands::default();
+        commands.define("p", tree(), &data).unwrap();
+        for _ in 0..=MAX_PENDING {
+            assert!(commands.submit(b"/hello"));
+        }
+        assert_eq!(commands.take().len(), MAX_PENDING);
+        let answers = commands.take_overflowed();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].0, "p");
+        assert!(
+            matches!(&answers[0].1, Outcome::Reply(spans) if spans[0].text.contains("was not run"))
+        );
+        assert!(commands.take_overflowed().is_empty());
     }
 
     #[test]
