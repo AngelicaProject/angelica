@@ -48,6 +48,13 @@ impl Value {
         }
     }
 
+    /// Text as the player reads it, without macros (see
+    /// [`crate::text::sestring::plain`]).
+    #[must_use]
+    pub fn plain(&self) -> Option<String> {
+        self.text().map(crate::text::sestring::plain)
+    }
+
     /// An unsigned, or a non-negative signed, value.
     #[must_use]
     pub fn unsigned(&self) -> Option<u64> {

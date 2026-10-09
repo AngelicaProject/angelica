@@ -18,8 +18,9 @@ angelica plugin new <id>
 | `AGENTS.md` | the work loop and rules for a coding agent, pointing here |
 | `.claude/skills/angelica-plugin/SKILL.md` | the same work loop as a skill for coding agents that load skills |
 | `rust-toolchain.toml` | the compiler the host's components are built with |
+| `.cargo/config.toml` | not committed: points the dependencies at the local Angelica checkout |
 
-The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica checkout the command came from (`--angelica <checkout>` for another). Each plugin lives in its own repository.
+The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica repository; `.cargo/config.toml` replaces them with the checkout the command came from (`--angelica <checkout>` for another), so local changes to the SDK apply at once and the checkout's path never enters the plugin's repository. The first `cargo test` fetches the repository once, with git and its credentials, and builds the host, which takes a few minutes; later runs are quick and offline. The test build runs offline, so a new dependency builds once `cargo fetch` has downloaded it. Each plugin lives in its own repository.
 
 ## 2. Find the interfaces
 
@@ -61,21 +62,26 @@ Rules that keep a plugin within its limits:
 | The test wants | Use |
 | --- | --- |
 | the player approves the plugin | `test.host.queue(Action::Approve(id))`, then `test.frames(1)` |
-| a frame to pass | `test.frames(n)` |
+| frames to pass | `test.frames(n)`: frames of 1/60 second each |
+| time to pass | `test.advance(seconds)`: one frame in which `seconds` passed |
 | the player runs a command | `test.command("/<id> ...")`; false when the game would handle the line |
-| a window event | `test.event(id, Event::Clicked(...))` |
+| the player opens the window | `test.event(id, Event::OpenRequested)` |
+| the player clicks, types, ticks, or picks | `test.click(id, window, widget)`, `test.edit(.., value)`, `test.toggle(.., checked)`, `test.choose(.., index)` |
+| a job to finish | `test.wait_until(\|test\| ...)`: frames until the condition holds, at most ten seconds |
+| the game to restart | `let test = test.restart()?`: the same folders and packages; grants, settings, and storage carry over |
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
-| sheets in the installed game | `game_files::FakeGame` written to `test.game_folder()`, then `test.name_columns(sheet, ...)` |
+| a sheet in the installed game | `game_files::FakeGame::new(version).with_text(sheet, &TextSheet::new(columns, &[text columns]).row(id, &[(column, text)]))` written to `test.game_folder()`, then `test.name_columns(sheet, &[(name, column)])`; `FakeSheet` with `ColumnKind` and `Language` for other column kinds |
 | state rows | `test.define_state_table(...)` and rows in `test.game.state` |
-| what the plugin printed | `test.game.printed_text()` |
-| what the plugin drew | `test.host.plugin(id).unwrap().windows()` |
+| what the plugin printed | `test.game.printed_text()`; `test.game.clear_printed()` forgets it |
+| what the plugin shows | `test.texts(id)`: the headings and texts of its windows; `test.host.plugin(id).unwrap().windows()` for every widget (types in `angelica_fake_game::ui`) |
 
 The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job.
 
-Run the lints the SDK is held to:
+Run the lints the SDK is held to, for the plugin and for its tests:
 
 ```text
 cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic
+cargo clippy --tests -- -D warnings -W clippy::pedantic
 cargo fmt --check
 ```
 

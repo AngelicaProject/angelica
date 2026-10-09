@@ -2,6 +2,9 @@
 //! instances, their permissions and lifecycle, the services of the plugin
 //! API, and, on Windows, the hooks and the overlay that connect them to the
 //! game.
+// The MSVC linker reports the import library it writes for `runtime.dll`
+// on every build, in the system's language.
+#![allow(linker_messages)]
 pub mod catalog;
 pub mod chat;
 pub mod commands;

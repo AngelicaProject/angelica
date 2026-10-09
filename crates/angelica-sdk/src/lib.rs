@@ -74,7 +74,9 @@ pub trait Plugin: Sized + 'static {
     /// An error disables the plugin and is shown to the player.
     fn start() -> Result<Self, String>;
 
-    /// Called every frame.
+    /// Called every frame; `elapsed` is the time in seconds since the
+    /// previous `tick`. Sum it to measure time, or use `std::time::Instant`
+    /// and `SystemTime`, which work in a plugin.
     ///
     /// # Errors
     /// An error disables the plugin and is shown to the player.

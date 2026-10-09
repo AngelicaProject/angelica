@@ -744,3 +744,21 @@ fn a_package_the_host_refuses_leaves_the_old_one_running() {
         test.host.diagnostics()
     );
 }
+
+#[test]
+fn the_test_kit_drives_windows_jobs_and_restarts() {
+    let test = approved(MANIFEST);
+    test.edit("hello", "main", "name", "Alisaie");
+    assert_eq!(test.texts("hello")[0], "Hello, Alisaie");
+    test.toggle("hello", "main", "shout", true);
+    assert_eq!(test.texts("hello")[0], "Hello, ALISAIE");
+    test.click("hello", "main", "click");
+    test.click("hello", "main", "count");
+    assert!(test.wait_until(|test| message(test) == "job finished: 9 bytes"));
+
+    // Clicks are saved in storage and the grant persists.
+    let test = test.restart().unwrap();
+    assert_eq!(test.host.plugin("hello").unwrap().status(), Status::Running);
+    test.event("hello", Event::OpenRequested);
+    assert!(test.texts("hello").contains(&"1 clicks".to_owned()));
+}

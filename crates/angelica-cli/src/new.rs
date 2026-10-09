@@ -33,11 +33,13 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# `.cargo/config.toml`, which is not committed, points both at a local
+# Angelica checkout.
 [dependencies]
-angelica-sdk = { path = "{angelica}/crates/angelica-sdk" }
+angelica-sdk = { git = "https://github.com/AngelicaProject/angelica" }
 
 [dev-dependencies]
-angelica-fake-game = { path = "{angelica}/crates/angelica-fake-game" }
+angelica-fake-game = { git = "https://github.com/AngelicaProject/angelica" }
 
 # The plugin is its own workspace.
 [workspace]
@@ -123,10 +125,7 @@ use angelica_fake_game::{
     game_files::{FakeGame, TextSheet},
     runtime::{
         host::{Action, Event, Status},
-        sandbox::{
-            Limits,
-            bindings::angelica::plugin::ui::{Widget, WidgetRef},
-        },
+        sandbox::Limits,
     },
 };
 use std::{path::Path, sync::OnceLock};
@@ -167,16 +166,30 @@ fn the_command_greets_in_the_chat_log() {
 fn the_window_counts_greetings() {
     let test = started();
     test.event("{id}", Event::OpenRequested);
-    test.event(
-        "{id}",
-        Event::Clicked(WidgetRef {
-            window: "main".into(),
-            id: "greet".into(),
-        }),
-    );
-    let windows = test.host.plugin("{id}").unwrap().windows();
-    assert!(matches!(&windows[0].widgets[0], Widget::Text(label) if label.text == "1 greetings"));
+    test.click("{id}", "main", "greet");
+    assert_eq!(test.texts("{id}"), ["1 greetings"]);
 }
+
+#[test]
+fn greetings_start_again_after_a_game_restart() {
+    let test = started();
+    assert!(test.command("/{id}"));
+    // Grants and storage carry over; this plugin keeps its count in memory.
+    let test = test.restart().unwrap();
+    test.event("{id}", Event::OpenRequested);
+    assert_eq!(test.texts("{id}"), ["0 greetings"]);
+}
+"#;
+
+/// The local Angelica checkout the dependencies build from; kept out of
+/// the repository, so its path stays on this machine.
+const CARGO_CONFIG: &str = r#"[patch."https://github.com/AngelicaProject/angelica"]
+angelica-sdk = { path = "{angelica}/crates/angelica-sdk" }
+angelica-fake-game = { path = "{angelica}/crates/angelica-fake-game" }
+
+[net]
+# Fetches the repository with git, which has the GitHub credentials.
+git-fetch-with-cli = true
 "#;
 
 const AGENTS: &str = r"# {name}
@@ -185,15 +198,17 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 
 ## Read first
 
-- `{angelica}/docs/plugins/authoring.md`: the work loop from an idea to a published plugin.
-- `{angelica}/docs/plugins/interfaces.md`: which interface, permission, and SDK call serve each task.
-- `{angelica}/docs/plugins/api-requests.md`: what to file when the API lacks a capability.
-- `{angelica}/docs/formats/plugin-api-v1.md` and `{angelica}/wit/`: the contract; `{angelica}/crates/angelica-sdk/`: the SDK.
+`<angelica>` is the Angelica checkout that `.cargo/config.toml` names (not committed; https://github.com/AngelicaProject/angelica otherwise).
+
+- `<angelica>/docs/plugins/authoring.md`: the work loop from an idea to a published plugin.
+- `<angelica>/docs/plugins/interfaces.md`: which interface, permission, and SDK call serve each task.
+- `<angelica>/docs/plugins/api-requests.md`: what to file when the API lacks a capability.
+- `<angelica>/docs/formats/plugin-api-v1.md` and `<angelica>/wit/`: the contract; `<angelica>/crates/angelica-sdk/`: the SDK; `<angelica>/crates/angelica-fake-game/`: the test kit.
 
 ## Commands
 
-- `cargo test`: builds the component and runs `tests/` against the scripted game.
-- `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic` and `cargo fmt --check`.
+- `cargo test`: builds the component and runs `tests/` against the scripted game. The first run fetches the Angelica repository once and builds the host, which takes a few minutes; later runs are quick and offline.
+- `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic` for the plugin, `cargo clippy --tests -- -D warnings -W clippy::pedantic` for the tests, and `cargo fmt --check`.
 - `cargo build --release --target wasm32-wasip2` builds `target/wasm32-wasip2/release/{crate}.wasm`.
 - `angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/{crate}.wasm` loads it in the running game within a second.
 
@@ -202,7 +217,7 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 - Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin. When the API lacks a capability, do not work around it: file an API request.
 - Declare only the permissions the plugin uses; the player sees each one.
 - Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds.
-- For your own serde types, add the `serde` crate with its `derive` feature.
+- For your own serde types, add the `serde` crate with its `derive` feature. The test build runs offline: a new dependency builds once `cargo fetch` has downloaded it.
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 ";
@@ -214,17 +229,17 @@ description: Write, test, and run this Angelica plugin for FINAL FANTASY XIV - f
 
 # Working on {name}
 
-Read `AGENTS.md` in this project, then `{angelica}/docs/plugins/authoring.md` for the work loop.
+Read `AGENTS.md` in this project, then `<angelica>/docs/plugins/authoring.md` for the work loop (`<angelica>` is the checkout `.cargo/config.toml` names).
 
 1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Split it into pieces.
-2. Look up every piece in `{angelica}/docs/plugins/interfaces.md`: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
-3. Collect every piece the cards do not cover at once: those are not available. Check the open `api-request` issues of AngelicaProject/angelica (`gh issue list --repo AngelicaProject/angelica --label api-request`), write the new requests in the format of `{angelica}/docs/plugins/api-requests.md`, show them to the user, and file them as issues once the user agrees (or comment on an existing one). Then build everything else, so the plugin is useful while it waits.
+2. Look up every piece in `<angelica>/docs/plugins/interfaces.md`: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
+3. Collect every piece the cards do not cover at once: those are not available. Check the open `api-request` issues of AngelicaProject/angelica (`gh issue list --repo AngelicaProject/angelica --label api-request`), write the new requests in the format of `<angelica>/docs/plugins/api-requests.md`, show them to the user, and file them as issues once the user agrees (or comment on an existing one). Then build everything else, so the plugin is useful while it waits.
 4. Write the code in `src/lib.rs`; long work goes in a job.
-5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run `cargo test`, `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic`, `cargo fmt --check`.
+5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run the checks in `AGENTS.md`.
 6. Build and install while the game runs (commands in `AGENTS.md`), then tell the user exactly what to click or type in the game and what they should see. Report only what was observed.
 ";
 
-const GITIGNORE: &str = "/target\n";
+const GITIGNORE: &str = "/target\n/.cargo/config.toml\n";
 
 /// The toolchain of the Angelica checkout, which builds the component.
 const TOOLCHAIN: &str = include_str!("../../../rust-toolchain.toml");
@@ -306,6 +321,7 @@ fn create(args: &NewArgs) -> Result<PathBuf, String> {
         ("AGENTS.md", AGENTS),
         (".claude/skills/angelica-plugin/SKILL.md", SKILL),
         (".gitignore", GITIGNORE),
+        (".cargo/config.toml", CARGO_CONFIG),
         ("rust-toolchain.toml", TOOLCHAIN),
     ] {
         let path = folder.join(path);

@@ -30,7 +30,21 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
     assert!(skill.starts_with("---") && skill.contains("name: angelica-plugin"));
     assert!(skill.contains("# Working on Loot Notes") && !skill.contains("{angelica}"));
     assert!(read("rust-toolchain.toml").contains("wasm32-wasip2"));
-    assert!(!read("Cargo.toml").contains("{angelica}"));
+    // The checkout's path stays in the uncommitted cargo configuration.
+    let checkout = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    let checkout = checkout.trim_end_matches("/crates/angelica-cli");
+    for file in [
+        "Cargo.toml",
+        "AGENTS.md",
+        ".claude/skills/angelica-plugin/SKILL.md",
+    ] {
+        assert!(
+            !read(file).contains("{angelica}") && !read(file).contains(checkout),
+            "{file}"
+        );
+    }
+    assert!(read(".cargo/config.toml").contains(&format!("{checkout}/crates/angelica-sdk")));
+    assert!(read(".gitignore").contains("/.cargo/config.toml"));
 
     let again = new(directory.path(), "loot-notes");
     assert!(!again.status.success(), "an existing folder is kept");

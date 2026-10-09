@@ -32,7 +32,7 @@ hosts = ["harmonia.example.org", "*.cdn.example.org"]
 - `plugin.api`: the [plugin API](./plugin-api-v1.md) version the component was built for, `major.minor`. This host runs `1.0`.
 - `plugin.authors`: optional list of names.
 - `plugin.memory_bytes`: optional memory limit of each instance of the plugin, 1 to 1073741824 bytes; the host default (64 MiB) when absent.
-- `permissions`: each [permission](../architecture/permissions.md) the plugin needs, as `"<name>" = true`. `false` and an absent permission are the same. An unknown permission refuses the manifest.
+- `permissions`: each [permission](../architecture/permissions.md) the plugin needs, as `"<name>" = true`. `false` and an absent permission are the same; a plugin that needs none leaves the table out or empty. An unknown permission refuses the manifest.
 - `http.hosts`: the hosts `http.get` reaches ([plugin API](./plugin-api-v1.md#http)), present exactly when the plugin declares `http.get`: 1–32 distinct host names of lower-case ASCII labels (letters, digits, and inner hyphens, 1–63 bytes each, at most 253 bytes), at least two labels, not an address. International names are written in their `xn--` form. A leading `*.` matches every subdomain of the name after it, not the name itself, and needs at least two labels after it.
 
 Unknown fields refuse the manifest.

@@ -5,10 +5,14 @@
 //!
 //! [`SheetBinding`]: runtime::excel_text::SheetBinding
 //! [`Letters`]: runtime::text_case::Letters
+/// Column kinds and languages of a synthetic sheet ([`game_files`]).
+pub use angelica_sqpack::excel::{ColumnKind, Language};
 pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
 /// The host the tests run plugins in.
 pub use runtime;
+/// The windows and window events of the plugin API.
+pub use runtime::sandbox::bindings::angelica::plugin::ui;
 use runtime::{
     excel_text::{ExcelText, Rewrite, SheetInfo},
     game::Game,
@@ -138,6 +142,14 @@ impl Game for ScriptedGame {
 }
 
 impl ScriptedGame {
+    /// Forgets the printed messages.
+    pub fn clear_printed(&self) {
+        self.printed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     /// The printed messages as plain text, without colors.
     #[must_use]
     pub fn printed_text(&self) -> Vec<String> {
@@ -208,7 +220,13 @@ pub struct TestHost {
     pub game: Arc<ScriptedGame>,
     pub folder: tempfile::TempDir,
     pub opened: Arc<Mutex<Vec<PathBuf>>>,
+    limits: Limits,
+    /// The packages installed with [`TestHost::install`], for a restart.
+    installed: Vec<(String, Vec<u8>)>,
 }
+
+/// One frame at 60 frames a second.
+const FRAME: f64 = 1.0 / 60.0;
 
 impl TestHost {
     /// # Panics
@@ -267,7 +285,25 @@ impl TestHost {
             game,
             folder,
             opened,
+            limits,
+            installed: Vec::new(),
         }
+    }
+
+    /// The game restarts: a new host over the same folders (storage, grants,
+    /// settings, game files), with the same packages installed, starts the
+    /// approved and enabled plugins as at the game's start. The scripted
+    /// game starts empty again.
+    ///
+    /// # Errors
+    /// When a package is refused.
+    pub fn restart(self) -> Result<Self, String> {
+        let mut test = Self::in_folder(self.folder, self.limits);
+        for (manifest, component) in self.installed {
+            test.install(&manifest, &component)?;
+        }
+        test.host.start_all();
+        Ok(test)
     }
 
     /// Installs a component built from a package's `angelica.toml` and
@@ -276,10 +312,13 @@ impl TestHost {
     /// # Errors
     /// When the manifest or component is refused.
     pub fn install(&mut self, manifest: &str, component: &[u8]) -> Result<(), String> {
-        let manifest = Manifest::parse(manifest).map_err(|e| e.to_string())?;
-        let component = wasmtime::component::Component::new(&self.host_engine(), component)
+        let parsed = Manifest::parse(manifest).map_err(|e| e.to_string())?;
+        let compiled = wasmtime::component::Component::new(&self.host_engine(), component)
             .map_err(|e| e.to_string())?;
-        self.host.install(manifest, &component)
+        self.host.install(parsed, &compiled)?;
+        self.installed
+            .push((manifest.to_owned(), component.to_vec()));
+        Ok(())
     }
 
     /// A new package of a plugin appears while the game runs: the host
@@ -302,7 +341,7 @@ impl TestHost {
         let component = wasmtime::component::Component::new(&self.host_engine(), component)
             .map_err(|e| e.to_string())?;
         self.host.watch(Box::new(Once(Some((manifest, component)))));
-        self.host.frame(1.0 / 60.0);
+        self.host.frame(FRAME);
         Ok(())
     }
 
@@ -310,11 +349,96 @@ impl TestHost {
         self.host.engine().clone()
     }
 
-    /// Runs `count` frames of `elapsed` seconds each.
+    /// Runs `count` frames of 1/60 second each.
     pub fn frames(&self, count: usize) {
         for _ in 0..count {
-            self.host.frame(1.0 / 60.0);
+            self.host.frame(FRAME);
         }
+    }
+
+    /// Runs one frame in which `elapsed` seconds passed, so a plugin that
+    /// sums `tick`'s `elapsed` sees that much time go by.
+    pub fn advance(&self, elapsed: f64) {
+        self.host.frame(elapsed);
+    }
+
+    /// Runs frames, sleeping between them, until `done` holds or ten
+    /// seconds pass, for work in jobs; whether `done` held.
+    pub fn wait_until(&self, done: impl Fn(&Self) -> bool) -> bool {
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(10) {
+            if done(self) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            self.host.frame(FRAME);
+        }
+        done(self)
+    }
+
+    /// The player clicks a button; the frame runs.
+    pub fn click(&self, plugin: &str, window: &str, id: &str) {
+        self.event(
+            plugin,
+            Event::Clicked(ui::WidgetRef {
+                window: window.into(),
+                id: id.into(),
+            }),
+        );
+    }
+
+    /// The player types `value` into a text input; the frame runs.
+    pub fn edit(&self, plugin: &str, window: &str, id: &str, value: &str) {
+        self.event(
+            plugin,
+            Event::Edited(ui::Edited {
+                window: window.into(),
+                id: id.into(),
+                value: value.into(),
+            }),
+        );
+    }
+
+    /// The player sets a checkbox; the frame runs.
+    pub fn toggle(&self, plugin: &str, window: &str, id: &str, checked: bool) {
+        self.event(
+            plugin,
+            Event::Toggled(ui::Toggled {
+                window: window.into(),
+                id: id.into(),
+                checked,
+            }),
+        );
+    }
+
+    /// The player picks the option at `index` of a choice; the frame runs.
+    pub fn choose(&self, plugin: &str, window: &str, id: &str, index: u32) {
+        self.event(
+            plugin,
+            Event::Chosen(ui::Chosen {
+                window: window.into(),
+                id: id.into(),
+                index,
+            }),
+        );
+    }
+
+    /// The headings and texts of a plugin's windows as last drawn, in order;
+    /// empty when it is not installed.
+    #[must_use]
+    pub fn texts(&self, plugin: &str) -> Vec<String> {
+        self.host
+            .plugin(plugin)
+            .map(|plugin| plugin.windows())
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|window| &window.widgets)
+            .filter_map(|widget| match widget {
+                ui::Widget::Heading(text) => Some(text.clone()),
+                ui::Widget::Text(text) => Some(text.text.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The game adds a message to the chat log: plugins that subscribed
@@ -331,7 +455,7 @@ impl TestHost {
                 },
             ));
         }
-        self.host.frame(1.0 / 60.0);
+        self.host.frame(FRAME);
     }
 
     /// Defines a state table of `domain` with `fields`, present in the
@@ -410,13 +534,13 @@ impl TestHost {
     /// the line itself.
     pub fn command(&self, line: &str) -> bool {
         let taken = self.services().commands.submit(line.as_bytes());
-        self.host.frame(1.0 / 60.0);
+        self.host.frame(FRAME);
         taken
     }
 
     pub fn event(&self, plugin: &str, event: Event) {
         self.host.queue_event(plugin, event);
-        self.host.frame(1.0 / 60.0);
+        self.host.frame(FRAME);
     }
 
     /// The folder whose `game/sqpack` the host reads game files from; write

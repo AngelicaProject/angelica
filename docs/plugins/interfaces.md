@@ -8,7 +8,7 @@ A task the cards do not cover is not available to plugins yet: file an [API requ
 
 Show the plugin's own windows and react to the player.
 
-- SDK: `ui::Window` built in `Plugin::ui`; actions arrive in `Plugin::ui_event` as `ui::Event`.
+- SDK: `ui::Window` built in `Plugin::ui`; actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option index), `Closed`, and `OpenRequested`; each names the window and widget.
 - Permission: none. Instance: main.
 - Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, and choice value in the plugin and update it from the event.
 - `Event::OpenRequested` comes from the plugin's Open button in the Angelica menu; open the main window on it.
@@ -26,6 +26,7 @@ Let the player drive the plugin from the chat box or macros.
 
 - SDK: `commands::define(&[Command])` in `start`; runs arrive in `Plugin::command` as `commands::Invocation`.
 - Permission: `chat.commands`. Instance: main.
+- Parameters are `word`, `text` (the rest of the line, so only last), `integer` with bounds, `number`, `choice`, and `switch`; `.optional()` ones follow the required ones. Read them with `invocation.word(name)`, `integer`, `number`, `switch`.
 - The host parses arguments by their kinds and answers `help` and malformed lines itself. An error returned from `command` is printed to the player.
 - A root name must not be a game command in any language, `angelica`, or another plugin's root. Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 - Contract: [commands](../formats/plugin-api-v1.md#commands).
@@ -74,7 +75,8 @@ Read the game's data: items, actions, places, and the names the game shows.
 - SDK: `excel::row(sheet, excel::ENGLISH, &["name"], row)`, `excel::rows(sheet, language, &[..])` to iterate.
 - Permission: none. Instance: main and job.
 - Columns are read by the names the game map's sheet schemas give them (`angelica excel show`); a sheet the map does not know in the running build returns `unavailable`, a name the schema lacks `not-found`.
-- Text values are the game's encoded strings; `angelica_sdk::text` decodes and builds them.
+- Text values are the game's encoded strings with macros: `value.plain()` is the text as the player reads it; `angelica_sdk::text` checks strings and builds text tables.
+- `excel::sheet(name)?.rows` is the row count, for progress.
 - A single row is fast; iterating a large sheet belongs in a job.
 - Contract: [game files and sheets](../formats/plugin-api-v1.md#game-files-and-sheets).
 
@@ -135,11 +137,19 @@ if let Some(job) = &mut self.job
 // In `run_job`:
 "names" => jobs::run(&input, |language: u8| {
     excel::rows("Item", language, &["name"])
-        .map(|row| Ok(String::from_utf8_lossy(row?.values[0].text().unwrap_or_default()).into_owned()))
+        .map(|row| Ok(row?.values[0].plain().unwrap_or_default()))
         .collect::<Result<Vec<String>, angelica_sdk::Error>>()
         .map_err(String::from)
 }),
 ```
+
+## Time
+
+Count time, run timers, show countdowns.
+
+- SDK: `Plugin::tick(elapsed)` receives the seconds since the previous frame; sum it for timers. `std::time::Instant` and `SystemTime` also work in a plugin.
+- Permission: none. Instance: main; `Instant` also in a job.
+- In tests, `test.advance(seconds)` runs one frame in which that much time passed; `test.frames(n)` runs frames of 1/60 second, so compare sums with a small tolerance.
 
 ## Settings and files
 

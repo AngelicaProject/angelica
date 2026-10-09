@@ -30,6 +30,41 @@ pub fn is_cell_text(bytes: &[u8]) -> bool {
     bytes.is_empty() || is_well_formed(bytes)
 }
 
+/// The text of a game string as a player reads it, without its macros: a
+/// line break macro becomes `\n`, a non-breaking space a space, a hyphen
+/// macro `-`, and a soft hyphen nothing. Text that macros produce, such as
+/// names or numbers filled in by the game, is left out. Bytes that are not
+/// UTF-8 or a malformed macro are kept as replacement characters.
+#[must_use]
+pub fn plain(mut bytes: &[u8]) -> String {
+    const NEW_LINE: u8 = 0x10;
+    const NON_BREAKING_SPACE: u8 = 0x1D;
+    const HYPHEN: u8 = 0x1F;
+    let mut out = String::new();
+    while let Some(&first) = bytes.first() {
+        if first == STX
+            && let Some(length) = payload(bytes, 0)
+        {
+            match bytes[1] {
+                NEW_LINE => out.push('\n'),
+                NON_BREAKING_SPACE => out.push(' '),
+                HYPHEN => out.push('-'),
+                // A soft hyphen and every other macro add nothing.
+                _ => {}
+            }
+            bytes = &bytes[length..];
+            continue;
+        }
+        let length = bytes[1..]
+            .iter()
+            .position(|&b| b == STX)
+            .map_or(bytes.len(), |at| at + 1);
+        out.push_str(&String::from_utf8_lossy(&bytes[..length]));
+        bytes = &bytes[length..];
+    }
+    out
+}
+
 fn text(mut bytes: &[u8], depth: usize) -> bool {
     while let Some(&first) = bytes.first() {
         let length = match first {

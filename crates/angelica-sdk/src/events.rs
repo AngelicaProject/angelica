@@ -9,7 +9,7 @@
 //!
 //! // In `Plugin::game_event`:
 //! if let GameEvent::ChatMessage(message) = event {
-//!     let text = String::from_utf8_lossy(&message.message);
+//!     let text = angelica_sdk::text::sestring::plain(&message.message);
 //! }
 //! ```
 use crate::api::events as api;

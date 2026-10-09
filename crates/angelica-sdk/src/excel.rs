@@ -4,14 +4,26 @@
 //! use angelica_sdk::excel::{self, ENGLISH};
 //!
 //! if let Some(values) = excel::row("Item", ENGLISH, &["name"], 4551)? {
-//!     let name = values[0].text().unwrap_or_default();
+//!     // The name as the player reads it, without the game's macros.
+//!     let name = values[0].plain().unwrap_or_default();
 //! }
+//! // Row count, for progress while reading every row in a job.
+//! let total = excel::sheet("Item")?.rows;
 //! for row in excel::rows("Item", ENGLISH, &["name"]) {
 //!     let row = row?;
 //! }
 //! ```
 use crate::api::excel as api;
-pub use api::{RowKey, SheetRow, Value};
+pub use api::{RowKey, SheetInfo, SheetRow, Value};
+
+/// A sheet's layout, the columns the game map names, the languages it has
+/// data for, and its row count.
+///
+/// # Errors
+/// See `excel.sheet`.
+pub fn sheet(name: &str) -> Result<SheetInfo, crate::Error> {
+    api::sheet(name)
+}
 
 pub const JAPANESE: u8 = 1;
 pub const ENGLISH: u8 = 2;
@@ -93,6 +105,13 @@ impl Value {
             Self::Text(bytes) => Some(bytes),
             _ => None,
         }
+    }
+
+    /// A text value as the player reads it, without macros (see
+    /// [`crate::text::sestring::plain`]).
+    #[must_use]
+    pub fn plain(&self) -> Option<String> {
+        self.text().map(crate::text::sestring::plain)
     }
 
     /// An unsigned, or a non-negative signed, value.

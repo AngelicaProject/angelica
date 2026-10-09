@@ -269,10 +269,29 @@ fn damaged_tables_are_refused_without_panicking() {
         for sheet in table.sheets() {
             for cell in sheet.cells() {
                 assert!(!sheet.row(cell.row, cell.subrow).is_empty());
+                let _ = sestring::plain(cell.text);
             }
             assert!(table.sheet(sheet.name).is_some());
         }
     }
     // Some mutations keep a valid table, such as a changed text byte.
     assert!(accepted > 0);
+}
+
+#[test]
+fn plain_text_leaves_out_macros() {
+    assert_eq!(sestring::plain(b"Potion"), "Potion");
+    // A line break, then a color macro around a word.
+    assert_eq!(
+        sestring::plain(b"a\x02\x10\x01\x03b \x02\x48\x04\xF2\x02\x25\x03red\x02\x48\x02\x01\x03"),
+        "a\nb red"
+    );
+    assert_eq!(
+        sestring::plain(b"x\x02\x1D\x01\x03y\x02\x1F\x01\x03z\x02\x16\x01\x03"),
+        "x y-z"
+    );
+    assert_eq!(sestring::plain("Зелье".as_bytes()), "Зелье");
+    // A broken macro and bytes that are not UTF-8 stay visible.
+    assert_eq!(sestring::plain(b"a\x02\x48"), "a\u{2}H");
+    assert_eq!(sestring::plain(b"\xFFok"), "\u{FFFD}ok");
 }
