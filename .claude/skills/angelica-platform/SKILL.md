@@ -1,11 +1,20 @@
 ---
 name: angelica-platform
-description: Add or extend a plugin API capability in the Angelica host from an API request - a state table or field, an event kind, an operation on the game, or a new domain interface - with its WIT, permission, adapter, map entries, SDK helper, tests, and docs. Use when implementing what a plugin author requested, or when the plugin API, permissions, or host services change.
+description: Triage API requests (GitHub issues) into domain proposals for the maintainer, and add or extend a plugin API capability in the Angelica host - a state table or field, an event kind, an operation on the game, or a new domain interface - with its WIT, permission, adapter, map entries, SDK helper, tests, and docs. Use when implementing what a plugin author requested, or when the plugin API, permissions, or host services change.
 ---
 
 # Implementing a plugin API capability
 
 Work in this repository, and in a checkout of `angelica-gamemap` for map data. Load `AGENTS.md`, `.ai/development.md`, and `.ai/git.md` first. The rules live in the docs; this is the order of work.
+
+## 0. Triage the requests
+
+Requests are issues labeled `api-request` in AngelicaProject/angelica (`docs/plugins/api-requests.md` defines their form and labels).
+
+1. `gh issue list --repo AngelicaProject/angelica --label api-request --state open`. Give each `status:new` request a `domain:<name>` label (create it when new); close duplicates with a link to the request they repeat.
+2. For a domain with requests, write one proposal as a comment on its requests (or a new issue that links them): the interface (tables, events, operations), each permission with the line the player sees, what stays out and why, which requests it serves. Keep it short; the maintainer reads it, not the code. Label the requests `status:needs-decision`.
+3. Bring the proposals to the user and wait. The user decides what plugins may do; never implement a domain, permission, or automation the user has not accepted. Then label `status:accepted` or `status:declined` (with the reason).
+4. After the implementation is merged and released, close each served request with the API version that has it and how to use it (the interface card).
 
 ## 1. Design against the domain
 

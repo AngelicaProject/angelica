@@ -1,0 +1,59 @@
+name: API request
+description: A capability of the game a plugin needs and the plugin API does not offer.
+title: "<domain>: <capability in a few words>"
+labels: ["api-request", "status:new"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the game, not an implementation: no addresses, offsets, signatures, or code from the game's executable, and no requests for memory access, game function calls, or hooks. See docs/plugins/api-requests.md.
+  - type: textarea
+    id: need
+    attributes:
+      label: Need
+      description: What the plugin does for the player, and the step it cannot take with the current API.
+    validations:
+      required: true
+  - type: textarea
+    id: resource
+    attributes:
+      label: Game resource
+      description: What in the game is involved, as the player sees it.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - read state
+        - event
+        - operation on the game
+        - game data
+        - rule
+    validations:
+      required: true
+  - type: textarea
+    id: operation
+    attributes:
+      label: Operation
+      description: The values the plugin passes and receives, with their meaning; how often it needs them; from the main instance or a job.
+    validations:
+      required: true
+  - type: textarea
+    id: player
+    attributes:
+      label: Player's view
+      description: What the player should be told when approving it, in plain words, and whether a narrower variant would serve.
+    validations:
+      required: true
+  - type: textarea
+    id: meanwhile
+    attributes:
+      label: Workaround meanwhile
+      description: What the plugin does until the capability exists, or "none".
+  - type: input
+    id: plugins
+    attributes:
+      label: Plugins
+      description: The plugins that need it, with links to their repositories when they have them.

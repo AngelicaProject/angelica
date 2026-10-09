@@ -60,6 +60,26 @@ needed.
 The player types the quantities into the window.
 ```
 
+## Filing a request
+
+A request is an issue in the [angelica repository](https://github.com/AngelicaProject/angelica/issues) made with the **API request** form, or from the command line with the same sections as the body:
+
+```text
+gh issue create --repo AngelicaProject/angelica --label api-request,status:new --title "<domain>: <capability>" --body-file request.md
+```
+
+Search the open `api-request` issues first: when one describes the same resource, add the plugin and anything the existing request lacks as a comment instead of filing another.
+
 ## What happens next
 
-The maintainer groups requests by domain, so one interface serves them together. The result is described in the API contract and in the [interface cards](./interfaces.md); a capability whose game structures are not verified stays unavailable rather than being exposed partially.
+Labels track a request:
+
+| Label | Meaning |
+| --- | --- |
+| `status:new` | filed, not triaged |
+| `domain:<name>` | the game domain it belongs to |
+| `status:needs-decision` | grouped with the domain's other requests into one proposal: the interface, its permissions and their wording for the player, and what stays out; the project's maintainer decides |
+| `status:accepted` | accepted; implemented in its domain |
+| `status:declined` | not offered to plugins, with the reason |
+
+A proposal designs the domain for every plugin that needs it, so one interface serves the requests together. When the capability is released, the issue is closed with the API version that has it, the API contract and the [interface cards](./interfaces.md) describe it, and the plugin raises `plugin.api` in its manifest to that version. A capability whose game structures are not verified stays unavailable rather than being exposed partially.

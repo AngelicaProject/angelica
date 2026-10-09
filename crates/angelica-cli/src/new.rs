@@ -216,9 +216,9 @@ description: Write, test, and run this Angelica plugin for FINAL FANTASY XIV - f
 
 Read `AGENTS.md` in this project, then `{angelica}/docs/plugins/authoring.md` for the work loop.
 
-1. Describe the feature in game terms: what it reads, what it changes, how the player drives it.
-2. Look up each piece in `{angelica}/docs/plugins/interfaces.md`: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
-3. A piece the cards do not cover is not available: write an API request in the format of `{angelica}/docs/plugins/api-requests.md`, show it to the user, and build the rest.
+1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Split it into pieces.
+2. Look up every piece in `{angelica}/docs/plugins/interfaces.md`: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
+3. Collect every piece the cards do not cover at once: those are not available. Check the open `api-request` issues of AngelicaProject/angelica (`gh issue list --repo AngelicaProject/angelica --label api-request`), write the new requests in the format of `{angelica}/docs/plugins/api-requests.md`, show them to the user, and file them as issues once the user agrees (or comment on an existing one). Then build everything else, so the plugin is useful while it waits.
 4. Write the code in `src/lib.rs`; long work goes in a job.
 5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run `cargo test`, `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic`, `cargo fmt --check`.
 6. Build and install while the game runs (commands in `AGENTS.md`), then tell the user exactly what to click or type in the game and what they should see. Report only what was observed.
