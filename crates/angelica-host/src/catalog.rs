@@ -130,7 +130,11 @@ impl Catalog {
         let root = text(files.get("map.toml").ok_or("signed map has no map.toml")?)?;
         let entries = files
             .iter()
-            .filter(|(name, _)| name.starts_with("entries/") || name.starts_with("sheets/"))
+            .filter(|(name, _)| {
+                ["entries/", "sheets/", "state/"]
+                    .iter()
+                    .any(|folder| name.starts_with(folder))
+            })
             .map(|(name, bytes)| Ok((name.clone(), text(bytes)?)))
             .collect::<Result<Vec<_>, String>>()?;
         Map::from_sources(&root, &entries).map_err(|e| e.to_string())

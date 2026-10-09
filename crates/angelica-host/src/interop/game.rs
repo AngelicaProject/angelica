@@ -22,6 +22,25 @@ impl WindowsGame {
     }
 }
 
+/// The game's memory, read through Windows so that an unreadable address
+/// fails instead of faulting.
+struct ProcessMemory;
+
+impl crate::state::Memory for ProcessMemory {
+    fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
+        let Ok(address) = usize::try_from(address) else {
+            return false;
+        };
+        match super::memory::read(address, buffer.len()) {
+            Ok(bytes) => {
+                buffer.copy_from_slice(&bytes);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
 impl Game for WindowsGame {
     fn version(&self) -> String {
         self.version.clone()
@@ -45,5 +64,14 @@ impl Game for WindowsGame {
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
         super::chat::print(&self.catalog, self.base, message)
+    }
+
+    fn read_state(
+        &self,
+        table: &crate::state::TablePlan,
+        _names: &[String],
+        fields: &[crate::state::FieldPlan],
+    ) -> Vec<Vec<Option<crate::state::StateValue>>> {
+        crate::state::read(&ProcessMemory, table, fields)
     }
 }

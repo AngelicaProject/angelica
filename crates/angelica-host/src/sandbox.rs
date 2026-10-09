@@ -148,6 +148,8 @@ pub struct Services {
     pub chat: Arc<Chat>,
     /// Names of sheet columns from the game map.
     pub sheets: Arc<crate::sheets::Sheets>,
+    /// State tables from the game map.
+    pub state: Arc<crate::state::StateTables>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -928,6 +930,68 @@ fn copy_body(
         }
         file.write_all(&buffer[..read])
             .map_err(|e| Error::new(Kind::Io, format!("{path}: {e}")))?;
+    }
+}
+
+impl api::state::Host for State {
+    fn tables(&mut self) -> Vec<api::state::Table> {
+        self.context
+            .services
+            .state
+            .tables()
+            .into_iter()
+            .map(|table| api::state::Table {
+                present: table.object.is_ok(),
+                fields: table
+                    .fields
+                    .into_iter()
+                    .map(|(name, field)| api::state::Field {
+                        name,
+                        doc: field.doc,
+                        present: field.steps.is_ok(),
+                    })
+                    .collect(),
+                name: table.name,
+                domain: table.domain,
+                doc: table.doc,
+            })
+            .collect()
+    }
+
+    fn read(
+        &mut self,
+        table: String,
+        fields: Vec<String>,
+    ) -> ApiResult<Vec<Vec<Option<api::state::Value>>>> {
+        use crate::state::StateValue as S;
+        use api::state::Value;
+        api(self.main_only())?;
+        let services = self.context.services.clone();
+        let (plan, plans) = api(services.state.plan(&table, &fields))?;
+        let permission = crate::state::permission(&plan.domain).ok_or_else(|| {
+            api::types::Error::from(Error::new(
+                Kind::Unavailable,
+                format!("this host has no permission for domain {}", plan.domain),
+            ))
+        })?;
+        api(self.permitted(permission))?;
+        let rows = self.host(|_| services.game.read_state(&plan, &fields, &plans));
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|value| {
+                        value.map(|value| match value {
+                            S::Boolean(value) => Value::Boolean(value),
+                            S::Signed(value) => Value::Signed(value),
+                            S::Unsigned(value) => Value::Unsigned(value),
+                            S::Float(value) => Value::Float(value),
+                            S::Text(bytes) => Value::Text(bytes),
+                        })
+                    })
+                    .collect()
+            })
+            .collect())
     }
 }
 

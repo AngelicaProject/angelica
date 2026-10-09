@@ -28,6 +28,9 @@ pub enum ValueKind {
     Ptr,
     Bool,
     Void,
+    /// A structure embedded at the address: a `global` or `field` whose
+    /// value is its address or offset, never read as a value.
+    Struct,
 }
 
 impl ValueKind {
@@ -46,6 +49,7 @@ impl ValueKind {
             "ptr" => Self::Ptr,
             "bool" => Self::Bool,
             "void" => Self::Void,
+            "struct" => Self::Struct,
             _ => return None,
         })
     }
@@ -450,12 +454,16 @@ fn convert_abi(abi: &RawAbi) -> Result<Abi, String> {
         .iter()
         .map(|arg| match ValueKind::parse(arg) {
             Some(ValueKind::Void) => Err("an argument cannot be `void`".to_owned()),
+            Some(ValueKind::Struct) => Err("an argument cannot be `struct`".to_owned()),
             Some(kind) => Ok(kind),
             None => Err(format!("`{arg}` is not a value kind")),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let ret =
-        ValueKind::parse(&abi.ret).ok_or_else(|| format!("`{}` is not a value kind", abi.ret))?;
+    let ret = match ValueKind::parse(&abi.ret) {
+        Some(ValueKind::Struct) => return Err("a function cannot return `struct`".to_owned()),
+        Some(kind) => kind,
+        None => return Err(format!("`{}` is not a value kind", abi.ret)),
+    };
     Ok(Abi { args, ret })
 }
 

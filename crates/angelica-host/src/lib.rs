@@ -20,6 +20,7 @@ pub mod package;
 pub mod panel;
 pub mod sandbox;
 pub mod sheets;
+pub mod state;
 pub mod storage;
 pub mod text_case;
 pub mod ui;

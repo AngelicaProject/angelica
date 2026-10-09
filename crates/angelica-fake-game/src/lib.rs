@@ -36,7 +36,14 @@ pub struct ScriptedGame {
     pub chat_available: AtomicBool,
     /// Every message printed in the chat log, as the game's text.
     pub printed: Mutex<Vec<Vec<u8>>>,
+    /// The rows of each state table by table name: each row's fields by
+    /// name. A table without rows has no object, as before log-in.
+    pub state: Mutex<std::collections::BTreeMap<String, Vec<StateRow>>>,
 }
+
+/// A row of a state table: values by field name; a field without a value
+/// reads as `None`.
+pub type StateRow = std::collections::BTreeMap<String, runtime::state::StateValue>;
 
 impl Default for ScriptedGame {
     fn default() -> Self {
@@ -48,6 +55,7 @@ impl Default for ScriptedGame {
             commands_available: AtomicBool::new(true),
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
+            state: Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 }
@@ -87,6 +95,24 @@ impl Game for ScriptedGame {
         } else {
             Err("map entry shell.command_module.execute_command_inner is absent".into())
         }
+    }
+
+    fn read_state(
+        &self,
+        table: &runtime::state::TablePlan,
+        names: &[String],
+        _fields: &[runtime::state::FieldPlan],
+    ) -> Vec<Vec<Option<runtime::state::StateValue>>> {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&table.name)
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| names.iter().map(|name| row.get(name).cloned()).collect())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
@@ -201,6 +227,7 @@ impl TestHost {
             commands: Arc::new(runtime::commands::Commands::default()),
             chat: Arc::new(runtime::chat::Chat::default()),
             sheets: Arc::new(runtime::sheets::Sheets::default()),
+            state: Arc::new(runtime::state::StateTables::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
         });
@@ -253,6 +280,37 @@ impl TestHost {
         for _ in 0..count {
             self.host.frame(1.0 / 60.0);
         }
+    }
+
+    /// Defines a state table of `domain` with `fields`, present in the
+    /// game build unless listed in `absent`, as a game map would; its rows
+    /// come from [`ScriptedGame::state`].
+    pub fn define_state_table(&self, table: &str, domain: &str, fields: &[&str], absent: &[&str]) {
+        self.services().state.insert(runtime::state::TablePlan {
+            name: table.to_owned(),
+            domain: domain.to_owned(),
+            doc: "A test table.".into(),
+            object: Ok(Vec::new()),
+            fields: fields
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_owned(),
+                        runtime::state::FieldPlan {
+                            doc: "A test field.".into(),
+                            steps: if absent.contains(name) {
+                                Err(format!("map entry test.{name} is absent"))
+                            } else {
+                                Ok(Vec::new())
+                            },
+                            representation: angelica_map::Representation::Value(
+                                angelica_map::ValueKind::U32,
+                            ),
+                        },
+                    )
+                })
+                .collect(),
+        });
     }
 
     /// Names columns of a sheet of the game in `game_folder`, as a game map

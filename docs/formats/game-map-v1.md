@@ -6,6 +6,7 @@ The game map is a directory of UTF-8 TOML files in the `angelica-gamemap` reposi
 map.toml                 format version
 entries/<area>.toml      hand-maintained entries, one file per area
 sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
+state/<domain>.toml      state tables: game state plugins may read, by domain
 builds/<version>.toml    generated build records, one per game executable
 ```
 
@@ -34,7 +35,7 @@ Each entry is a table keyed by its name under its kind.
 | `field` | a field of a structure | `of`, `locator` or `offset`, `type` |
 | `patch` | bytes to replace | `locator`, `original`, `replacement` |
 
-A field has either a `locator`, which must be an `in` locator, or a constant `offset`. `type` is a value kind other than `void` (see below). `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
+A field has either a `locator`, which must be an `in` locator, or a constant `offset`. `type` is a value kind other than `void` (see below), or `struct` for a structure embedded at the global's address or the field's offset, which is never read as a value. `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
 
 Common optional fields: `doc` (one sentence: what it is, not how it was found), `checks`, `depends` (names of entries that must be present), and `origin`.
 
@@ -118,6 +119,33 @@ A layout is the sheet's variant and every column's type and byte offset, as the 
 A name applies in a game build only when the build's layout of the sheet has the fingerprint of one of the schema's layouts and the column at the name's position has the name's type. Otherwise every name of the sheet is absent in that build: a patch that moves, adds, or retypes any column of the sheet leaves its names absent until a layout for the new build is added. A name never reads another column.
 
 A schema that breaks a rule makes the whole map invalid. Sheet schemas are not part of `entries_sha256`: they do not affect how entries resolve against the executable.
+
+## State tables
+
+A state table names game state plugins may read: the fields of one object of the game, such as the player's character. The tables of a domain are in `state/<domain>.toml`; the domain is a lowercase word, and reading its tables requires the plugin permission `state.<domain>`, which the host defines. A host offers only the tables of domains it has a permission for.
+
+```toml
+[tables.self]
+doc = "The player's character, while the player is logged in."
+object = ["character.local_player"]
+
+[tables.self.fields.level]
+doc = "The level of the current class or job."
+path = ["character.character.data", "character.character_data.level"]
+
+[tables.self.fields.name]
+doc = "The character's name."
+path = ["object.game_object.name"]
+text = 64
+```
+
+- A table is named `<domain>` or `<domain>.<subject>`; a field is a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes. `doc` says what the table or field holds, including the sheet a number refers to; it is not blank.
+- `object` is the path to the object: a `global` entry, then `field` entries. Every step has the type `ptr` or `struct`.
+- A field's `path` leads from the object to the value through `field` entries. Every step but the last has the type `ptr` or `struct`. The last is the value: read by its type, which is not `ptr` or `struct`; or, with `text`, a `struct` field holding NUL-terminated UTF-8 of at most `text` bytes (1 to 4096).
+
+A path is walked from the global's address: each step adds its offset, and a step of type `ptr` then reads the pointer stored there. The table has one row while the object path ends at a non-zero address and none otherwise; a field's value is none when a pointer on its path is zero. A table or field whose entries are absent in a build is absent with them.
+
+A table that breaks a rule or names an entry that does not exist or has the wrong kind makes the whole map invalid. State tables are not part of `entries_sha256`.
 
 ## Build records
 

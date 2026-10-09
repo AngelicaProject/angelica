@@ -91,45 +91,12 @@ fn initialize() -> Result<(), String> {
     let _ = LOG_DIRECTORY.set(config.log_directory.clone());
 
     let (base, snapshot, hash) = executable_snapshot()?;
-    let (catalog, schemas, map_status) = load_map(&config, base, &snapshot, hash);
+    let (catalog, map, map_status) = load_map(&config, base, &snapshot, hash);
     for line in &map_status {
         super::log(line);
     }
     let catalog = Arc::new(catalog);
-    let excel = Arc::new(ExcelText::default());
-
-    let case = Arc::new(TextCase::default());
-    let files = Arc::new(crate::file_replacements::FileReplacements::new(
-        &config
-            .cache_directory
-            .clone()
-            .unwrap_or_else(|| root.join("cache"))
-            .join("files"),
-    ));
-    let commands = Arc::new(crate::commands::Commands::default());
-    let executable = module_path(base)?;
-    let game = Arc::new(WindowsGame {
-        catalog: catalog.clone(),
-        base,
-        excel: excel.clone(),
-        case: case.clone(),
-        files: files.clone(),
-        commands: commands.clone(),
-        version: WindowsGame::read_version(&executable),
-    });
-    // The executable is in `game/`; the archives are in `game/sqpack`.
-    let installation = executable.parent().and_then(std::path::Path::parent);
-    let services = Arc::new(Services {
-        data: Arc::new(crate::game_data::GameData::new(installation)),
-        files,
-        excel,
-        case,
-        commands,
-        chat: Arc::new(crate::chat::Chat::default()),
-        sheets: Arc::new(crate::sheets::Sheets::new(schemas)),
-        game,
-        starting: AtomicBool::new(false),
-    });
+    let services = services(&config, root, &catalog, map.as_ref(), base)?;
     let sandbox = Arc::new(Sandbox::new()?);
     let mut host = Host::new(
         sandbox.clone(),
@@ -183,23 +150,84 @@ fn initialize() -> Result<(), String> {
     Ok(())
 }
 
-/// The signed map resolved for this executable, its sheet schemas, and the
-/// lines the menu shows about it. Without a usable map every entry is
-/// absent and no sheet has names.
+/// The host's services over the game loaded at `base`.
+fn services(
+    config: &Config,
+    root: &Path,
+    catalog: &Arc<Catalog>,
+    map: Option<&angelica_map::Map>,
+    base: usize,
+) -> Result<Arc<Services>, String> {
+    let excel = Arc::new(ExcelText::default());
+
+    let case = Arc::new(TextCase::default());
+    let files = Arc::new(crate::file_replacements::FileReplacements::new(
+        &config
+            .cache_directory
+            .clone()
+            .unwrap_or_else(|| root.join("cache"))
+            .join("files"),
+    ));
+    let commands = Arc::new(crate::commands::Commands::default());
+    let executable = module_path(base)?;
+    let game = Arc::new(WindowsGame {
+        catalog: catalog.clone(),
+        base,
+        excel: excel.clone(),
+        case: case.clone(),
+        files: files.clone(),
+        commands: commands.clone(),
+        version: WindowsGame::read_version(&executable),
+    });
+    let (sheets, state) = map_services(map, catalog, base);
+    Ok(Arc::new(Services {
+        // The executable is in `game/`; the archives are in `game/sqpack`.
+        data: Arc::new(crate::game_data::GameData::new(
+            executable.parent().and_then(Path::parent),
+        )),
+        files,
+        excel,
+        case,
+        commands,
+        chat: Arc::new(crate::chat::Chat::default()),
+        sheets,
+        state,
+        game,
+        starting: AtomicBool::new(false),
+    }))
+}
+
+/// The sheet schemas and state tables of the map, resolved for the game
+/// loaded at `base`; none without a map.
+fn map_services(
+    map: Option<&angelica_map::Map>,
+    catalog: &Catalog,
+    base: usize,
+) -> (Arc<crate::sheets::Sheets>, Arc<crate::state::StateTables>) {
+    let sheets = crate::sheets::Sheets::new(map.iter().flat_map(|map| map.sheets().cloned()));
+    let state = map.map_or_else(Default::default, |map| {
+        crate::state::StateTables::from_map(map, catalog, base as u64)
+    });
+    (Arc::new(sheets), Arc::new(state))
+}
+
+/// The signed map resolved for this executable, the map, and the lines the
+/// menu shows about it. Without a usable map every entry is absent and no
+/// sheet or state table is offered.
 fn load_map(
     config: &Config,
     base: usize,
     snapshot: &[u8],
     hash: String,
-) -> (Catalog, Vec<angelica_map::SheetSchema>, Vec<String>) {
+) -> (Catalog, Option<angelica_map::Map>, Vec<String>) {
     let mut map_status = Vec::new();
-    let mut schemas = Vec::new();
+    let mut loaded = None;
     let catalog = match FileSet::load(&config.map_directory, RELEASE_KEY.as_ref())
         .map_err(|e| e.to_string())
         .and_then(|files| Catalog::from_signed_files(&files, snapshot, base as u64, hash.clone()))
     {
         Ok((map, catalog)) => {
-            schemas = map.sheets().cloned().collect();
+            loaded = Some(map);
             map_status.push(format!(
                 "Game map: {} for this build, {} entries present, {} absent",
                 if catalog.verified {
@@ -226,7 +254,7 @@ fn load_map(
             }
         }
     };
-    (catalog, schemas, map_status)
+    (catalog, loaded, map_status)
 }
 
 fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {

@@ -41,4 +41,13 @@ pub trait Game: Send + Sync {
     /// Names the map entries the game build lacks, or says the chat log
     /// does not exist yet.
     fn print(&self, message: &[u8]) -> Result<(), String>;
+
+    /// The rows of a state table with the values of `fields` (named
+    /// `names`), read from the game's memory. On the main thread only.
+    fn read_state(
+        &self,
+        table: &crate::state::TablePlan,
+        names: &[String],
+        fields: &[crate::state::FieldPlan],
+    ) -> Vec<Vec<Option<crate::state::StateValue>>>;
 }

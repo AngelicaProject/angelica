@@ -1,0 +1,52 @@
+package angelica:plugin@1.0.0;
+
+/// The game's state: tables the game map defines, read by name.
+///
+/// A table describes one object of the game, such as the player's
+/// character, as named fields. The game map resolves every field for the
+/// running game build, so a name keeps its meaning across patches; a field
+/// whose map entries are absent in the build is unavailable until the map
+/// catches up. Each table belongs to a domain, and reading it requires the
+/// domain's permission: `state.self` for `self`. Reads happen in the main
+/// instance, on the game's main thread between frames, and never write;
+/// jobs get `wrong-context`.
+interface state {
+    use types.{error};
+
+    variant value {
+        boolean(bool),
+        signed(s64),
+        unsigned(u64),
+        float(f64),
+        /// Text as the game stores it, without its terminator.
+        text(list<u8>),
+    }
+
+    record field {
+        name: string,
+        /// What the field holds, including the sheet a number refers to.
+        doc: string,
+        /// False when a map entry the field needs is absent in this build.
+        present: bool,
+    }
+
+    record table {
+        name: string,
+        domain: string,
+        doc: string,
+        /// False when a map entry the table's object needs is absent in
+        /// this build.
+        present: bool,
+        fields: list<field>,
+    }
+
+    /// Every table the game map defines, with its fields, sorted by name.
+    tables: func() -> list<table>;
+
+    /// The rows of `table` with the values of `fields`, in the order given:
+    /// none while the table's object does not exist, such as before the
+    /// player logs in, one otherwise. A value is `none` when the game holds
+    /// nothing there: a pointer on its path is zero. An unknown table or
+    /// field returns `not-found`; one absent in this build, `unavailable`.
+    read: func(table: string, fields: list<string>) -> result<list<list<option<value>>>, error>;
+}

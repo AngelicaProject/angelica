@@ -16,6 +16,7 @@ pub const FORMAT: i64 = 1;
 pub struct Map {
     entries: BTreeMap<String, Entry>,
     sheets: BTreeMap<String, crate::SheetSchema>,
+    state: BTreeMap<String, crate::StateTable>,
     /// Entry names, each after every entry it references.
     order: Vec<String>,
     entries_sha256: String,
@@ -56,6 +57,25 @@ impl Map {
                 files.push((format!("entries/{file_name}"), read_text(&path)?));
             }
         }
+        let state_directory = directory.join("state");
+        if state_directory.exists() {
+            let listing = std::fs::read_dir(&state_directory)
+                .map_err(|error| io_error(&state_directory, &error))?;
+            for item in listing {
+                let path = item
+                    .map_err(|error| io_error(&state_directory, &error))?
+                    .path();
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                if !path.is_file() || path.extension().is_none_or(|extension| extension != "toml") {
+                    return Err(MapError::UnexpectedFile { path });
+                }
+                files.push((format!("state/{file_name}"), read_text(&path)?));
+            }
+        }
         let sheets_directory = directory.join("sheets");
         if sheets_directory.exists() {
             collect_sheets(&sheets_directory, "sheets", &mut files)?;
@@ -91,9 +111,18 @@ impl Map {
                 })?;
             sheets.insert(schema.sheet.clone(), schema);
         }
+        let mut state = Vec::new();
+        for (relative, text) in files.iter().filter(|(path, _)| path.starts_with("state/")) {
+            let tables =
+                crate::state::parse(relative, text).map_err(|message| MapError::InvalidState {
+                    path: PathBuf::from(relative),
+                    message,
+                })?;
+            state.extend(tables.into_iter().map(|table| (relative.clone(), table)));
+        }
         let mut sorted = files
             .iter()
-            .filter(|(path, _)| !path.starts_with("sheets/"))
+            .filter(|(path, _)| !path.starts_with("sheets/") && !path.starts_with("state/"))
             .collect::<Vec<_>>();
         sorted.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -131,9 +160,20 @@ impl Map {
 
         check_references(&entries)?;
         let order = dependency_order(&entries)?;
+        let mut tables = BTreeMap::new();
+        for (relative, mut table) in state {
+            crate::state::check(&mut table, &entries).map_err(|message| {
+                MapError::InvalidState {
+                    path: PathBuf::from(&relative),
+                    message,
+                }
+            })?;
+            tables.insert(table.name.clone(), table);
+        }
         Ok(Self {
             entries,
             sheets,
+            state: tables,
             order,
             entries_sha256: content_hash(map_toml, &sorted),
         })
@@ -147,6 +187,17 @@ impl Map {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&Entry> {
         self.entries.get(name)
+    }
+
+    /// Every state table, by name.
+    pub fn state_tables(&self) -> impl Iterator<Item = &crate::StateTable> {
+        self.state.values()
+    }
+
+    /// A state table.
+    #[must_use]
+    pub fn state_table(&self, name: &str) -> Option<&crate::StateTable> {
+        self.state.get(name)
     }
 
     /// Every sheet schema, by sheet name.

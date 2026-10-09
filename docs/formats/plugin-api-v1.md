@@ -20,6 +20,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `commands` | chat commands the host parses for the plugin | `chat.commands` |
 | `chat` | messages in the player's chat log | `chat.print` |
 | `http` | HTTPS GET requests to the hosts the manifest lists | `http.get` |
+| `state` | game state as the game map's tables: the player's character | `state.<domain>`: `state.self` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -37,7 +38,7 @@ Each call has a time limit counted in guest time only (time spent in host calls 
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -62,6 +63,14 @@ The player can open the folder from the Angelica menu, for example to give the p
 `game-files` reads a file from the installed game's archives by its game path (`common/font/AXIS_12.fdt`), case-insensitively, up to 64 MiB; standard files and textures are supported. `excel` lists the game's sheets, describes one (its columns with index, kind, and offset, the columns the game map names, its variant, the languages the installed game has data for, and row count), and returns the values of named columns in rows: up to 1024 per call sorted by row and subrow, or one row by key. A plugin reads values only by the names the game map's [sheet schemas](./game-map-v1.md#sheet-schemas) give, which keep their meaning across patches: a sheet whose layout in the running game the map does not know returns `unavailable` until the map knows it, and a name the map does not give the sheet returns `not-found`. Column positions and offsets serve text tables, which check them; a plugin never finds a value by position. Text cells are the game's encoded strings without terminator; numbers are signed or unsigned by their column kind. A sheet without data in the requested language is read in its language-neutral data; with neither the call returns `not-found`, also for a language the sheet lists that the installed game has no data files for, such as another region's. Languages use the game's numbers (0 none, 1 Japanese, 2 English, 3 German, 4 French, 5 and 6 Chinese, 7 Korean, 8 Traditional Chinese).
 
 Both read the original files: never another plugin's text tables or replaced files, and nothing is written. They need no permission and work in the main instance and in jobs. A file or sheet the host has not read yet is decoded from the archives, which takes milliseconds to a few hundred for the largest sheets; the host keeps the 32 most recently read sheets. Bulk reading belongs in a job.
+
+## Game state
+
+`state` reads the game's state as tables the [game map](./game-map-v1.md#state-tables) defines: a table describes one object of the game, such as the player's character (`self`), as named fields, and `read` returns the values of the fields asked for, in the order asked. A table has one row while its object exists and none otherwise, such as before the player logs in. A value is text (the game's bytes without terminator), a boolean, a signed or unsigned integer, or a float, by the field's type; it is none when the game holds nothing there. Numbers that identify game data are rows of the sheet the field's documentation names.
+
+Names keep their meaning across game patches: the map resolves them for each build. A field whose map entries are absent in the running build returns `unavailable` until the map catches up; an unknown table or field returns `not-found`. `tables` lists every table with its fields and whether each is present, so a plugin can check before it reads.
+
+Every table belongs to a domain, and reading it requires the domain's permission: `state.self` for the player's character and where the player is. Reads happen in the main instance, on the game's main thread between frames; jobs get `wrong-context`. Reading never changes the game.
 
 ## Text tables
 

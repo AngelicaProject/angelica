@@ -31,6 +31,18 @@ Plugins read the game's Excel sheets by column name. The map's sheet schemas giv
 
 A column is named when a plugin needs it, from the values it holds, never speculatively.
 
+## State tables
+
+Plugins read game state through the map's state tables ([format](../formats/game-map-v1.md#state-tables)). Each field is a path of verified entries from a global to a value; the host resolves the paths for the running build once, at start, and walks them when a plugin reads. A field whose entries are absent is unavailable; the rest of the table works.
+
+Reading is confined:
+
+- only on the game's main thread, between frames, from a plugin's main instance — the game does not change its objects meanwhile;
+- every read of game memory goes through the operating system's checked copy, so an unreadable address makes the value absent instead of faulting the game;
+- nothing is written, and an address comes only from a resolved map entry or a pointer the game stored on a path the map describes, never from a plugin.
+
+A field is visible to plugins because a table names it. A table's fields are a contract: they keep their names and meaning across builds, and a field that would expose data that could compromise the account is never added.
+
 ## Build records
 
 A build record maps the hash of one executable to the resolved address of every entry and the result of every check. It is produced offline by `angelica map verify` and published with the map. With a record for the running executable, the host does not scan: it checks the hash and uses the recorded addresses.

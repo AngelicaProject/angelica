@@ -1,14 +1,15 @@
 //! An example plugin that uses every interface of the plugin API: a window
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
-//! commands that print in the chat log, and HTTPS requests from a job. The host's integration tests drive
+//! commands that print in the chat log, HTTPS requests from a job, and the
+//! player's character from the game's state. The host's integration tests drive
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
     api::{excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
-    excel,
+    excel, state,
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -97,6 +98,10 @@ impl Hello {
                     Err(error) => self.say(format!("texture refused: {}", error.message)),
                 }
             }
+            "where" => match who() {
+                Ok(text) => self.say(text),
+                Err(error) => self.say(format!("cannot read the character: {error}")),
+            },
             "status" => match excel_text::status("example") {
                 Ok(status) => self.say(format!(
                     "table: {} rows changed, {} cells, {} mismatches",
@@ -153,6 +158,62 @@ const TONES: [(&str, ChatTone); 6] = [
     ("warning", ChatTone::Warning),
     ("bad", ChatTone::Bad),
 ];
+
+/// The player's character and zone from the game's state.
+fn who() -> Result<String, String> {
+    let Some(values) = state::read_one(
+        "self",
+        &[
+            "name",
+            "class_job",
+            "level",
+            "health",
+            "max_health",
+            "mana",
+            "max_mana",
+            "position_x",
+            "position_y",
+            "position_z",
+        ],
+    )
+    .map_err(|e| e.message)?
+    else {
+        return Ok("no character yet".into());
+    };
+    let name = values[0]
+        .as_ref()
+        .and_then(state::Value::text)
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let number = |index: usize| {
+        values[index]
+            .as_ref()
+            .and_then(state::Value::unsigned)
+            .unwrap_or(0)
+    };
+    let float = |index: usize| {
+        values[index]
+            .as_ref()
+            .and_then(state::Value::float)
+            .unwrap_or(0.0)
+    };
+    let zone = state::read_one("self.zone", &["territory_type"])
+        .map_err(|e| e.message)?
+        .and_then(|values| values[0].as_ref().and_then(state::Value::unsigned))
+        .unwrap_or(0);
+    Ok(format!(
+        "{name} is class {} at level {}, HP {}/{}, MP {}/{}, at ({:.1}, {:.1}, {:.1}) in zone {zone}",
+        number(1),
+        number(2),
+        number(3),
+        number(4),
+        number(5),
+        number(6),
+        float(7),
+        float(8),
+        float(9)
+    ))
+}
 
 /// A table that replaces the text of Item row 1, column 0, while it is
 /// "Potion".
@@ -266,6 +327,7 @@ impl Plugin for Hello {
                             .button("status", "Table status")
                             .button("letters", "Add letters")
                             .button("read", "Read game data")
+                            .button("where", "Who am I")
                             .button("texture", "Replace a texture")
                     })
                 })

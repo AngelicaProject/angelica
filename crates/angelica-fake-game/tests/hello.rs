@@ -572,3 +572,72 @@ fn jobs_fetch_from_the_listed_hosts() {
     );
     assert!(String::from_utf8_lossy(&saved).contains("Example Domain"));
 }
+
+#[test]
+fn the_characters_state_is_read_under_its_permission() {
+    use runtime::state::StateValue;
+    let test = approved(MANIFEST);
+    click(&test, "where");
+    assert_eq!(
+        message(&test),
+        "cannot read the character: the game map has no state table self"
+    );
+
+    let fields: [&str; 10] = [
+        "name",
+        "class_job",
+        "level",
+        "health",
+        "max_health",
+        "mana",
+        "max_mana",
+        "position_x",
+        "position_y",
+        "position_z",
+    ];
+    test.define_state_table("self", "self", &fields, &[]);
+    test.define_state_table("self.zone", "self", &["territory_type"], &[]);
+    click(&test, "where");
+    assert_eq!(message(&test), "no character yet");
+
+    let mut state = test.game.state.lock().unwrap();
+    state.insert(
+        "self".into(),
+        vec![
+            [
+                ("name".to_owned(), StateValue::Text(b"Alisaie".to_vec())),
+                ("class_job".to_owned(), StateValue::Unsigned(35)),
+                ("level".to_owned(), StateValue::Unsigned(100)),
+                ("health".to_owned(), StateValue::Unsigned(900)),
+                ("max_health".to_owned(), StateValue::Unsigned(1000)),
+                ("position_x".to_owned(), StateValue::Float(1.25)),
+            ]
+            .into(),
+        ],
+    );
+    state.insert(
+        "self.zone".into(),
+        vec![[("territory_type".to_owned(), StateValue::Unsigned(132))].into()],
+    );
+    drop(state);
+    click(&test, "where");
+    assert_eq!(
+        message(&test),
+        "Alisaie is class 35 at level 100, HP 900/1000, MP 0/0, at (1.2, 0.0, 0.0) in zone 132"
+    );
+
+    test.define_state_table("self", "self", &fields, &["level"]);
+    click(&test, "where");
+    assert_eq!(
+        message(&test),
+        "cannot read the character: state table self, field level: map entry test.level is absent"
+    );
+
+    let test = approved(&without_permissions(&["state.self"]));
+    test.define_state_table("self", "self", &fields, &[]);
+    click(&test, "where");
+    assert_eq!(
+        message(&test),
+        "cannot read the character: the plugin does not hold state.self"
+    );
+}

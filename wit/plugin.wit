@@ -44,5 +44,6 @@ world plugin {
     import commands;
     import chat;
     import http;
+    import state;
     export guest;
 }

@@ -32,6 +32,9 @@ pub enum Permission {
     /// Send HTTPS GET requests to the hosts the manifest lists.
     #[serde(rename = "http.get")]
     HttpGet,
+    /// Read the state of the player's character.
+    #[serde(rename = "state.self")]
+    StateSelf,
 }
 
 impl Permission {
@@ -44,6 +47,7 @@ impl Permission {
             Self::ChatCommands => "chat.commands",
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
+            Self::StateSelf => "state.self",
         }
     }
 
@@ -57,6 +61,9 @@ impl Permission {
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
+            Self::StateSelf => {
+                "Reads your character: name, class, level, HP and MP, position, and zone"
+            }
         }
     }
 }
