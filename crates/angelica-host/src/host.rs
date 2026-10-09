@@ -69,7 +69,22 @@ pub struct Plugin {
     running: Mutex<Option<Running>>,
     jobs: Mutex<Option<Arc<Jobs>>>,
     windows: Mutex<Vec<Window>>,
+    /// When the menu was last told that the plugin held up a frame.
+    slow: Mutex<Option<std::time::Instant>>,
 }
+
+/// What a frame brings every plugin.
+#[derive(Clone, Copy)]
+struct Frame<'a> {
+    elapsed: f64,
+    commands: &'a [(String, Outcome)],
+    game_events: &'a (Vec<crate::events::GameEvent>, u32),
+    events: &'a [(String, Event)],
+}
+
+/// A plugin whose calls take longer in one frame is noted in the menu.
+const SLOW_FRAME: std::time::Duration = std::time::Duration::from_millis(100);
+const SLOW_NOTE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Plugin {
     #[must_use]
@@ -327,6 +342,7 @@ impl Host {
             running: Mutex::new(None),
             jobs: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
+            slow: Mutex::new(None),
         });
         Ok(plugin)
     }
@@ -389,19 +405,23 @@ impl Host {
         sandbox::budget(
             &mut store,
             self.limits.start_time,
+            self.limits.start_wall,
             self.limits.fuel.saturating_mul(100),
         );
-        let result = plugin
-            .pre
-            .instantiate(&mut store)
-            .map_err(|e| sandbox::describe_trap(&e))
-            .and_then(
-                |bindings| match bindings.angelica_plugin_guest().call_start(&mut store) {
-                    Ok(Ok(())) => Ok(bindings),
-                    Ok(Err(reason)) => Err(format!("start failed: {reason}")),
-                    Err(trap) => Err(format!("start trapped: {}", sandbox::describe_trap(&trap))),
-                },
-            );
+        let result = sandbox::call(&mut store, |store| {
+            let bindings = plugin
+                .pre
+                .instantiate(&mut *store)
+                .map_err(|e| sandbox::describe_trap(store, &e))?;
+            match bindings.angelica_plugin_guest().call_start(&mut *store) {
+                Ok(Ok(())) => Ok(bindings),
+                Ok(Err(reason)) => Err(format!("start failed: {reason}")),
+                Err(trap) => Err(format!(
+                    "start trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                )),
+            }
+        });
         match result {
             Ok(bindings) => {
                 *plugin.jobs.lock().unwrap_or_else(PoisonError::into_inner) = Some(jobs);
@@ -434,17 +454,15 @@ impl Host {
             sandbox::budget(
                 &mut running.store,
                 self.limits.start_time,
+                self.limits.start_wall,
                 self.limits.fuel.saturating_mul(100),
             );
-            if let Err(trap) = running
-                .bindings
-                .angelica_plugin_guest()
-                .call_stop(&mut running.store)
-            {
+            let guest = running.bindings.angelica_plugin_guest();
+            if let Err(trap) = sandbox::call(&mut running.store, |store| guest.call_stop(store)) {
                 self.diagnostic(format!(
                     "{}: stop trapped: {}",
                     plugin.manifest.id(),
-                    sandbox::describe_trap(&trap)
+                    sandbox::describe_trap(&running.store, &trap)
                 ));
             }
         }
@@ -579,20 +597,18 @@ impl Host {
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
         let game_events = self.services.events.take();
+        let frame = Frame {
+            elapsed,
+            commands: &commands,
+            game_events: &game_events,
+            events: &events,
+        };
         for plugin in self.plugins() {
-            self.frame_plugin(&plugin, elapsed, &commands, &game_events, &events);
+            self.frame_plugin(&plugin, &frame);
         }
     }
 
-    fn frame_plugin(
-        &self,
-        plugin: &Arc<Plugin>,
-        elapsed: f64,
-        commands: &[(String, Outcome)],
-        game_events: &(Vec<crate::events::GameEvent>, u32),
-        events: &[(String, Event)],
-    ) {
-        let id = plugin.manifest.id();
+    fn frame_plugin(&self, plugin: &Arc<Plugin>, frame: &Frame<'_>) {
         let mut running = plugin
             .running
             .lock()
@@ -600,93 +616,139 @@ impl Host {
         let Some(instance) = running.as_mut() else {
             return;
         };
-        let guest = instance.bindings.angelica_plugin_guest();
-        let store = &mut instance.store;
-        let fault = (|| {
-            sandbox::budget(store, self.limits.call_time, self.limits.fuel);
-            match guest.call_tick(&mut *store, elapsed) {
-                Ok(Ok(())) => {}
-                Ok(Err(reason)) => return Some(format!("tick failed: {reason}")),
-                Err(trap) => {
-                    return Some(format!("tick trapped: {}", sandbox::describe_trap(&trap)));
-                }
-            }
-            for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
-                let invocation = match outcome {
-                    Outcome::Reply(spans) => {
-                        self.reply(store.data().context(), spans);
-                        continue;
-                    }
-                    Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
-                };
-                sandbox::budget(store, self.limits.call_time, self.limits.fuel);
-                match guest.call_command(&mut *store, &invocation) {
-                    Ok(Ok(())) => {}
-                    Ok(Err(reason)) => {
-                        self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
-                    }
-                    Err(trap) => {
-                        return Some(format!(
-                            "command trapped: {}",
-                            sandbox::describe_trap(&trap)
-                        ));
-                    }
-                }
-            }
-            let subscribed = self.services.events.subscribed(id);
-            if !subscribed.is_empty() {
-                let (delivered, dropped) = game_events;
-                let mut calls: Vec<_> = Vec::new();
-                if *dropped > 0 {
-                    calls.push(
-                        sandbox::bindings::angelica::plugin::events::GameEvent::Dropped(*dropped),
-                    );
-                }
-                calls.extend(
-                    delivered
-                        .iter()
-                        .filter(|event| subscribed.contains(&event.kind()))
-                        .cloned()
-                        .map(sandbox::event_to_api),
-                );
-                for event in &calls {
-                    sandbox::budget(store, self.limits.call_time, self.limits.fuel);
-                    if let Err(trap) = guest.call_on_game_event(&mut *store, event) {
-                        return Some(format!(
-                            "on-game-event trapped: {}",
-                            sandbox::describe_trap(&trap)
-                        ));
-                    }
-                }
-            }
-            for (_, event) in events.iter().filter(|(target, _)| target == id) {
-                sandbox::budget(store, self.limits.call_time, self.limits.fuel);
-                if let Err(trap) = guest.call_ui_event(&mut *store, event) {
-                    return Some(format!(
-                        "ui-event trapped: {}",
-                        sandbox::describe_trap(&trap)
-                    ));
-                }
-            }
-            sandbox::budget(store, self.limits.call_time, self.limits.fuel);
-            match guest.call_ui(&mut *store) {
-                Ok(windows) => match ui::validate(&windows) {
-                    Ok(()) => {
-                        *plugin
-                            .windows
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner) = windows;
-                    }
-                    Err(reason) => return Some(format!("invalid windows: {reason}")),
-                },
-                Err(trap) => return Some(format!("ui trapped: {}", sandbox::describe_trap(&trap))),
-            }
-            None
-        })();
+        // Every call of the frame shares one budget.
+        sandbox::budget(
+            &mut instance.store,
+            self.limits.call_time,
+            self.limits.frame_wall,
+            self.limits.fuel,
+        );
+        let fault = self.frame_calls(plugin, instance, frame);
+        let spent = sandbox::spent(&instance.store);
         drop(running);
         if let Some(reason) = fault {
             self.fault(plugin, reason);
+        } else if spent > SLOW_FRAME {
+            self.slow(plugin, spent);
         }
+    }
+
+    /// The plugin's calls of a frame; the reason to fault it, if any.
+    fn frame_calls(
+        &self,
+        plugin: &Plugin,
+        instance: &mut Running,
+        frame: &Frame<'_>,
+    ) -> Option<String> {
+        let id = plugin.manifest.id();
+        let Frame {
+            elapsed,
+            commands,
+            game_events,
+            events,
+        } = *frame;
+        let guest = instance.bindings.angelica_plugin_guest();
+        let store = &mut instance.store;
+        match sandbox::call(store, |store| guest.call_tick(store, elapsed)) {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => return Some(format!("tick failed: {reason}")),
+            Err(trap) => {
+                return Some(format!(
+                    "tick trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
+            let invocation = match outcome {
+                Outcome::Reply(spans) => {
+                    self.reply(store.data().context(), spans);
+                    continue;
+                }
+                Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
+            };
+            match sandbox::call(store, |store| guest.call_command(store, &invocation)) {
+                Ok(Ok(())) => {}
+                Ok(Err(reason)) => {
+                    self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
+                }
+                Err(trap) => {
+                    return Some(format!(
+                        "command trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        let subscribed = self.services.events.subscribed(id);
+        if !subscribed.is_empty() {
+            let (delivered, dropped) = game_events;
+            let mut calls: Vec<_> = Vec::new();
+            if *dropped > 0 {
+                calls.push(
+                    sandbox::bindings::angelica::plugin::events::GameEvent::Dropped(*dropped),
+                );
+            }
+            calls.extend(
+                delivered
+                    .iter()
+                    .filter(|event| subscribed.contains(&event.kind()))
+                    .cloned()
+                    .map(sandbox::event_to_api),
+            );
+            for event in &calls {
+                if let Err(trap) =
+                    sandbox::call(store, |store| guest.call_on_game_event(store, event))
+                {
+                    return Some(format!(
+                        "on-game-event trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        for (_, event) in events.iter().filter(|(target, _)| target == id) {
+            if let Err(trap) = sandbox::call(store, |store| guest.call_ui_event(store, event)) {
+                return Some(format!(
+                    "ui-event trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        match sandbox::call(store, |store| guest.call_ui(store)) {
+            Ok(windows) => match ui::validate(&windows) {
+                Ok(()) => {
+                    *plugin
+                        .windows
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = windows;
+                }
+                Err(reason) => return Some(format!("invalid windows: {reason}")),
+            },
+            Err(trap) => {
+                return Some(format!(
+                    "ui trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        None
+    }
+
+    /// Notes that a plugin's calls held up a frame, at most once every few
+    /// seconds per plugin.
+    fn slow(&self, plugin: &Plugin, spent: std::time::Duration) {
+        let mut noted = plugin.slow.lock().unwrap_or_else(PoisonError::into_inner);
+        if noted.is_some_and(|at| at.elapsed() < SLOW_NOTE_INTERVAL) {
+            return;
+        }
+        *noted = Some(std::time::Instant::now());
+        drop(noted);
+        self.diagnostic(format!(
+            "{}: its calls held up a frame for {} ms",
+            plugin.manifest.id(),
+            spent.as_millis()
+        ));
     }
 
     /// Prints the host's answer to a plugin's command in the chat log, as

@@ -54,8 +54,10 @@ interface excel-text {
     /// list a cell, the one with the higher `priority` is tried first, then
     /// tables by plugin id and name; the first whose guard matches applies.
     /// Activation is refused, and the previous table stays, when the file
-    /// is not a valid text table or the game build lacks the entries the
-    /// row hook needs.
+    /// is not a valid text table, the game build lacks the entries the
+    /// row hook needs, or the size limits would be exceeded: a table file
+    /// has at most 512 MiB, and a plugin's active tables at most 1 GiB
+    /// together.
     activate: func(name: string, path: string, priority: s32) -> result<table-info, error>;
 
     /// Deactivates a table. Rows the game builds afterwards keep its text.

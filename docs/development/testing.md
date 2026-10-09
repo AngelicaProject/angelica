@@ -6,7 +6,7 @@ Tests protect contracts, not implementation trivia. Tests must not depend on an 
 
 - **Pure crates** (`angelica-pe`, `angelica-map`, manifest and permission logic): unit tests and property tests over synthetic PE images and map files built in the tests.
 - **Hook engine**: unit tests of relocation on any platform, and, on Windows, tests that install hooks on machine code copied into executable memory (`angelica-hook`'s `testing` feature): RIP-relative operands and branches in the moved instructions, chaining and removal order, refusals, code patches with matching and non-matching original bytes, vtable slots, mid-function hooks that read and change general-purpose and XMM registers while flags survive, and a thread that spins inside the overwritten bytes while a detour is installed, repeated so that it is stopped at every instruction.
-- **Plugin runtime**: test components built in the workspace exercise limits, traps, permission refusals, and main/worker isolation.
+- **Plugin runtime**: test components built in the workspace exercise limits, traps, permission refusals, and main/worker isolation. `crates/angelica-fake-game/hostile` is a plugin that tries to break each boundary — endless guest and host loops, a frame's calls together, memory, stack, panics, invalid windows, unpolled jobs, storage paths, oversized files, operations in the wrong instance, undeclared permissions — and `tests/hostile.rs` checks that the host faults it or refuses the operation while the example plugin keeps running.
 - **Plugins**: `angelica-fake-game` runs a plugin against recorded or scripted game data.
 
 ## Synthetic images

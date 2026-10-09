@@ -11,6 +11,7 @@ members = [
   "crates/angelica-host",
   "crates/angelica-sdk",
   "crates/angelica-fake-game",
+  "crates/angelica-fake-game/hostile",
   "examples/hello",
 ]
 

@@ -18,6 +18,10 @@ use std::{
 
 /// Tables one plugin can keep active at once.
 pub const MAX_TABLES_PER_PLUGIN: usize = 8;
+/// Bytes of one table file; the host keeps active tables in memory.
+pub const MAX_TABLE_SIZE: u64 = 512 * 1024 * 1024;
+/// Bytes of one plugin's active tables together.
+pub const MAX_TABLES_SIZE_PER_PLUGIN: usize = 1024 * 1024 * 1024;
 /// Rebuilt rows stay below this size; text fields address at most 24 bits.
 pub const MAX_ROW_SIZE: usize = 1 << 20;
 
@@ -60,6 +64,8 @@ pub struct Entry {
     name: String,
     priority: i32,
     table: OwnedTable,
+    /// Bytes of the table file.
+    size: usize,
     rows_changed: AtomicU64,
     cells_replaced: AtomicU64,
     guard_mismatches: AtomicU64,
@@ -92,6 +98,7 @@ impl ExcelText {
         priority: i32,
         bytes: Vec<u8>,
     ) -> Result<TableInfo, String> {
+        let size = bytes.len();
         let table = OwnedTable::new(bytes).map_err(|e| e.to_string())?;
         let view = table.table();
         let info = TableInfo {
@@ -103,6 +110,7 @@ impl ExcelText {
             name: name.into(),
             priority,
             table,
+            size,
             rows_changed: AtomicU64::new(0),
             cells_replaced: AtomicU64::new(0),
             guard_mismatches: AtomicU64::new(0),
@@ -119,9 +127,15 @@ impl ExcelText {
             .filter(|e| !(e.plugin == plugin && e.name == name))
             .cloned()
             .collect();
-        if entries.iter().filter(|e| e.plugin == plugin).count() >= MAX_TABLES_PER_PLUGIN {
+        let others = entries.iter().filter(|e| e.plugin == plugin);
+        if others.clone().count() >= MAX_TABLES_PER_PLUGIN {
             return Err(format!(
                 "a plugin can keep at most {MAX_TABLES_PER_PLUGIN} tables active"
+            ));
+        }
+        if others.map(|e| e.size).sum::<usize>() + size > MAX_TABLES_SIZE_PER_PLUGIN {
+            return Err(format!(
+                "a plugin's active tables have at most {MAX_TABLES_SIZE_PER_PLUGIN} bytes together"
             ));
         }
         entries.push(entry);

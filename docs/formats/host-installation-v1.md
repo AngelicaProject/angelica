@@ -11,8 +11,8 @@ Optional limits:
 | Field | Default | Range | Meaning |
 | --- | --- | --- | --- |
 | `memory_bytes` | 67108864 | 1–1073741824 | memory of a plugin instance whose manifest requests none |
-| `fuel` | 100000000 | 1–10000000000 | guest instructions per frame call; 100 times as many for `start` and `stop` |
-| `timeout_ms` | 20 | 1–1000 | guest time per frame call |
+| `fuel` | 100000000 | 1–10000000000 | guest instructions for the calls of one frame; 100 times as many for `start` and `stop` |
+| `timeout_ms` | 20 | 1–1000 | guest time for the calls of one frame |
 
 Unknown fields and other formats are refused.
 

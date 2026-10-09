@@ -35,11 +35,11 @@ The host keeps one **main instance** per running plugin and calls it on the game
 - `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `on-game-event` for each [event](#events) the plugin subscribed to, then `ui-event` for each player action, then `ui`.
 - `stop` before the plugin is disabled and at game exit.
 
-Each call has a time limit counted in guest time only (time spent in host calls is not counted) and a fuel limit (`host.json`, [installation](./host-installation-v1.md)): by default 20 ms for frame calls and 2 s for `start` and `stop`. Exceeding a limit traps.
+The calls of one frame — `tick`, the commands, the events, the window events, and `ui` — share one budget, and `start` and `stop` each have their own: a guest time limit, which does not count time spent in host calls, and a fuel limit (`host.json`, [installation](./host-installation-v1.md)), by default 20 ms for a frame's calls and 2 s for `start` and `stop`; and a limit on time including host calls, 2 s for a frame's calls and 30 s for `start` and `stop`, so a plugin cannot hold the game's main thread with host operations. Exceeding a limit traps. A frame in which a plugin's calls take more than 100 ms is noted in the Angelica menu.
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, event subscriptions, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -55,7 +55,7 @@ The host checks the windows before drawing them: at most 16 windows and 4096 wid
 
 ## Storage
 
-Paths are relative, use `/`, and stay inside the plugin's folder: no empty, `.`, or `..` parts, no `\ : * ? " < > |` or control characters, no Windows device names (`con`, `nul`, `com1`, …, with any extension), no trailing dot or space, at most 512 bytes and 16 parts. Links are not followed. `write` replaces a file atomically; `append` and `write` create parent directories. `read` returns at most 64 MiB; `read-range` reads at most 16 MiB from an offset. A plugin's folder holds at most 4 GiB; a write past it returns `limit-exceeded`.
+Paths are relative, use `/`, and stay inside the plugin's folder: no empty, `.`, or `..` parts, no `\ : * ? " < > |` or control characters, no Windows device names (`con`, `prn`, `aux`, `nul`, `conin$`, `conout$`, `com` and `lpt` with a digit or a superscript ¹ ² ³, with any extension), no trailing dot or space, at most 512 bytes and 16 parts. Links are not followed. `write` replaces a file atomically; `append` and `write` create parent directories. `read` returns at most 64 MiB; `read-range` reads at most 16 MiB from an offset. A plugin's folder holds at most 4 GiB; a write past it returns `limit-exceeded`.
 
 The player can open the folder from the Angelica menu, for example to give the plugin a file.
 
@@ -83,7 +83,7 @@ The host keeps at most 256 events between two frames, for all plugins together; 
 
 ## Text tables
 
-`excel-text.activate(name, path, priority)` reads a [text table](./text-table-v1.md) from the plugin's storage, validates it completely, and activates it under `name` (1–64 ASCII letters, digits, `-`, `_`), replacing the plugin's table of that name. A plugin keeps at most 8 tables active. An invalid file, or a game build that lacks the [row entries](./game-structures.md), refuses activation and keeps the previous table.
+`excel-text.activate(name, path, priority)` reads a [text table](./text-table-v1.md) from the plugin's storage, validates it completely, and activates it under `name` (1–64 ASCII letters, digits, `-`, `_`), replacing the plugin's table of that name. The host keeps active tables in memory: a table file has at most 512 MiB, a plugin keeps at most 8 tables active, and they have at most 1 GiB together; past that `activate` returns `limit-exceeded`. An invalid file, or a game build that lacks the [row entries](./game-structures.md), refuses activation and keeps the previous table.
 
 From then on, whenever the game builds a row of a sheet a table lists, the host replaces the listed cells before anything else in the game reads the row. For each sheet, a table applies only when the sheet's name, variant (rows or subrows), and text columns (index and offset, all of them) equal the table's, and the sheet's language equals the table's language (sheets without a language match any table). For each cell, the table applies only when the guard of the game's original text equals the cell's guard. Otherwise the game's text stays. Rows the game built before activation keep the text they had: a plugin that activates its tables in `start` during the game's start covers everything the game loads.
 
@@ -93,7 +93,7 @@ When several active tables list a cell, they are tried by descending `priority`,
 
 ## Replacement files
 
-`file-replacements.replace(game-path, storage-path)` reads a file from the plugin's storage, checks it against the game's original file, copies it into the host's cache, and from then on the game reads it whenever it loads `game-path`. Only formats the host can check are accepted:
+`file-replacements.replace(game-path, storage-path)` reads a file of at most 64 MiB from the plugin's storage, checks it against the game's original file, copies it into the host's cache, and from then on the game reads it whenever it loads `game-path`. Only formats the host can check are accepted:
 
 - font tables (`.fdt`): the original's file and font headers (texture size, font size, line height, ascent) and kerning stay; glyph records stay sorted and lie inside the atlas, on one of the 28 pages of the game's seven font textures;
 - textures (`.tex`): the original's 80-byte header and size stay, so only pixels change.

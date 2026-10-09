@@ -120,6 +120,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "angelica-hostile"
+version = "0.1.0"
+dependencies = [
+ "angelica-sdk",
+]
+
+[[package]]
 name = "angelica-map"
 version = "0.1.0"
 dependencies = [

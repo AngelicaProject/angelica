@@ -36,13 +36,18 @@ pub use bindings::{Plugin as Bindings, PluginPre};
 pub struct Limits {
     /// Memory of an instance when the manifest requests none.
     pub memory_bytes: u64,
-    /// Guest instructions, in fuel units, per frame callback.
+    /// Guest instructions, in fuel units, for the calls of one frame.
     pub fuel: u64,
-    /// Guest time per frame callback; time spent in host calls is not
-    /// counted.
+    /// Guest time for the calls of one frame; time spent in host calls is
+    /// not counted.
     pub call_time: Duration,
     /// Guest time for `start` and `stop`.
     pub start_time: Duration,
+    /// Time for the calls of one frame including host calls, so host
+    /// operations cannot hold the game's main thread without end.
+    pub frame_wall: Duration,
+    /// Time for `start` and `stop` including host calls.
+    pub start_wall: Duration,
     /// Guest time of a job.
     pub job_time: Duration,
 }
@@ -54,6 +59,8 @@ impl Default for Limits {
             fuel: 100_000_000,
             call_time: Duration::from_millis(20),
             start_time: Duration::from_secs(2),
+            frame_wall: Duration::from_secs(2),
+            start_wall: Duration::from_secs(30),
             job_time: Duration::from_secs(600),
         }
     }
@@ -232,11 +239,47 @@ pub enum Role {
     Job(Arc<Slot>),
 }
 
-/// The time a call may still use. Host calls are not charged.
+/// The time the calls of one budget may use: guest time, which excludes
+/// host calls, and wall time, which includes them.
 struct Budget {
+    /// When the current call began.
     started: Instant,
+    /// Host time within the current call.
     host: Duration,
+    /// Guest time of the budget's earlier calls.
+    guest_before: Duration,
+    /// Wall time of the budget's earlier calls.
+    wall_before: Duration,
     limit: Duration,
+    wall: Duration,
+}
+
+impl Budget {
+    fn new(limit: Duration, wall: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            host: Duration::ZERO,
+            guest_before: Duration::ZERO,
+            wall_before: Duration::ZERO,
+            limit,
+            wall,
+        }
+    }
+
+    fn guest(&self) -> Duration {
+        self.guest_before + self.started.elapsed().saturating_sub(self.host)
+    }
+
+    fn wall(&self) -> Duration {
+        self.wall_before + self.started.elapsed()
+    }
+}
+
+/// Which limit interrupted a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exceeded {
+    Guest,
+    Wall,
 }
 
 /// The data of one instance's store.
@@ -245,6 +288,7 @@ pub struct State {
     pub(crate) role: Role,
     limits: StoreLimits,
     budget: Budget,
+    exceeded: Option<Exceeded>,
 }
 
 /// A store with its instance's state.
@@ -263,23 +307,20 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
             context,
             role,
             limits,
-            budget: Budget {
-                started: Instant::now(),
-                host: Duration::ZERO,
-                limit: Duration::ZERO,
-            },
+            budget: Budget::new(Duration::ZERO, Duration::ZERO),
+            exceeded: None,
         },
     );
     store.limiter(|state| &mut state.limits);
-    store.epoch_deadline_callback(|context| {
-        let state = context.data();
+    store.epoch_deadline_callback(|mut context| {
+        let state = context.data_mut();
         let cancelled = matches!(&state.role, Role::Job(slot) if slot.cancelled());
-        let guest = state
-            .budget
-            .started
-            .elapsed()
-            .saturating_sub(state.budget.host);
-        if cancelled || guest > state.budget.limit {
+        if state.budget.guest() > state.budget.limit {
+            state.exceeded = Some(Exceeded::Guest);
+        } else if state.budget.wall() > state.budget.wall {
+            state.exceeded = Some(Exceeded::Wall);
+        }
+        if cancelled || state.exceeded.is_some() {
             Ok(UpdateDeadline::Interrupt)
         } else {
             Ok(UpdateDeadline::Continue(1))
@@ -288,16 +329,35 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
     store
 }
 
-/// Gives the next call `time` of guest time and `fuel` instructions.
-pub fn budget(store: &mut Store<State>, time: Duration, fuel: u64) {
+/// Starts a budget for the next calls: `time` of guest time, `wall` of
+/// time including host calls, and `fuel` instructions, shared by every call
+/// until the next budget. Wrap each call in [`call`].
+pub fn budget(store: &mut Store<State>, time: Duration, wall: Duration, fuel: u64) {
     let state = store.data_mut();
-    state.budget = Budget {
-        started: Instant::now(),
-        host: Duration::ZERO,
-        limit: time,
-    };
-    store.set_epoch_deadline(1);
+    state.budget = Budget::new(time, wall);
+    state.exceeded = None;
     let _ = store.set_fuel(fuel);
+}
+
+/// Makes one call of the guest within the current budget.
+pub fn call<T>(store: &mut Store<State>, work: impl FnOnce(&mut Store<State>) -> T) -> T {
+    let budget = &mut store.data_mut().budget;
+    budget.started = Instant::now();
+    budget.host = Duration::ZERO;
+    store.set_epoch_deadline(1);
+    let result = work(store);
+    let budget = &mut store.data_mut().budget;
+    budget.guest_before = budget.guest();
+    budget.wall_before = budget.wall();
+    budget.started = Instant::now();
+    budget.host = Duration::ZERO;
+    result
+}
+
+/// The wall time the calls of the current budget took.
+#[must_use]
+pub fn spent(store: &Store<State>) -> Duration {
+    store.data().budget.wall_before
 }
 
 impl State {
@@ -635,7 +695,7 @@ impl api::file_replacements::Host for State {
                 .game
                 .enable_file_replacements()
                 .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            let contents = state.context.storage.read_unbounded(&storage_path)?;
+            let contents = state.context.storage.read(&storage_path)?;
             services
                 .files
                 .replace(&state.context.id, &game_path, &contents, &services.data)
@@ -689,6 +749,16 @@ impl api::excel_text::Host for State {
                 .game
                 .enable_excel_text()
                 .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            let size = state.context.storage.size(&path)?;
+            if size > crate::excel_text::MAX_TABLE_SIZE {
+                return Err(Error::new(
+                    Kind::LimitExceeded,
+                    format!(
+                        "{path}: a table has at most {} bytes",
+                        crate::excel_text::MAX_TABLE_SIZE
+                    ),
+                ));
+            }
             let bytes = state.context.storage.read_unbounded(&path)?;
             let info = services
                 .excel
@@ -1094,8 +1164,11 @@ pub fn print(context: &Context, spans: &[crate::chat::Span]) -> crate::error::Re
 /// Whether a trap came from running out of time or fuel rather than a bug
 /// in the plugin.
 #[must_use]
-pub fn describe_trap(error: &wasmtime::Error) -> String {
+pub fn describe_trap(store: &Store<State>, error: &wasmtime::Error) -> String {
     match error.downcast_ref::<wasmtime::Trap>() {
+        Some(wasmtime::Trap::Interrupt) if store.data().exceeded == Some(Exceeded::Wall) => {
+            "the call spent too long in host operations".into()
+        }
         Some(wasmtime::Trap::Interrupt) => "the call ran out of time".into(),
         Some(wasmtime::Trap::OutOfFuel) => "the call ran out of fuel".into(),
         _ => format!("{error:#}"),
