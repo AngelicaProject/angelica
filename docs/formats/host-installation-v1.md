@@ -4,7 +4,7 @@ The installation folder contains `runtime.dll` and its detached release signatur
 
 ## Configuration
 
-`host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally absolute `state_directory` and `cache_directory` paths. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, `state`, and `cache` under the installation folder.
+`host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally absolute `state_directory`, `cache_directory`, and `keys_directory` paths. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, `state`, `cache`, and `keys` under the installation folder.
 
 Optional limits:
 
@@ -18,7 +18,7 @@ Unknown fields and other formats are refused.
 
 ## Authenticated file sets
 
-Map releases and plugin packages contain `files.json` and `files.json.sig`. The signature is exactly 64 raw Ed25519 bytes over the exact bytes of `files.json`, verified with the compiled release public key before the JSON is parsed:
+Map releases and plugin packages contain `files.json` and `files.json.sig`. The signature is exactly 64 raw Ed25519 bytes over the exact bytes of `files.json`, verified with the compiled release public key before the JSON is parsed; a plugin package may instead be signed with the [installation key](#installation-key):
 
 ```json
 {"format":1,"files":{"angelica.toml":"<lowercase SHA-256>","plugin.wasm":"<lowercase SHA-256>","plugin.cwasm":"<lowercase SHA-256>"}}
@@ -29,6 +29,12 @@ Each listed file is read and its SHA-256 checked; only these bytes reach the map
 `plugin.cwasm` is the component compiled by `angelica plugin compile` from the packaged `plugin.wasm`. It is native code: the signer must compile it from the source itself and never sign an artifact a plugin author supplied. The compiler version, engine settings, architecture, operating system, and CPU features must match the runtime; otherwise the package is refused, and the game never compiles a component.
 
 Paths use forward slashes and are relative. Traversal, empty parts, links, Windows device names, alternate streams, and trailing dots or spaces are refused. The file list is at most 1 MiB and 8192 files; each file at most 64 MiB, all together at most 256 MiB.
+
+## Installation key
+
+`keys/installation.key` (the secret) and `keys/installation.pub` (the public half), each 64 hexadecimal digits, sign the packages the installer makes from [plugin files](./plugin-file-v1.md) of plugins from their authors. The installer creates them on first use. The host reads only the public half and accepts it only for plugin packages, never for the runtime or the map; such a package holds `plugin.angelica` and `plugin.cwasm`, and the host also verifies the author's signature and the author bound to the plugin id in `keys/authors/`.
+
+The installation key keeps packages from being swapped or damaged; it does not protect against a program running as the same Windows user, which can sign with it and could change the game process directly anyway. The boundary is the player's account. Native code never comes from an author: the installer compiles every component itself.
 
 ## Player grants
 

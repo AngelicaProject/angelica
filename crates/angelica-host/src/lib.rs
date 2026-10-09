@@ -5,6 +5,7 @@
 // The MSVC linker reports the import library it writes for `runtime.dll`
 // on every build, in the system's language.
 #![allow(linker_messages)]
+pub mod author;
 pub mod catalog;
 pub mod chat;
 pub mod commands;

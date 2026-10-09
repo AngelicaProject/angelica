@@ -1,5 +1,6 @@
 //! The `angelica` command.
 
+mod author;
 mod compile;
 mod dev;
 mod excel;
@@ -43,6 +44,12 @@ enum PluginCommand {
     Compile(compile::CompileArgs),
     /// Create a plugin project: code, manifest, tests, and agent guidance.
     New(new::NewArgs),
+    /// Create the author key that signs plugin files, or show it.
+    Key(author::KeyArgs),
+    /// Sign a plugin into one file players install, outside the catalog.
+    Pack(author::PackArgs),
+    /// Install a plugin file into an installation: check the author, compile.
+    Install(author::InstallArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -65,6 +72,9 @@ fn main() -> ExitCode {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
         Command::Plugin(PluginCommand::New(args)) => new::run(&args),
+        Command::Plugin(PluginCommand::Key(args)) => author::key(&args),
+        Command::Plugin(PluginCommand::Pack(args)) => author::pack(&args),
+        Command::Plugin(PluginCommand::Install(args)) => author::install(&args),
         Command::Dev(command) => dev::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),

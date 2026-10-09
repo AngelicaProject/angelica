@@ -179,31 +179,19 @@ fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
             ui.label(egui::RichText::new(format!("{} {}", id, manifest.plugin.version)).weak());
         });
         ui.label(&manifest.plugin.description);
+        if manifest.origin == crate::manifest::Origin::Author {
+            let by = if manifest.plugin.authors.is_empty() {
+                "its author".to_owned()
+            } else {
+                manifest.plugin.authors.join(", ")
+            };
+            ui.label(
+                egui::RichText::new(format!("From {by}, not from the Angelica catalog")).weak(),
+            );
+        }
         let status = plugin.status();
         match &status {
-            Status::AwaitingApproval => {
-                let requests = plugin.requests();
-                if plugin.approved_before() {
-                    ui.label("This version also wants to:");
-                } else {
-                    ui.label("Not approved yet. It may:");
-                }
-                if requests.is_empty() {
-                    ui.label("  • show windows and keep files in its own folder");
-                }
-                for (class, requests) in requests {
-                    ui.strong(class.title());
-                    for request in requests {
-                        ui.label(format!("  • {}", request.permission.description()));
-                        for host in request.hosts {
-                            ui.label(format!("      {host}"));
-                        }
-                    }
-                }
-                if ui.button("Approve and enable").clicked() {
-                    host.queue(Action::Approve(id.clone()));
-                }
-            }
+            Status::AwaitingApproval => draw_approval(host, plugin, ui),
             Status::Disabled => {
                 if ui.button("Enable").clicked() {
                     host.queue(Action::Enable(id.clone()));
@@ -263,6 +251,32 @@ fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
                 });
         }
     });
+}
+
+/// What a plugin awaiting approval asks for, by class, and the approval
+/// button.
+fn draw_approval(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
+    let requests = plugin.requests();
+    if plugin.approved_before() {
+        ui.label("This version also wants to:");
+    } else {
+        ui.label("Not approved yet. It may:");
+    }
+    if requests.is_empty() {
+        ui.label("  • show windows and keep files in its own folder");
+    }
+    for (class, requests) in requests {
+        ui.strong(class.title());
+        for request in requests {
+            ui.label(format!("  • {}", request.permission.description()));
+            for host in request.hosts {
+                ui.label(format!("      {host}"));
+            }
+        }
+    }
+    if ui.button("Approve and enable").clicked() {
+        host.queue(Action::Approve(plugin.manifest.id().to_owned()));
+    }
 }
 
 struct Drawer<'a> {

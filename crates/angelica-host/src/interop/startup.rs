@@ -10,7 +10,7 @@ use crate::{
     excel_text::ExcelText,
     host::Host,
     manifest::Manifest,
-    package::FileSet,
+    package::{FileSet, Trust},
     sandbox::{Sandbox, Services},
     text_case::TextCase,
 };
@@ -113,7 +113,11 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
         Box::new(|folder: &Path| super::open_folder(folder)),
     );
-    discover_plugins(&config, &sandbox, &mut host);
+    let (trust, problem) = trust(&config, root);
+    if let Some(problem) = problem {
+        host.diagnostic(problem);
+    }
+    discover_plugins(&config, &sandbox, &trust, &mut host);
     let map_data = MapData {
         directory: config.map_directory.clone(),
         seen: None,
@@ -123,6 +127,7 @@ fn initialize() -> Result<(), String> {
     host.watch(Box::new(FolderPackages::new(
         config.plugin_directory.clone(),
         sandbox.clone(),
+        trust,
         map_data,
     )));
 
@@ -275,29 +280,38 @@ fn load_map(
 fn load_package(
     folder: &Path,
     sandbox: &Sandbox,
+    trust: &Trust,
 ) -> Result<(Manifest, wasmtime::component::Component), String> {
-    let files = FileSet::load(folder, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
-    let manifest = std::str::from_utf8(
-        files
-            .get("angelica.toml")
-            .ok_or("the package has no angelica.toml")?,
+    let package = crate::package::authenticate_plugin(folder, trust)?;
+    // SAFETY: authenticate_plugin verified every byte with the release
+    // signing key, whose packages hold compiler artifacts only from the
+    // trusted build pipeline, or with the installation key, which signs only
+    // artifacts the Angelica installer compiled on this computer from the
+    // author's component. Native code never comes from a plugin author.
+    let component =
+        unsafe { super::component::load_authenticated(&sandbox.engine, &package.artifact) }?;
+    Ok((package.manifest, component))
+}
+
+/// The keys plugin packages may be signed with; without a readable
+/// installation key, only release packages load.
+fn trust(config: &Config, root: &Path) -> (Trust, Option<String>) {
+    let keys = config
+        .keys_directory
+        .clone()
+        .unwrap_or_else(|| root.join("keys"));
+    let (installation, problem) = match crate::author::installation_key(&keys) {
+        Ok(key) => (key, None),
+        Err(error) => (None, Some(error)),
+    };
+    (
+        Trust {
+            release: RELEASE_KEY,
+            installation,
+            keys,
+        },
+        problem,
     )
-    .map_err(|e| e.to_string())?;
-    let manifest = Manifest::parse(manifest).map_err(|e| e.to_string())?;
-    if folder.file_name() != Some(std::ffi::OsStr::new(manifest.id())) {
-        return Err(format!(
-            "the folder name differs from the plugin id {}",
-            manifest.id()
-        ));
-    }
-    let artifact = files
-        .get("plugin.cwasm")
-        .ok_or("the package has no compiled component; compile it outside the game first")?;
-    // SAFETY: FileSet authenticated every byte with the release signing key.
-    // Release packages accept compiler artifacts only from the trusted build
-    // pipeline, never native code supplied by a plugin author.
-    let component = unsafe { super::component::load_authenticated(&sandbox.engine, artifact) }?;
-    Ok((manifest, component))
 }
 
 /// The folders of the plugin directory.
@@ -318,7 +332,7 @@ fn package_folders(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> 
     Ok(folders)
 }
 
-fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {
+fn discover_plugins(config: &Config, sandbox: &Sandbox, trust: &Trust, host: &mut Host) {
     let folders = match package_folders(&config.plugin_directory) {
         Ok(folders) => folders,
         Err(error) => {
@@ -327,7 +341,7 @@ fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {
         }
     };
     for folder in folders {
-        let result = load_package(&folder, sandbox)
+        let result = load_package(&folder, sandbox, trust)
             .and_then(|(manifest, component)| host.install(manifest, &component));
         if let Err(error) = result {
             host.diagnostic(format!("{}: {error}", folder.display()));
@@ -340,6 +354,7 @@ fn discover_plugins(config: &Config, sandbox: &Sandbox, host: &mut Host) {
 struct FolderPackages {
     directory: std::path::PathBuf,
     sandbox: Arc<Sandbox>,
+    trust: Trust,
     /// The signed file list of every package folder, as last seen.
     seen: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
     checked: std::time::Instant,
@@ -385,12 +400,18 @@ impl MapData {
 }
 
 impl FolderPackages {
-    fn new(directory: std::path::PathBuf, sandbox: Arc<Sandbox>, mut map: MapData) -> Self {
+    fn new(
+        directory: std::path::PathBuf,
+        sandbox: Arc<Sandbox>,
+        trust: Trust,
+        mut map: MapData,
+    ) -> Self {
         // The map and the packages present now were loaded at start.
         map.changed();
         let mut packages = Self {
             directory,
             sandbox,
+            trust,
             seen: std::collections::BTreeMap::new(),
             checked: std::time::Instant::now(),
             map,
@@ -433,7 +454,7 @@ impl crate::host::Updates for FolderPackages {
         self.look()
             .into_iter()
             .map(|folder| {
-                load_package(&folder, &self.sandbox)
+                load_package(&folder, &self.sandbox, &self.trust)
                     .map_err(|error| format!("{}: {error}", folder.display()))
             })
             .collect()

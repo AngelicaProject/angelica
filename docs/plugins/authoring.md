@@ -98,4 +98,8 @@ While the game runs, the host loads the new version within a second ([reload](..
 
 ## 6. Publish
 
-Published plugins come from the [plugin registry](https://github.com/AngelicaProject/angelica-registry): it records which source commit of a plugin is published and the build that produced it, compiles the component outside the game with `angelica plugin compile`, and signs the result. Before submitting, bump `plugin.version`, make sure `plugin.description` tells the player what the plugin does, and that the manifest declares only the permissions and hosts the plugin uses.
+There are two ways to players.
+
+**From you, by a file.** `angelica plugin pack --component target/wasm32-wasip2/release/<crate>.wasm` signs the plugin into one file, `<id>-<version>.angelica`, with your author key; the first run creates the key in `%APPDATA%/Angelica/author.key`. Keep the key: it is the plugin's identity, and installations accept new versions only with the same key. Put the file wherever players get it; `angelica plugin install <file> --installation <installation>` installs it ([plugin file](../formats/plugin-file-v1.md)). Players see that the plugin comes from you and not from the Angelica catalog, and approve its permissions as for any plugin.
+
+**From the Angelica catalog.** Catalog plugins come from the [plugin registry](https://github.com/AngelicaProject/angelica-registry): it records which source commit of a plugin is published and the build that produced it, compiles the component outside the game with `angelica plugin compile`, and signs the result. Before submitting, bump `plugin.version`, make sure `plugin.description` tells the player what the plugin does, and that the manifest declares only the permissions and hosts the plugin uses.

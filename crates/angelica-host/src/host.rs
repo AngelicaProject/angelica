@@ -284,10 +284,18 @@ impl Host {
     /// waits for approval. Called on the main thread.
     ///
     /// # Errors
-    /// As [`Host::install`] for the new package.
+    /// As [`Host::install`] for the new package; a package from the
+    /// catalog in place of one from its author, or the reverse.
     pub fn replace(&self, manifest: Manifest, component: &Component) -> Result<(), String> {
         let id = manifest.id().to_owned();
         let version = manifest.plugin.version.clone();
+        if let Some(old) = self.plugin(&id)
+            && old.manifest.origin != manifest.origin
+        {
+            return Err(format!(
+                "{id}: the new package comes from elsewhere than the installed one"
+            ));
+        }
         let fresh = self.create(manifest, component)?;
         if let Some(old) = self.plugin(&id)
             && old.status() == Status::Running

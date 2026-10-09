@@ -16,6 +16,8 @@ pub struct Config {
     pub state_directory: Option<PathBuf>,
     #[serde(default)]
     pub cache_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub keys_directory: Option<PathBuf>,
     #[serde(default = "memory_default")]
     pub memory_bytes: u64,
     #[serde(default = "fuel_default")]
@@ -51,6 +53,7 @@ impl Config {
                 log_directory: root.join("logs"),
                 state_directory: None,
                 cache_directory: None,
+                keys_directory: None,
                 memory_bytes: memory_default(),
                 fuel: fuel_default(),
                 timeout_ms: time_default(),
@@ -58,9 +61,13 @@ impl Config {
             Err(e) => return Err(format!("host.json: {e}")),
         };
         if config.format != 1
-            || [&config.state_directory, &config.cache_directory]
-                .iter()
-                .any(|path| path.as_ref().is_some_and(|path| !path.is_absolute()))
+            || [
+                &config.state_directory,
+                &config.cache_directory,
+                &config.keys_directory,
+            ]
+            .iter()
+            .any(|path| path.as_ref().is_some_and(|path| !path.is_absolute()))
             || [
                 &config.map_directory,
                 &config.plugin_directory,

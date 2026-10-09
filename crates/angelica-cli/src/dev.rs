@@ -100,7 +100,7 @@ fn key(args: &KeyArgs) -> Result<serde_json::Value, String> {
     )
 }
 
-fn read_key(path: &Path) -> Result<SigningKey, String> {
+pub(crate) fn read_key(path: &Path) -> Result<SigningKey, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let text = text.trim();
     if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -117,7 +117,7 @@ fn read_key(path: &Path) -> Result<SigningKey, String> {
     Ok(SigningKey::from_bytes(&secret))
 }
 
-fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -128,7 +128,7 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Writes `files` and a signed `files.json` into `folder`, replacing it.
-fn package(
+pub(crate) fn package(
     folder: &Path,
     files: &BTreeMap<String, Vec<u8>>,
     key: &SigningKey,

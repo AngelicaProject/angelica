@@ -29,18 +29,35 @@ impl FileSet {
         directory: &Path,
         public_key: Option<&[u8; 32]>,
     ) -> Result<BTreeMap<String, Vec<u8>>, PackageError> {
-        let key = VerifyingKey::from_bytes(
-            public_key.ok_or_else(|| PackageError("no compiled release key".into()))?,
-        )
-        .map_err(|e| PackageError(e.to_string()))?;
+        let keys: Vec<[u8; 32]> = public_key.copied().into_iter().collect();
+        Self::load_by(directory, &keys).map(|(_, files)| files)
+    }
+
+    /// As [`FileSet::load`], with the first of `keys` whose signature
+    /// verifies; returns its index.
+    ///
+    /// # Errors
+    /// As [`FileSet::load`]; a file list none of the keys signed.
+    pub fn load_by(
+        directory: &Path,
+        keys: &[[u8; 32]],
+    ) -> Result<(usize, BTreeMap<String, Vec<u8>>), PackageError> {
+        if keys.is_empty() {
+            return Err(PackageError("no compiled release key".into()));
+        }
         let manifest = read_limited(&directory.join("files.json"), 1024 * 1024)
             .map_err(|e| PackageError(format!("files.json: {e}")))?;
         let signature = read_limited(&directory.join("files.json.sig"), 64)
             .map_err(|e| PackageError(format!("files.json.sig: {e}")))?;
         let signature =
             Signature::from_slice(&signature).map_err(|e| PackageError(e.to_string()))?;
-        key.verify_strict(&manifest, &signature)
-            .map_err(|_| PackageError("files.json signature failed".into()))?;
+        let signer = keys
+            .iter()
+            .position(|key| {
+                VerifyingKey::from_bytes(key)
+                    .is_ok_and(|key| key.verify_strict(&manifest, &signature).is_ok())
+            })
+            .ok_or_else(|| PackageError("files.json signature failed".into()))?;
         let set: Self =
             serde_json::from_slice(&manifest).map_err(|e| PackageError(e.to_string()))?;
         if set.format != 1 || set.files.is_empty() || set.files.len() > 8192 {
@@ -75,7 +92,7 @@ impl FileSet {
             }
             bytes.insert(name, content);
         }
-        Ok(bytes)
+        Ok((signer, bytes))
     }
 }
 
@@ -122,4 +139,87 @@ pub fn hex(bytes: &[u8]) -> String {
             output
         },
     )
+}
+
+/// The keys plugin packages may be signed with.
+#[derive(Debug, Clone, Default)]
+pub struct Trust {
+    /// The release key compiled into the host: packages of the official
+    /// catalog.
+    pub release: Option<[u8; 32]>,
+    /// The installation's key: packages the installer made on this
+    /// computer from plugin files signed by their authors.
+    pub installation: Option<[u8; 32]>,
+    /// The installation's keys folder, with the authors plugins are bound to.
+    pub keys: std::path::PathBuf,
+}
+
+/// A plugin package whose every byte is authenticated.
+#[derive(Debug)]
+pub struct PluginPackage {
+    pub manifest: crate::manifest::Manifest,
+    /// The compiled component, `plugin.cwasm`.
+    pub artifact: Vec<u8>,
+}
+
+/// Authenticates the plugin package in `folder`: a package signed with the
+/// release key, or one signed with the installation key that holds the
+/// author's plugin file, whose author is the one the plugin is bound to.
+///
+/// # Errors
+/// A signature or hash that does not verify, a missing or unexpected file,
+/// a malformed manifest, a folder not named by the plugin id, and an author
+/// other than the bound one.
+pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage, String> {
+    use crate::manifest::{Manifest, Origin};
+    let keys: Vec<[u8; 32]> = trust
+        .release
+        .iter()
+        .chain(&trust.installation)
+        .copied()
+        .collect();
+    let (signer, mut files) = FileSet::load_by(folder, &keys).map_err(|e| e.to_string())?;
+    let from_author = trust.release != Some(keys[signer]);
+    let (manifest, origin) = if from_author {
+        if files.len() != 2 {
+            return Err("a package from its author holds plugin.angelica and plugin.cwasm".into());
+        }
+        let file = files
+            .remove("plugin.angelica")
+            .ok_or("the package has no plugin.angelica")?;
+        let file = crate::author::open(&file)?;
+        let manifest = String::from_utf8(file.manifest).map_err(|e| e.to_string())?;
+        let manifest = Manifest::parse(&manifest).map_err(|e| e.to_string())?;
+        let pin = crate::author::Pin::read(&trust.keys, manifest.id())?;
+        if !pin.is_some_and(|pin| pin.names(&file.author)) {
+            return Err(format!(
+                "{} is signed by another author than the one it was installed from",
+                manifest.id()
+            ));
+        }
+        (manifest, Origin::Author)
+    } else {
+        let manifest = std::str::from_utf8(
+            files
+                .get("angelica.toml")
+                .ok_or("the package has no angelica.toml")?,
+        )
+        .map_err(|e| e.to_string())?;
+        (
+            Manifest::parse(manifest).map_err(|e| e.to_string())?,
+            Origin::Catalog,
+        )
+    };
+    let mut manifest = manifest;
+    manifest.origin = origin;
+    if folder.file_name() != Some(std::ffi::OsStr::new(manifest.id())) {
+        return Err(format!(
+            "the folder name differs from the plugin id {}",
+            manifest.id()
+        ));
+    }
+    let artifact = files
+        .remove("plugin.cwasm")
+        .ok_or("the package has no compiled component; compile it outside the game first")?;
+    Ok(PluginPackage { manifest, artifact })
 }

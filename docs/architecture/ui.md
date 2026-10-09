@@ -17,7 +17,7 @@ When rendering runs outside the startup thread, a registered Windows message sch
 The Angelica menu lists:
 
 - the game map for the running build: whether a signed build record verified it, and every absent entry with the reason;
-- each installed plugin: name, id, version, description, and state. A plugin awaiting approval shows its permissions in plain words, grouped by [class](./permissions.md), and an approval button; a new version of an approved plugin shows only what it adds. An approved plugin has Enable or Disable, Open (which sends the plugin `open-requested`), Open plugin folder, and its recent log. A faulted plugin shows the reason, Retry, and Keep disabled;
+- each installed plugin: name, id, version, description, and state. A plugin from its author, outside the catalog, says so. A plugin awaiting approval shows its permissions in plain words, grouped by [class](./permissions.md), and an approval button; a new version of an approved plugin shows only what it adds. An approved plugin has Enable or Disable, Open (which sends the plugin `open-requested`), Open plugin folder, and its recent log. A faulted plugin shows the reason, Retry, and Keep disabled;
 - recent host diagnostics.
 
 Enabling, disabling, approving, and retrying apply in the current session, on the main thread at the next frame.

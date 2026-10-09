@@ -4,7 +4,7 @@
 
 A plugin is a WebAssembly component of the `plugin` world in [`wit/`](../../wit), the [plugin API](../formats/plugin-api-v1.md). The host runs it with wasmtime. Any language that builds a component can be used; the SDK and documentation target Rust (`wasm32-wasip2`).
 
-The release pipeline compiles each component outside the game with `angelica plugin compile` and signs the source and the compiled artifact together ([installation](../formats/host-installation-v1.md)). The host loads only authenticated artifacts and never compiles in the game.
+The release pipeline compiles each component outside the game with `angelica plugin compile` and signs the source and the compiled artifact together ([installation](../formats/host-installation-v1.md)). A plugin from its author, outside the catalog, comes as a [plugin file](../formats/plugin-file-v1.md) signed with the author's key; the installer compiles it on the player's computer and signs the package with the installation's key. The host loads only authenticated artifacts and never compiles in the game.
 
 ## Isolation
 
@@ -24,7 +24,7 @@ Hot paths never call a plugin. Work the game does for every row, string, or file
 
 ## Lifecycle
 
-1. **Discovery.** At startup the host reads each authenticated package in `plugins/`, parses its manifest, loads its compiled component, and links the host's imports. A package that fails is listed with the reason.
+1. **Discovery.** At startup the host reads each authenticated package in `plugins/`, parses its manifest, loads its compiled component, and links the host's imports. A package that fails is listed with the reason. A plugin from its author is marked as such in the menu; a new version must come from the same place as the installed one.
 2. **Approval.** A package without a grant covering its permissions waits in the Angelica menu, which lists its permissions. Approving writes the grant and starts the plugin.
 3. **Start.** Approved and enabled plugins start before the game's own code runs, so rules they activate in `start` apply to everything the game loads. A plugin enabled later starts at once; `runtime.started-with-game` tells the two apart.
 4. **Running.** Every frame: `tick`, the plugin's commands the player ran, the game events it subscribed to, pending window events, `ui`.

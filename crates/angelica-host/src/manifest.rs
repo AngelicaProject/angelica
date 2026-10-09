@@ -179,6 +179,20 @@ pub struct Manifest {
     http: Option<Http>,
     #[serde(skip)]
     pub declared: BTreeSet<Permission>,
+    /// Where the package came from; the loader sets it, the file has none.
+    #[serde(skip)]
+    pub origin: Origin,
+}
+
+/// Where a plugin's package came from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Origin {
+    /// The official catalog, signed with the release key.
+    #[default]
+    Catalog,
+    /// Its author, outside the catalog: a plugin file the player installed,
+    /// compiled and signed on the player's computer.
+    Author,
 }
 
 #[derive(Debug, thiserror::Error)]
