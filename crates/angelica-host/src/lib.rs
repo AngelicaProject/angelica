@@ -7,6 +7,7 @@ pub mod chat;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod events;
 pub mod excel_text;
 pub mod file_formats;
 pub mod file_replacements;

@@ -40,6 +40,7 @@ pub mod bindings {
 
 pub mod chat;
 pub mod commands;
+pub mod events;
 pub mod excel;
 pub mod state;
 pub mod ui;
@@ -47,8 +48,8 @@ pub mod ui;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        chat, commands, excel, excel_text, file_replacements, game_files, http, jobs, runtime,
-        state, storage, text_case, types,
+        chat, commands, events, excel, excel_text, file_replacements, game_files, http, jobs,
+        runtime, state, storage, text_case, types,
     };
 }
 
@@ -85,6 +86,9 @@ pub trait Plugin: Sized + 'static {
     fn command(&mut self, _invocation: commands::Invocation) -> Result<(), String> {
         Ok(())
     }
+
+    /// An event the plugin subscribed to (see [`events`]).
+    fn game_event(&mut self, _event: events::GameEvent) {}
 
     /// Called before the plugin is disabled.
     fn stop(&mut self) {}
@@ -169,6 +173,10 @@ macro_rules! plugin {
                     with(::std::result::Result::Ok(()), |plugin| {
                         $crate::Plugin::command(plugin, invocation)
                     })
+                }
+
+                fn on_game_event(event: $crate::events::GameEvent) {
+                    with((), |plugin| $crate::Plugin::game_event(plugin, event));
                 }
 
                 fn run_job(

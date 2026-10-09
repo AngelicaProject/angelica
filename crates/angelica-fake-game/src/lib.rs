@@ -97,6 +97,14 @@ impl Game for ScriptedGame {
         }
     }
 
+    fn enable_chat_messages(&self) -> Result<(), String> {
+        if self.chat_available.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err("map entry ui.log_module.print_message is absent".into())
+        }
+    }
+
     fn read_state(
         &self,
         table: &runtime::state::TablePlan,
@@ -228,6 +236,7 @@ impl TestHost {
             chat: Arc::new(runtime::chat::Chat::default()),
             sheets: Arc::new(runtime::sheets::Sheets::default()),
             state: Arc::new(runtime::state::StateTables::default()),
+            events: Arc::new(runtime::events::Events::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
         });
@@ -280,6 +289,23 @@ impl TestHost {
         for _ in 0..count {
             self.host.frame(1.0 / 60.0);
         }
+    }
+
+    /// The game adds a message to the chat log: plugins that subscribed
+    /// receive it in the next frame, which this runs.
+    pub fn chat_message(&self, info: u16, sender: &str, message: &str) {
+        let events = &self.services().events;
+        if events.wanted(runtime::events::EventKind::ChatMessage) {
+            events.push(runtime::events::GameEvent::ChatMessage(
+                runtime::events::ChatMessage {
+                    info,
+                    sender: sender.as_bytes().to_vec(),
+                    message: message.as_bytes().to_vec(),
+                    timestamp: 1_800_000_000,
+                },
+            ));
+        }
+        self.host.frame(1.0 / 60.0);
     }
 
     /// Defines a state table of `domain` with `fields`, present in the

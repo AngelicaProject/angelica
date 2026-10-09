@@ -399,6 +399,7 @@ impl Host {
         self.services.files.remove_plugin(id);
         self.services.commands.remove_plugin(id);
         self.services.chat.remove_plugin(id);
+        self.services.events.remove_plugin(id);
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -483,8 +484,9 @@ impl Host {
             .iter()
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
+        let game_events = self.services.events.take();
         for plugin in self.plugins.values() {
-            self.frame_plugin(plugin, elapsed, &commands, &events);
+            self.frame_plugin(plugin, elapsed, &commands, &game_events, &events);
         }
     }
 
@@ -493,6 +495,7 @@ impl Host {
         plugin: &Arc<Plugin>,
         elapsed: f64,
         commands: &[(String, Outcome)],
+        game_events: &(Vec<crate::events::GameEvent>, u32),
         events: &[(String, Event)],
     ) {
         let id = plugin.manifest.id();
@@ -531,6 +534,32 @@ impl Host {
                     Err(trap) => {
                         return Some(format!(
                             "command trapped: {}",
+                            sandbox::describe_trap(&trap)
+                        ));
+                    }
+                }
+            }
+            let subscribed = self.services.events.subscribed(id);
+            if !subscribed.is_empty() {
+                let (delivered, dropped) = game_events;
+                let mut calls: Vec<_> = Vec::new();
+                if *dropped > 0 {
+                    calls.push(
+                        sandbox::bindings::angelica::plugin::events::GameEvent::Dropped(*dropped),
+                    );
+                }
+                calls.extend(
+                    delivered
+                        .iter()
+                        .filter(|event| subscribed.contains(&event.kind()))
+                        .cloned()
+                        .map(sandbox::event_to_api),
+                );
+                for event in &calls {
+                    sandbox::budget(store, self.limits.call_time, self.limits.fuel);
+                    if let Err(trap) = guest.call_on_game_event(&mut *store, event) {
+                        return Some(format!(
+                            "on-game-event trapped: {}",
                             sandbox::describe_trap(&trap)
                         ));
                     }

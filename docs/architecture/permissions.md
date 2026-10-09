@@ -12,6 +12,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | Adds its own chat commands |
 | `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | Prints its messages in your chat log |
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the public hosts the manifest lists in `http.hosts` | Downloads from these internet hosts, followed by the list |
+| `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | Reads the messages in your chat log, including other players' |
 | `state.self` | reading the [game state](../formats/plugin-api-v1.md#game-state) of the `self` domain: the player's character and where the player is | Reads your character: name, class, level, HP and MP, position, and zone |
 
 Permissions follow game domains and are as narrow as the domain allows: reading a domain's state, receiving its events, and each kind of operation on it are separate permissions. Automation is the use of operations, so each kind of action a plugin may take for the player is its own permission, shown to the player in plain words.

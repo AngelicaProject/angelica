@@ -1,14 +1,22 @@
 //! Plugin commands and messages in the game's chat
 //! (`docs/formats/game-structures.md`). The command detour hands a line
 //! whose first word is a plugin's command to the host instead of the game;
-//! printing builds the game's strings and adds them to the chat log.
+//! printing builds the game's strings and adds them to the chat log; the
+//! message detour reports what the log receives to the host's events.
 use super::entries::{Entries, Function};
-use crate::{catalog::Catalog, commands::Commands};
+use crate::{
+    catalog::Catalog,
+    commands::Commands,
+    events::{ChatMessage, EventKind, Events, GameEvent},
+};
 use angelica_hook::Detour;
 use angelica_map::ValueKind::{I32, I64, Ptr, U8, U16, U32, U64, Void};
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    cell::Cell,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 const EXECUTE: &str = "shell.command_module.execute_command_inner";
@@ -108,6 +116,125 @@ impl Lines {
     }
 }
 
+const PRINT_MESSAGE: &str = "ui.log_module.print_message";
+
+thread_local! {
+    /// True while the host prints a plugin's message, which is not reported.
+    static OWN_MESSAGE: Cell<bool> = const { Cell::new(false) };
+}
+
+struct Messages {
+    events: Arc<Events>,
+    string: usize,
+    used: usize,
+}
+
+static MESSAGES: OnceLock<Messages> = OnceLock::new();
+static PRINT_ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+
+/// Installs the message detour once.
+pub fn install_messages(catalog: &Catalog, base: usize, events: Arc<Events>) -> Result<(), String> {
+    if MESSAGES.get().is_some() {
+        return Ok(());
+    }
+    let entries = Entries { catalog, base };
+    let messages = Messages {
+        events,
+        string: entries.field("text.utf8_string.string_ptr", Ptr)?,
+        used: entries.field("text.utf8_string.used_size", I64)?,
+    };
+    let function = entries.function(PRINT_MESSAGE, &[Ptr, U16, Ptr, Ptr, I32, U8], U32)?;
+    // SAFETY: the map verified this address as the start of a function with
+    // this ABI in the executable's code; the replacement has the same ABI.
+    let mut detour = unsafe {
+        Detour::new(
+            function.address,
+            print_message as PrintMessage as usize,
+            function.length,
+        )
+    }
+    .map_err(|e| format!("message detour: {e}"))?;
+    PRINT_ORIGINAL.store(detour.trampoline(), Ordering::Release);
+    if MESSAGES.set(messages).is_err() {
+        return Ok(());
+    }
+    // SAFETY: the adapter and the trampoline are published; nothing else in
+    // this process changes these bytes meanwhile.
+    unsafe { detour.enable() }.map_err(|e| format!("message detour: {e}"))?;
+    // Installed until the process exits; without subscribers it only passes
+    // messages on.
+    std::mem::forget(detour);
+    Ok(())
+}
+
+unsafe extern "system" fn print_message(
+    log: usize,
+    info: u16,
+    sender: usize,
+    message: usize,
+    timestamp: i32,
+    silent: u8,
+) -> u32 {
+    if !OWN_MESSAGE.with(Cell::get)
+        && let Some(messages) = MESSAGES.get()
+    {
+        super::guard((), || messages.record(info, sender, message, timestamp));
+    }
+    // SAFETY: the trampoline runs the game's function with its own ABI and
+    // the game's arguments.
+    unsafe {
+        std::mem::transmute::<usize, PrintMessage>(PRINT_ORIGINAL.load(Ordering::Acquire))(
+            log, info, sender, message, timestamp, silent,
+        )
+    }
+}
+
+impl Messages {
+    /// The bytes of a game string the game passed, without terminator; empty
+    /// for none.
+    fn text(&self, string: usize) -> Vec<u8> {
+        if string == 0 {
+            return Vec::new();
+        }
+        // SAFETY: the game passes zero or a live Utf8String; its bytes are
+        // read within the used size the string records, which counts the
+        // terminator.
+        unsafe {
+            let bytes = std::ptr::read_unaligned((string + self.string) as *const usize);
+            let used = std::ptr::read_unaligned((string + self.used) as *const i64);
+            if bytes == 0 || used < 2 {
+                return Vec::new();
+            }
+            let length = usize::try_from(used - 1)
+                .unwrap_or(0)
+                .min(crate::events::MAX_TEXT);
+            crate::events::text(std::slice::from_raw_parts(bytes as *const u8, length))
+        }
+    }
+
+    fn record(&self, info: u16, sender: usize, message: usize, timestamp: i32) {
+        if !self.events.wanted(EventKind::ChatMessage) {
+            return;
+        }
+        let timestamp = u32::try_from(timestamp)
+            .ok()
+            .filter(|&seconds| seconds > 0)
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| {
+                        u32::try_from(elapsed.as_secs()).unwrap_or(u32::MAX)
+                    })
+            });
+        self.events.push(GameEvent::ChatMessage(ChatMessage {
+            info,
+            sender: self.text(sender),
+            message: self.text(message),
+            timestamp,
+        }));
+    }
+}
+
 /// The functions that print to the chat log.
 struct Printer {
     framework: usize,
@@ -190,9 +317,11 @@ impl Printer {
             let text = text.as_mut_ptr() as usize;
             construct(sender, [0u8].as_ptr() as usize, 0);
             construct(text, message.as_ptr() as usize, message.len() as u64);
+            OWN_MESSAGE.with(|own| own.set(true));
             std::mem::transmute::<usize, PrintMessage>(self.print_message)(
                 log, ECHO, sender, text, 0, 0,
             );
+            OWN_MESSAGE.with(|own| own.set(false));
             destroy(text);
             destroy(sender);
         }

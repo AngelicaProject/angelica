@@ -21,6 +21,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `chat` | messages in the player's chat log | `chat.print` |
 | `http` | HTTPS GET requests to the hosts the manifest lists | `http.get` |
 | `state` | game state as the game map's tables: the player's character | `state.<domain>`: `state.self` |
+| `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -31,14 +32,14 @@ Every fallible call returns `types.error`: a stable `kind` for programs and a `m
 The host keeps one **main instance** per running plugin and calls it on the game's main thread:
 
 - `start` once when the plugin is enabled. An error disables the plugin and is shown in the Angelica menu. During the game's own start, before any game code runs, `runtime.started-with-game` is true; a plugin enabled later sees a game that has already loaded data.
-- `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `ui-event` for each player action, then `ui`.
+- `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `on-game-event` for each [event](#events) the plugin subscribed to, then `ui-event` for each player action, then `ui`.
 - `stop` before the plugin is disabled and at game exit.
 
 Each call has a time limit counted in guest time only (time spent in host calls is not counted) and a fuel limit (`host.json`, [installation](./host-installation-v1.md)): by default 20 ms for frame calls and 2 s for `start` and `stop`. Exceeding a limit traps.
 
-A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
+A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, event subscriptions, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; at most four jobs of a plugin run at once. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -71,6 +72,14 @@ Both read the original files: never another plugin's text tables or replaced fil
 Names keep their meaning across game patches: the map resolves them for each build. A field whose map entries are absent in the running build returns `unavailable` until the map catches up; an unknown table or field returns `not-found`. `tables` lists every table with its fields and whether each is present, so a plugin can check before it reads.
 
 Every table belongs to a domain, and reading it requires the domain's permission: `state.self` for the player's character and where the player is. Reads happen in the main instance, on the game's main thread between frames; jobs get `wrong-context`. Reading never changes the game.
+
+## Events
+
+`events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.
+
+- `chat-message` (`chat.read`): a message the game added to the chat log, whatever the channel, with its kind (a row of the LogKind sheet), the game's full log information, the sender's name and the message as game text of at most 8192 bytes each, and the time in seconds since 1970. Messages printed by Angelica's plugins are not delivered, so a plugin that answers messages never hears itself.
+
+The host keeps at most 256 events between two frames, for all plugins together; when more arrive, every subscribed plugin first receives `dropped` with how many were left out. A subscription ends when the plugin stops. Subscribing to a kind whose map entries the game build lacks returns `unavailable`.
 
 ## Text tables
 

@@ -42,6 +42,14 @@ pub trait Game: Send + Sync {
     /// does not exist yet.
     fn print(&self, message: &[u8]) -> Result<(), String>;
 
+    /// Makes the game's chat log report the messages added to it to
+    /// [`crate::events::Events`]. Called on every subscription; installs its
+    /// hook once.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks.
+    fn enable_chat_messages(&self) -> Result<(), String>;
+
     /// The rows of a state table with the values of `fields` (named
     /// `names`), read from the game's memory. On the main thread only.
     fn read_state(

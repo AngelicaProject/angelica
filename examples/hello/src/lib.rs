@@ -1,14 +1,16 @@
 //! An example plugin that uses every interface of the plugin API: a window
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
-//! commands that print in the chat log, HTTPS requests from a job, and the
-//! player's character from the game's state. The host's integration tests drive
+//! commands that print in the chat log, HTTPS requests from a job, the
+//! player's character from the game's state, and the chat log's messages
+//! as events. The host's integration tests drive
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
     api::{excel_text, file_replacements, game_files, http, jobs, runtime, storage, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
+    events::{self, EventKind, GameEvent},
     excel, state,
     text::{
         guard,
@@ -29,6 +31,8 @@ struct Hello {
     job: Option<u64>,
     progress: f32,
     message: String,
+    /// The last message the chat log received, as `sender: text`.
+    heard: Option<String>,
 }
 
 impl Hello {
@@ -102,6 +106,13 @@ impl Hello {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the character: {error}")),
             },
+            "heard" => {
+                let heard = self.heard.clone();
+                self.say(heard.map_or_else(
+                    || "nothing heard yet".into(),
+                    |line| format!("heard {line}"),
+                ));
+            }
             "statuses" => match statuses() {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the statuses: {error}")),
@@ -291,7 +302,11 @@ impl Plugin for Hello {
             job: None,
             progress: 0.0,
             message: String::new(),
+            heard: None,
         };
+        if let Err(error) = events::subscribe(&[EventKind::ChatMessage]) {
+            hello.say(format!("events refused: {}", error.message));
+        }
         if let Err(error) = angelica_sdk::commands::define(&[commands()]) {
             hello.say(format!("commands refused: {}", error.message));
         }
@@ -356,6 +371,7 @@ impl Plugin for Hello {
                             .button("read", "Read game data")
                             .button("where", "Who am I")
                             .button("statuses", "My statuses")
+                            .button("heard", "Last chat message")
                             .button("texture", "Replace a texture")
                     })
                 })
@@ -372,6 +388,17 @@ impl Plugin for Hello {
             Event::Toggled(toggled) => self.shout = toggled.checked,
             Event::Edited(edited) => self.name = edited.value,
             Event::Chosen(chosen) => self.color = Some(chosen.index),
+        }
+    }
+
+    fn game_event(&mut self, event: GameEvent) {
+        if let GameEvent::ChatMessage(message) = event {
+            self.heard = Some(format!(
+                "{} ({}): {}",
+                String::from_utf8_lossy(&message.sender),
+                message.kind,
+                String::from_utf8_lossy(&message.message)
+            ));
         }
     }
 

@@ -669,3 +669,24 @@ fn list_tables_give_one_row_per_element() {
     click(&test, "statuses");
     assert_eq!(message(&test), "statuses: 48 (1800s), 1199");
 }
+
+#[test]
+fn chat_messages_arrive_in_the_next_frame_under_their_permission() {
+    let test = approved(MANIFEST);
+    click(&test, "heard");
+    assert_eq!(message(&test), "nothing heard yet");
+    test.chat_message(10, "Alphinaud", "Well met!");
+    test.chat_message(13, "Alisaie", "Hmph.");
+    click(&test, "heard");
+    assert_eq!(message(&test), "heard Alisaie (13): Hmph.");
+
+    let without = without_permissions(&["chat.read"]);
+    let test = with_commands(&without, |_| {});
+    assert_eq!(
+        message(&test),
+        "events refused: the plugin does not hold chat.read"
+    );
+    test.chat_message(10, "Alphinaud", "Well met!");
+    click(&test, "heard");
+    assert_eq!(message(&test), "nothing heard yet");
+}

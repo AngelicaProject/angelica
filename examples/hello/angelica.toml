@@ -16,6 +16,7 @@ authors = ["AngelicaProject contributors"]
 "chat.print" = true
 "http.get" = true
 "state.self" = true
+"chat.read" = true
 
 [http]
 hosts = ["example.com"]

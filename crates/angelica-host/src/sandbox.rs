@@ -150,6 +150,8 @@ pub struct Services {
     pub sheets: Arc<crate::sheets::Sheets>,
     /// State tables from the game map.
     pub state: Arc<crate::state::StateTables>,
+    /// Events for the next frame and the plugins' subscriptions.
+    pub events: Arc<crate::events::Events>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -992,6 +994,50 @@ impl api::state::Host for State {
                     .collect()
             })
             .collect())
+    }
+}
+
+impl api::events::Host for State {
+    fn subscribe(&mut self, kinds: Vec<api::events::EventKind>) -> ApiResult<()> {
+        use crate::events::EventKind;
+        api(self.main_only())?;
+        let kinds: BTreeSet<EventKind> = kinds
+            .into_iter()
+            .map(|kind| match kind {
+                api::events::EventKind::ChatMessage => EventKind::ChatMessage,
+            })
+            .collect();
+        for kind in &kinds {
+            api(self.permitted(kind.permission()))?;
+        }
+        self.host(|state| {
+            let services = &state.context.services;
+            if kinds.contains(&EventKind::ChatMessage) {
+                services
+                    .game
+                    .enable_chat_messages()
+                    .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            }
+            services.events.subscribe(&state.context.id, kinds);
+            Ok::<_, Error>(())
+        })
+        .map_err(Into::into)
+    }
+}
+
+/// An event as the guest's `game-event` export takes it.
+#[must_use]
+pub fn event_to_api(event: crate::events::GameEvent) -> api::events::GameEvent {
+    match event {
+        crate::events::GameEvent::ChatMessage(message) => {
+            api::events::GameEvent::ChatMessage(api::events::ChatMessage {
+                kind: message.info & 0x7F,
+                info: message.info,
+                sender: message.sender,
+                message: message.message,
+                timestamp: message.timestamp,
+            })
+        }
     }
 }
 

@@ -35,6 +35,9 @@ pub enum Permission {
     /// Read the state of the player's character.
     #[serde(rename = "state.self")]
     StateSelf,
+    /// Receive the messages added to the chat log.
+    #[serde(rename = "chat.read")]
+    ChatRead,
 }
 
 impl Permission {
@@ -48,6 +51,7 @@ impl Permission {
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
             Self::StateSelf => "state.self",
+            Self::ChatRead => "chat.read",
         }
     }
 
@@ -64,6 +68,7 @@ impl Permission {
             Self::StateSelf => {
                 "Reads your character: name, class, level, HP and MP, position, and zone"
             }
+            Self::ChatRead => "Reads the messages in your chat log, including other players'",
         }
     }
 }

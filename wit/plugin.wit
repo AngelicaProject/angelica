@@ -5,6 +5,7 @@ package angelica:plugin@1.0.0;
 interface guest {
     use ui.{window, event};
     use commands.{invocation};
+    use events.{game-event};
 
     /// Called once when the plugin is enabled. An error disables it and is
     /// shown in the Angelica menu.
@@ -28,6 +29,10 @@ interface guest {
     /// is printed in the chat log as the plugin's message.
     command: func(invocation: invocation) -> result<_, string>;
 
+    /// An event the plugin subscribed to; see the `events` interface.
+    /// Called after the plugin's commands of the frame.
+    on-game-event: func(event: game-event);
+
     /// Runs a job that `jobs.start` started; see the `jobs` interface.
     run-job: func(name: string, input: list<u8>) -> result<list<u8>, string>;
 }
@@ -45,5 +50,6 @@ world plugin {
     import chat;
     import http;
     import state;
+    import events;
     export guest;
 }
