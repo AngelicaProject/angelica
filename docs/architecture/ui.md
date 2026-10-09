@@ -8,7 +8,7 @@ The overlay chains with other tools that draw over the game; it does not assume 
 
 Bootstrap device creation requests the swap chain, device, feature level, and immediate context together. Graphics interposers can interpret a missing device output as a capability probe and omit swap-chain creation. Incomplete outputs fail initialization and release the bootstrap window; the host log distinguishes installed hooks from attachment to a rendering swap chain.
 
-`Insert` toggles visibility. Mouse and keyboard messages are consumed only while egui requests them; hidden or disabled overlays release capture. Rendering uses a private deferred context and executes its command list with immediate-context state restoration. No back-buffer references survive a completed frame; resizing drops frame resources before forwarding to the original function.
+`Insert` toggles visibility. In text fields, Ctrl+V pastes text from the Windows clipboard and Ctrl+C and Ctrl+X copy and cut to it. Mouse and keyboard messages are consumed only while egui requests them; hidden or disabled overlays release capture. Rendering uses a private deferred context and executes its command list with immediate-context state restoration. No back-buffer references survive a completed frame; resizing drops frame resources before forwarding to the original function.
 
 When rendering runs outside the startup thread, a registered Windows message schedules ticks and UI events on the window thread. Main callbacks run only if it matches the startup thread. The renderer uses cached window descriptions. A mismatch disables the overlay with a diagnostic.
 

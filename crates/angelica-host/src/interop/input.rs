@@ -62,6 +62,21 @@ impl Input {
         Ok(())
     }
 
+    /// Copy, cut, or paste for Ctrl and the key `wparam`.
+    fn clipboard(&self, wparam: usize) -> Option<Event> {
+        match wparam {
+            0x43 => Some(Event::Copy),
+            0x58 => Some(Event::Cut),
+            0x56 => super::clipboard::text(self.window()).map(Event::Paste),
+            _ => None,
+        }
+    }
+
+    /// The game window the overlay draws over; null before it is attached.
+    pub fn window(&self) -> HWND {
+        self.window.load(Ordering::Acquire) as HWND
+    }
+
     pub fn release(&self) {
         self.mouse.store(false, Ordering::Release);
         self.keyboard.store(false, Ordering::Release);
@@ -116,6 +131,13 @@ impl Input {
                 });
             }
             WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP => {
+                if message == WM_KEYDOWN
+                    && modifiers.ctrl
+                    && !modifiers.alt
+                    && let Some(event) = self.clipboard(wparam)
+                {
+                    input.events.push(event);
+                }
                 if let Some(key) = key(wparam) {
                     input.events.push(Event::Key {
                         key,

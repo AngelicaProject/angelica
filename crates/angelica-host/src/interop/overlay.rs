@@ -361,6 +361,7 @@ impl Overlay {
                 panel.draw(&self.host, ui.ctx());
             }
         });
+        self.copy(std::mem::take(&mut output.platform_output.commands));
         self.input
             .mouse
             .store(frame.context.egui_wants_pointer_input(), Ordering::Release);
@@ -379,6 +380,15 @@ impl Overlay {
         output.textures_delta.clear();
         result
     }
+    /// Puts the text the player copied on the clipboard.
+    fn copy(&self, commands: Vec<egui::OutputCommand>) {
+        for command in commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                super::clipboard::set_text(self.input.window(), &text);
+            }
+        }
+    }
+
     fn fail(&self, reason: &str) {
         self.disabled.store(true, Ordering::Release);
         self.input.release();
