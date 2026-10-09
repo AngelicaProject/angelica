@@ -182,18 +182,20 @@ fn draw_plugin(host: &Host, plugin: &Plugin, ui: &mut egui::Ui) {
         let status = plugin.status();
         match &status {
             Status::AwaitingApproval => {
-                ui.label("Not approved yet. It may:");
-                if manifest.permissions().is_empty() {
+                let requests = plugin.requests();
+                if plugin.approved_before() {
+                    ui.label("This version also wants to:");
+                } else {
+                    ui.label("Not approved yet. It may:");
+                }
+                if requests.is_empty() {
                     ui.label("  • show windows and keep files in its own folder");
                 }
-                for permission in manifest.permissions() {
-                    ui.label(format!(
-                        "  • {} ({})",
-                        permission.description(),
-                        permission.name()
-                    ));
-                    if *permission == crate::manifest::Permission::HttpGet {
-                        for host in manifest.http_hosts() {
+                for (class, requests) in requests {
+                    ui.strong(class.title());
+                    for request in requests {
+                        ui.label(format!("  • {}", request.permission.description()));
+                        for host in request.hosts {
                             ui.label(format!("      {host}"));
                         }
                     }

@@ -22,7 +22,7 @@ Read `docs/architecture/services.md` (API design, kinds of services, growing the
 
 - **Kind.** State (a table or field in the game map, read under `state.<domain>`), event (an adapter hook queues it, delivered next frame), operation on the game (one host operation per kind of action, own permission, validated arguments, host-enforced rate), game data (a sheet schema column), or a declarative rule.
 - **Domain.** Group with other requests for the same domain; design the interface for every plugin that needs the domain, in terms of the game resource, never of the requesting plugin.
-- **Permission.** As narrow as the domain allows; reading, events, and each kind of operation are separate. The player-facing text is plain words.
+- **Permission.** As narrow as the domain allows; reading, events, and each kind of operation are separate. The player-facing text is plain words, and the permission belongs to one class the approval groups it under (`Permission::class`).
 - **What stays unavailable.** A structure the map cannot verify is not exposed partially.
 
 A state field or table often needs no host code at all: only game map data (step 3) and a permission for a new domain.
@@ -32,7 +32,7 @@ A state field or table often needs no host code at all: only game map data (step
 | Piece | Where |
 | --- | --- |
 | WIT interface or function, with doc comments | `wit/<interface>.wit`, imported in `wit/plugin.wit` |
-| Permission: variant, name, player text | `crates/angelica-host/src/manifest.rs`; a state domain's permission in `crates/angelica-host/src/state.rs` |
+| Permission: variant, name, player text, class | `crates/angelica-host/src/manifest.rs`; a state domain's permission in `crates/angelica-host/src/state.rs` |
 | Linking the import, permission and context checks | `crates/angelica-host/src/sandbox.rs` |
 | Service logic, unit tests | `crates/angelica-host/src/<service>.rs` |
 | What the host needs from the game | the `Game` trait in `crates/angelica-host/src/game.rs`; its Windows adapter in `crates/angelica-host/src/interop/` |

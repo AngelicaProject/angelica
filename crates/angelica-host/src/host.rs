@@ -63,6 +63,9 @@ pub struct Plugin {
     pub storage: Arc<Storage>,
     pub log: Arc<Log>,
     grants: Mutex<Option<Grants>>,
+    /// The player's earlier approval, also when it does not cover this
+    /// version.
+    granted: Option<Grants>,
     /// The player's choice, kept across game starts.
     enabled: AtomicBool,
     status: Mutex<Status>,
@@ -101,6 +104,21 @@ impl Plugin {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// What the player is asked to approve, by class: with an earlier
+    /// approval, only what it does not cover.
+    #[must_use]
+    pub fn requests(&self) -> Vec<(crate::manifest::Class, Vec<crate::manifest::Request>)> {
+        crate::manifest::requests(&self.manifest, self.granted.as_ref())
+    }
+
+    /// Whether the player approved an earlier version of the plugin.
+    #[must_use]
+    pub fn approved_before(&self) -> bool {
+        self.granted
+            .as_ref()
+            .is_some_and(|grants| grants.plugin_id == self.manifest.id())
     }
 
     fn set_status(&self, status: Status) {
@@ -336,6 +354,7 @@ impl Host {
             pre,
             storage,
             log,
+            granted: grants.clone(),
             grants: Mutex::new(grants.filter(|_| approved)),
             enabled: AtomicBool::new(enabled),
             status: Mutex::new(status),

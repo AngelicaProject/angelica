@@ -2,7 +2,7 @@
 //! grants (`docs/formats/host-installation-v1.md`).
 #![forbid(unsafe_code)]
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The API versions this host runs.
 pub const API_VERSIONS: &[&str] = &["1.0"];
@@ -71,6 +71,79 @@ impl Permission {
             Self::ChatRead => "Reads the messages in your chat log, including other players'",
         }
     }
+
+    /// The class the player sees the permission in.
+    #[must_use]
+    pub fn class(self) -> Class {
+        match self {
+            Self::HttpGet => Class::Network,
+            Self::ChatRead => Class::OtherPlayers,
+            Self::ExcelText | Self::TextCase | Self::FilesReplace => Class::WhatYouSee,
+            Self::ChatCommands | Self::ChatPrint | Self::StateSelf => Class::YoursOnly,
+        }
+    }
+}
+
+/// How far a permission reaches, as the approval shows it; the most serious
+/// class first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Class {
+    /// Reaches the internet.
+    Network,
+    /// Sees what other players say or do.
+    OtherPlayers,
+    /// Changes what the player sees of the game.
+    WhatYouSee,
+    /// Stays with the player and only shows things.
+    YoursOnly,
+}
+
+impl Class {
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Network => "Uses the internet",
+            Self::OtherPlayers => "Sees other players",
+            Self::WhatYouSee => "Changes what you see",
+            Self::YoursOnly => "Only for you",
+        }
+    }
+}
+
+/// A permission the player is asked to approve, with the hosts of
+/// `http.get`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    pub permission: Permission,
+    pub hosts: Vec<String>,
+}
+
+/// What the player is asked to approve, by class, the most serious first:
+/// everything the manifest declares, or with an earlier approval of the
+/// plugin only what it does not cover.
+#[must_use]
+pub fn requests(manifest: &Manifest, granted: Option<&Grants>) -> Vec<(Class, Vec<Request>)> {
+    let granted = granted.filter(|grants| grants.format == 1 && grants.plugin_id == manifest.id());
+    let mut classes: BTreeMap<Class, Vec<Request>> = BTreeMap::new();
+    for &permission in manifest.permissions() {
+        let hosts: Vec<String> = if permission == Permission::HttpGet {
+            manifest
+                .http_hosts()
+                .into_iter()
+                .filter(|host| granted.is_none_or(|grants| !grants.http_hosts.contains(host)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let covered = granted.is_some_and(|grants| grants.permissions.contains(&permission));
+        if !covered || !hosts.is_empty() {
+            classes
+                .entry(permission.class())
+                .or_default()
+                .push(Request { permission, hosts });
+        }
+    }
+    classes.into_iter().collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -333,6 +406,48 @@ hosts = [\"example.com\"]
             .is_err(),
             "hosts without the permission"
         );
+    }
+
+    #[test]
+    fn approval_asks_by_class_and_only_for_what_is_new() {
+        let manifest = Manifest::parse(&format!(
+            "{VALID}\"http.get\" = true\n[http]\nhosts = [\"a.example.org\", \"b.example.org\"]\n"
+        ))
+        .unwrap();
+        let all = requests(&manifest, None);
+        let classes: Vec<Class> = all.iter().map(|(class, _)| *class).collect();
+        assert_eq!(classes, [Class::Network, Class::WhatYouSee]);
+        assert_eq!(all[0].1[0].hosts.len(), 2);
+
+        // An earlier approval without one host and without letter case.
+        let mut granted = Grants::for_manifest(&manifest);
+        granted.permissions.remove(&Permission::TextCase);
+        let first = granted.http_hosts.iter().next().unwrap().clone();
+        granted.http_hosts.remove(&first);
+        let new = requests(&manifest, Some(&granted));
+        assert_eq!(
+            new,
+            [
+                (
+                    Class::Network,
+                    vec![Request {
+                        permission: Permission::HttpGet,
+                        hosts: vec![first],
+                    }]
+                ),
+                (
+                    Class::WhatYouSee,
+                    vec![Request {
+                        permission: Permission::TextCase,
+                        hosts: Vec::new(),
+                    }]
+                ),
+            ]
+        );
+        assert!(requests(&manifest, Some(&Grants::for_manifest(&manifest))).is_empty());
+        // Another plugin's approval counts for nothing.
+        granted.plugin_id = "other".into();
+        assert_eq!(requests(&manifest, Some(&granted)), all);
     }
 
     #[test]

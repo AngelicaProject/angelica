@@ -4,16 +4,18 @@ A plugin's manifest declares its permissions ([manifest](../formats/plugin-manif
 
 Every plugin, once approved, has its own windows, log, storage folder, and jobs; these need no permission. Everything that reaches the game needs one:
 
-| Permission | Allows | Shown to the player as |
-| --- | --- | --- |
-| `excel.text` | activating [text tables](../formats/plugin-api-v1.md#text-tables) that replace text of the game's data sheets | Replaces text the game shows from its data sheets |
-| `text.case` | adding letters to the game's [letter case conversion](../formats/plugin-api-v1.md#letter-case) | Changes how the game capitalizes letters |
-| `files.replace` | serving [replacement game files](../formats/plugin-api-v1.md#replacement-files) of formats the host checks | Replaces game files: fonts and textures |
-| `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | Adds its own chat commands |
-| `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | Prints its messages in your chat log |
-| `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the public hosts the manifest lists in `http.hosts` | Downloads from these internet hosts, followed by the list |
-| `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | Reads the messages in your chat log, including other players' |
-| `state.self` | reading the [game state](../formats/plugin-api-v1.md#game-state) of the `self` domain: the player's character and where the player is | Reads your character: name, class, level, HP and MP, position, and zone |
+| Permission | Allows | Class | Shown to the player as |
+| --- | --- | --- | --- |
+| `excel.text` | activating [text tables](../formats/plugin-api-v1.md#text-tables) that replace text of the game's data sheets | what you see | Replaces text the game shows from its data sheets |
+| `text.case` | adding letters to the game's [letter case conversion](../formats/plugin-api-v1.md#letter-case) | what you see | Changes how the game capitalizes letters |
+| `files.replace` | serving [replacement game files](../formats/plugin-api-v1.md#replacement-files) of formats the host checks | what you see | Replaces game files: fonts and textures |
+| `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | only for you | Adds its own chat commands |
+| `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | only for you | Prints its messages in your chat log |
+| `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the public hosts the manifest lists in `http.hosts` | internet | Downloads from these internet hosts, followed by the list |
+| `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | other players | Reads the messages in your chat log, including other players' |
+| `state.self` | reading the [game state](../formats/plugin-api-v1.md#game-state) of the `self` domain: the player's character and where the player is | only for you | Reads your character: name, class, level, HP and MP, position, and zone |
+
+The player sees permissions in plain words, grouped by class, the most serious first: **Uses the internet**, **Sees other players**, **Changes what you see**, **Only for you**. Permission names stay with authors and are not shown. Every new permission belongs to one class; operations that act for the player will form a class of their own, above the others.
 
 Permissions follow game domains and are as narrow as the domain allows: reading a domain's state, receiving its events, and each kind of operation on it are separate permissions. Automation is the use of operations, so each kind of action a plugin may take for the player is its own permission, shown to the player in plain words.
 
@@ -21,7 +23,7 @@ A permission exists only together with the API operation it guards. A capability
 
 ## Grants
 
-The host records the player's approval in `grants/<plugin-id>.json` ([installation](../formats/host-installation-v1.md#player-grants)). A plugin runs only with a grant that covers every permission its manifest declares; an operation checks both the declaration and the grant. A package without a grant appears in the Angelica menu with its permissions and an approval button, and runs no code.
+The host records the player's approval in `grants/<plugin-id>.json` ([installation](../formats/host-installation-v1.md#player-grants)). A plugin runs only with a grant that covers every permission its manifest declares; an operation checks both the declaration and the grant. A package without a grant appears in the Angelica menu with its permissions and an approval button, and runs no code. When the player approved an earlier version, the menu shows only what the new version adds: permissions the grant does not cover, and for `http.get` only the new hosts. Approving replaces the grant with everything the new version declares.
 
 ## Data no permission exposes
 
