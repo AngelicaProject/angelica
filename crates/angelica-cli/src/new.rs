@@ -207,6 +207,23 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 ";
 
+const SKILL: &str = r"---
+name: angelica-plugin
+description: Write, test, and run this Angelica plugin for FINAL FANTASY XIV - find the plugin API interface and permission for a feature, write it with angelica-sdk, test it against the scripted game, install it in the running game, or file an API request for a missing capability. Use for any change to this plugin.
+---
+
+# Working on {name}
+
+Read `AGENTS.md` in this project, then `{angelica}/docs/plugins/authoring.md` for the work loop.
+
+1. Describe the feature in game terms: what it reads, what it changes, how the player drives it.
+2. Look up each piece in `{angelica}/docs/plugins/interfaces.md`: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
+3. A piece the cards do not cover is not available: write an API request in the format of `{angelica}/docs/plugins/api-requests.md`, show it to the user, and build the rest.
+4. Write the code in `src/lib.rs`; long work goes in a job.
+5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run `cargo test`, `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic`, `cargo fmt --check`.
+6. Build and install while the game runs (commands in `AGENTS.md`), then tell the user exactly what to click or type in the game and what they should see. Report only what was observed.
+";
+
 const GITIGNORE: &str = "/target\n";
 
 /// The toolchain of the Angelica checkout, which builds the component.
@@ -287,6 +304,7 @@ fn create(args: &NewArgs) -> Result<PathBuf, String> {
         ("src/lib.rs", LIB),
         ("tests/plugin.rs", TEST),
         ("AGENTS.md", AGENTS),
+        (".claude/skills/angelica-plugin/SKILL.md", SKILL),
         (".gitignore", GITIGNORE),
         ("rust-toolchain.toml", TOOLCHAIN),
     ] {
