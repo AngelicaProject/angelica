@@ -127,6 +127,10 @@ pub enum SheetError {
     UnsupportedColumnType { name: String, code: u16 },
     #[error("the sheet {name:?} cannot be read: {message}")]
     Unreadable { name: String, message: String },
+    /// The header lists the language, but the installed game has none of
+    /// its data files, as for languages of other regions' clients.
+    #[error("the installed game has no {language:?} data for the sheet {name:?}")]
+    NotInstalled { name: String, language: Language },
     #[error(transparent)]
     Game(#[from] SqPackError),
 }
@@ -297,15 +301,54 @@ struct RowLocation {
     subrow_count: u16,
 }
 
+/// The data file of the page that starts at row `start`.
+fn page_path(name: &str, start: u32, language: Language) -> String {
+    if language == Language::None {
+        format!("exd/{name}_{start}.exd")
+    } else {
+        format!("exd/{name}_{start}_{}.exd", language.suffix())
+    }
+}
+
+/// The raw codes of the languages in `header` whose data the installed game
+/// has: the archives contain the language's first page. A header without
+/// pages keeps its languages.
+///
+/// # Errors
+///
+/// Returns an error for an unreadable archive index.
+pub fn installed_languages(
+    game: &GameData,
+    name: &str,
+    header: &SheetHeader,
+) -> Result<Vec<u8>, SqPackError> {
+    let Some((start, _)) = header.pages.first() else {
+        return Ok(header.languages.clone());
+    };
+    let mut installed = Vec::new();
+    for &code in &header.languages {
+        let present = match Language::from_code(code) {
+            Some(language) => game.contains(&page_path(name, *start, language))?,
+            None => false,
+        };
+        if present {
+            installed.push(code);
+        }
+    }
+    Ok(installed)
+}
+
 /// Reads a sheet in `language`, falling back to the language-neutral data.
 ///
 /// Rows are read in page order and, within a page, in the order of its row
-/// index. A page file that the archives do not contain is skipped.
+/// index.
 ///
 /// # Errors
 ///
 /// Returns [`SheetError`] for a missing header, an unsupported variant or
-/// column type, a language the sheet does not provide, or unreadable data.
+/// column type, a language the sheet does not provide, a language whose
+/// data files the installed game lacks ([`SheetError::NotInstalled`]), or
+/// unreadable data, including a language with only some of its pages.
 pub fn read_sheet(game: &GameData, name: &str, language: Language) -> Result<Sheet, SheetError> {
     let unreadable = |message: String| SheetError::Unreadable {
         name: name.to_owned(),
@@ -345,14 +388,16 @@ pub fn read_sheet(game: &GameData, name: &str, language: Language) -> Result<She
     let mut pages = Vec::new();
     let mut rows = Vec::new();
     for (start, _) in &header.pages {
-        let path = if effective == Language::None {
-            format!("exd/{name}_{start}.exd")
-        } else {
-            format!("exd/{name}_{start}_{}.exd", effective.suffix())
+        let path = page_path(name, *start, effective);
+        let Some(page) = game.file(&path)? else {
+            if pages.is_empty() {
+                return Err(SheetError::NotInstalled {
+                    name: name.to_owned(),
+                    language: effective,
+                });
+            }
+            return Err(unreadable(format!("{path} is missing")));
         };
-        let page = game
-            .file(&path)?
-            .ok_or_else(|| unreadable(format!("{path} is missing")))?;
         if pages
             .iter()
             .map(|page: &Arc<Vec<u8>>| page.len())

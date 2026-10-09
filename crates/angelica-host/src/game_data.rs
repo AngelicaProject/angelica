@@ -48,6 +48,8 @@ pub struct SheetInfo {
     pub subrows: bool,
     /// Kind and offset of each column, in column order.
     pub columns: Vec<(ColumnKind, u16)>,
+    /// The languages the installed game has data for; the header may list
+    /// more, such as other regions' languages.
     pub languages: Vec<u8>,
     pub rows: u32,
 }
@@ -90,7 +92,9 @@ fn archive_error(error: &SqPackError) -> Error {
 
 fn sheet_error(error: SheetError) -> Error {
     match error {
-        SheetError::NotFound(_) => Error::new(Kind::NotFound, error.to_string()),
+        SheetError::NotFound(_) | SheetError::NotInstalled { .. } => {
+            Error::new(Kind::NotFound, error.to_string())
+        }
         SheetError::Game(error) => archive_error(&error),
         _ => Error::invalid(error.to_string()),
     }
@@ -193,7 +197,8 @@ impl GameData {
             name: name.to_owned(),
             subrows,
             columns,
-            languages: header.languages,
+            languages: excel::installed_languages(self.archives()?, name, &header)
+                .map_err(|e| archive_error(&e))?,
             rows: header.row_count,
         })
     }
@@ -349,7 +354,7 @@ mod tests {
                 .collect(),
         );
         FakeGame::new("2026.09.15.0000.0000")
-            .with_sheet("Item", sheet)
+            .with_sheet("Item", sheet.with_uninstalled(Language::Korean))
             .with_file("common/font/AXIS_12.fdt", b"fcsv0100".to_vec())
             .write(folder.path())
             .unwrap();
@@ -375,6 +380,7 @@ mod tests {
         let info = data.sheet("Item").unwrap();
         assert_eq!(info.rows, 5);
         assert!(!info.subrows);
+        assert_eq!(info.languages, [2], "Korean is listed but not installed");
         assert_eq!(data.sheet("Missing").unwrap_err().kind, Kind::NotFound);
 
         let page = data.rows("Item", 2, None, 2).unwrap();
@@ -393,6 +399,11 @@ mod tests {
             data.rows("Item", 3, None, 1).unwrap_err().kind,
             Kind::NotFound,
             "no German or neutral data"
+        );
+        assert_eq!(
+            data.rows("Item", 7, None, 1).unwrap_err().kind,
+            Kind::NotFound,
+            "no Korean data files"
         );
         assert!(data.rows("Item", 2, None, 0).is_err());
         assert!(data.rows("Item", 9, None, 1).is_err());
@@ -446,6 +457,10 @@ mod tests {
         );
         let quest = data.sheet("Quest").unwrap();
         assert!(quest.rows > 1000);
+        let commands = data.sheet("TextCommand").unwrap();
+        for &language in &commands.languages {
+            data.rows("TextCommand", language, None, 1).unwrap();
+        }
         assert!(!data.read("common/font/AXIS_12.fdt").unwrap().is_empty());
         assert!(data.read("common/font/font1.tex").unwrap().len() > 1024 * 1024);
     }

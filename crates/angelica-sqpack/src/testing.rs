@@ -62,6 +62,9 @@ pub struct FakeSheet {
     /// Explicit column offsets, overriding the assigned ones.
     pub offsets: Option<Vec<u16>>,
     pub rows: BTreeMap<Language, Vec<FakeRow>>,
+    /// Languages the header lists without data files, as a client lists
+    /// other regions' languages.
+    pub uninstalled: Vec<Language>,
 }
 
 impl FakeSheet {
@@ -73,6 +76,7 @@ impl FakeSheet {
             columns,
             offsets: None,
             rows: BTreeMap::new(),
+            uninstalled: Vec::new(),
         }
     }
 
@@ -80,6 +84,13 @@ impl FakeSheet {
     #[must_use]
     pub fn with_rows(mut self, language: Language, rows: Vec<FakeRow>) -> Self {
         self.rows.insert(language, rows);
+        self
+    }
+
+    /// Lists a language in the header without writing its data.
+    #[must_use]
+    pub fn with_uninstalled(mut self, language: Language) -> Self {
+        self.uninstalled.push(language);
         self
     }
 
@@ -233,7 +244,7 @@ fn header(sheet: &FakeSheet) -> Vec<u8> {
     be16(&mut bytes, 1);
     be16(
         &mut bytes,
-        u16::try_from(sheet.rows.len()).expect("few languages"),
+        u16::try_from(sheet.rows.len() + sheet.uninstalled.len()).expect("few languages"),
     );
     bytes.extend_from_slice(&[0, 0, 0]);
     bytes.push(match sheet.variant {
@@ -249,7 +260,7 @@ fn header(sheet: &FakeSheet) -> Vec<u8> {
     }
     be32(&mut bytes, 0);
     be32(&mut bytes, u32::try_from(row_count).expect("few rows"));
-    for language in sheet.rows.keys() {
+    for language in sheet.rows.keys().chain(&sheet.uninstalled) {
         bytes.push(language_code(*language));
         bytes.push(0);
     }
@@ -477,10 +488,14 @@ impl TextSheet {
         self
     }
 
-    /// The sheet in the four global languages.
+    /// The sheet in the four global languages; like the global client's
+    /// headers, it also lists the Chinese and Korean languages without data.
     #[must_use]
     pub fn fake(&self) -> FakeSheet {
-        let mut sheet = FakeSheet::new(self.kinds.clone());
+        let mut sheet = FakeSheet::new(self.kinds.clone())
+            .with_uninstalled(Language::ChineseSimplified)
+            .with_uninstalled(Language::ChineseTraditional)
+            .with_uninstalled(Language::Korean);
         for language in [
             Language::Japanese,
             Language::English,

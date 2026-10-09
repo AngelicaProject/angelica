@@ -80,6 +80,14 @@ fn path_hash(path: &str) -> Option<u64> {
     Some((u64::from(crc(folder)) << 32) | u64::from(crc(file)))
 }
 
+/// Where the archives hold a file.
+struct Found {
+    repository: String,
+    chunks: std::sync::Arc<Vec<Chunk>>,
+    chunk: usize,
+    entry: IndexEntry,
+}
+
 /// One archive chunk of a category: its index and data files.
 struct Chunk {
     /// File name prefix, such as `0a0000`.
@@ -126,6 +134,23 @@ impl GameData {
     ///
     /// Returns an error for an unreadable or malformed archive.
     pub fn file(&self, path: &str) -> Result<Option<Vec<u8>>, SqPackError> {
+        let Some(found) = self.find(path)? else {
+            return Ok(None);
+        };
+        self.read_entry(&found.repository, &found.chunks[found.chunk], found.entry)
+            .map(Some)
+    }
+
+    /// Whether the archives contain a file, without reading it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unreadable or malformed archive index.
+    pub fn contains(&self, path: &str) -> Result<bool, SqPackError> {
+        Ok(self.find(path)?.is_some())
+    }
+
+    fn find(&self, path: &str) -> Result<Option<Found>, SqPackError> {
         let path = path.trim().to_lowercase();
         if path.is_empty() || path.ends_with('/') || path.len() >= 260 {
             return Ok(None);
@@ -147,12 +172,16 @@ impl GameData {
             .unwrap_or("ffxiv")
             .to_owned();
         let chunks = self.chunks(&repository, category)?;
-        for chunk in chunks.iter() {
-            if let Some(entry) = chunk.index.get(hash, whole_hash) {
-                return self.read_entry(&repository, chunk, entry).map(Some);
-            }
-        }
-        Ok(None)
+        let found = chunks
+            .iter()
+            .enumerate()
+            .find_map(|(at, chunk)| chunk.index.get(hash, whole_hash).map(|entry| (at, entry)));
+        Ok(found.map(|(chunk, entry)| Found {
+            repository,
+            chunks: chunks.clone(),
+            chunk,
+            entry,
+        }))
     }
 
     fn chunks(
