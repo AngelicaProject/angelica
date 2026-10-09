@@ -13,8 +13,10 @@ pub mod config;
 pub mod error;
 pub mod events;
 pub mod excel_text;
+pub mod feather;
 pub mod file_formats;
 pub mod file_replacements;
+pub mod fonts;
 pub mod game;
 pub mod game_data;
 pub mod host;
@@ -22,6 +24,7 @@ pub mod http;
 pub mod icons;
 pub mod installer;
 pub mod jobs;
+pub mod language;
 pub mod manifest;
 #[cfg(test)]
 mod mutations;
@@ -33,6 +36,7 @@ pub mod sheets;
 pub mod state;
 pub mod storage;
 pub mod text_case;
+pub mod theme;
 pub mod ui;
 pub mod wasi;
 
