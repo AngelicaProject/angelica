@@ -291,6 +291,7 @@ impl TestHost {
             domain: domain.to_owned(),
             doc: "A test table.".into(),
             object: Ok(Vec::new()),
+            list: None,
             fields: fields
                 .iter()
                 .map(|name| {
@@ -306,6 +307,7 @@ impl TestHost {
                             representation: angelica_map::Representation::Value(
                                 angelica_map::ValueKind::U32,
                             ),
+                            index: false,
                         },
                     )
                 })

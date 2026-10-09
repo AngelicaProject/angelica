@@ -145,6 +145,24 @@ text = 64
 
 A path is walked from the global's address: each step adds its offset, and a step of type `ptr` then reads the pointer stored there. The table has one row while the object path ends at a non-zero address and none otherwise; a field's value is none when a pointer on its path is zero. A table or field whose entries are absent in a build is absent with them.
 
+A list table describes the elements of an array in the object, one row per element, instead of the object itself; its fields' paths lead from the element. `list` says where the array is:
+
+```toml
+[tables."self.statuses"]
+doc = "The statuses on the player's character."
+object = ["character.local_player", "character.battle_chara.status_manager"]
+list = { at = "status.status_manager.statuses", length = 60, stride = 16, present = "status_id" }
+```
+
+- `at`: a field of the object, the array itself (`struct`) or a pointer to it (`ptr`).
+- `length`: the most elements read, 1 to 1024.
+- `stride`: the bytes from one element to the next, 1 to 65536; a constant of the table, as a constant offset is of a field.
+- `pointers`: when true, every element is a pointer to the row's object and a zero pointer is skipped; the stride is then 8.
+- `count`: optional; a field of the object, an integer of at most 32 bits, holding how many elements are used. Elements past it are not read.
+- `present`: optional; a field of the table. An element whose value of it is zero, false, empty, or none is skipped.
+
+Every list table has the implicit field `index`, the element's position in its array from 0; a list table defines no field of that name.
+
 A table that breaks a rule or names an entry that does not exist or has the wrong kind makes the whole map invalid. State tables are not part of `entries_sha256`.
 
 ## Build records

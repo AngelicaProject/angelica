@@ -41,6 +41,23 @@ pub struct FieldPlan {
     /// entry on the path is absent in this build.
     pub steps: std::result::Result<Vec<Step>, String>,
     pub representation: Representation,
+    /// The implicit field of a list table: the element's position.
+    pub index: bool,
+}
+
+/// How a list table's array is read in the running build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPlan {
+    /// From the object to the array: through a pointer when `follow`.
+    pub at: Step,
+    pub length: u16,
+    pub stride: u32,
+    pub pointers: bool,
+    /// The offset from the object of the count of used elements, and its
+    /// type.
+    pub count: Option<(u64, ValueKind)>,
+    /// The field whose zero or missing value skips an element.
+    pub present: Option<String>,
 }
 
 /// A state table resolved for the running build.
@@ -52,6 +69,8 @@ pub struct TablePlan {
     /// Steps from nothing to the object; absent with the reason when an
     /// entry on the path is absent in this build.
     pub object: std::result::Result<Vec<Step>, String>,
+    /// The array whose elements are the rows; `None` for one object.
+    pub list: Option<ListPlan>,
     pub fields: BTreeMap<String, FieldPlan>,
 }
 
@@ -105,6 +124,54 @@ fn steps(
         .collect()
 }
 
+/// One field entry as a step: its offset, followed when it is a pointer.
+fn field_step(
+    map: &Map,
+    catalog: &Catalog,
+    name: &str,
+) -> std::result::Result<(Step, ValueKind), String> {
+    let resolved = catalog
+        .present
+        .get(name)
+        .ok_or_else(|| format!("map entry {name} is absent"))?;
+    let angelica_map::Value::Offset(offset) = resolved.value else {
+        return Err(format!("map entry {name} is not a field"));
+    };
+    let kind = match map.get(name).map(|entry| &entry.kind) {
+        Some(angelica_map::EntryKind::Field { value, .. }) => *value,
+        _ => return Err(format!("map entry {name} is not a field")),
+    };
+    Ok((
+        Step {
+            offset: u64::from(offset),
+            follow: kind == ValueKind::Ptr,
+        },
+        kind,
+    ))
+}
+
+/// A list table's array resolved for the build.
+fn list_plan(
+    map: &Map,
+    catalog: &Catalog,
+    list: &angelica_map::StateList,
+) -> std::result::Result<ListPlan, String> {
+    let (at, _) = field_step(map, catalog, &list.at)?;
+    let count = list
+        .count
+        .as_ref()
+        .map(|name| field_step(map, catalog, name).map(|(step, kind)| (step.offset, kind)))
+        .transpose()?;
+    Ok(ListPlan {
+        at,
+        length: list.length,
+        stride: list.stride,
+        pointers: list.pointers,
+        count,
+        present: list.present.clone(),
+    })
+}
+
 /// The game map's state tables for the running build.
 #[derive(Default)]
 pub struct StateTables {
@@ -122,25 +189,46 @@ impl StateTables {
             if permission(&table.domain).is_none() {
                 continue;
             }
+            let list = table
+                .list
+                .as_ref()
+                .map(|list| list_plan(map, catalog, list))
+                .transpose();
+            let object = steps(map, catalog, base, &table.object, true)
+                .and_then(|object| list.as_ref().map(|_| object).map_err(Clone::clone));
+            let mut fields: BTreeMap<String, FieldPlan> = table
+                .fields
+                .values()
+                .map(|field| {
+                    (
+                        field.name.clone(),
+                        FieldPlan {
+                            doc: field.doc.clone(),
+                            steps: steps(map, catalog, base, &field.path, false),
+                            representation: field.representation,
+                            index: false,
+                        },
+                    )
+                })
+                .collect();
+            if table.list.is_some() {
+                fields.insert(
+                    angelica_map::INDEX.to_owned(),
+                    FieldPlan {
+                        doc: "The element's position in its array, from 0.".into(),
+                        steps: Ok(Vec::new()),
+                        representation: Representation::Value(ValueKind::U32),
+                        index: true,
+                    },
+                );
+            }
             tables.insert(TablePlan {
                 name: table.name.clone(),
                 domain: table.domain.clone(),
                 doc: table.doc.clone(),
-                object: steps(map, catalog, base, &table.object, true),
-                fields: table
-                    .fields
-                    .values()
-                    .map(|field| {
-                        (
-                            field.name.clone(),
-                            FieldPlan {
-                                doc: field.doc.clone(),
-                                steps: steps(map, catalog, base, &field.path, false),
-                                representation: field.representation,
-                            },
-                        )
-                    })
-                    .collect(),
+                object,
+                list: list.ok().flatten(),
+                fields,
             });
         }
         tables
@@ -278,9 +366,73 @@ fn value(memory: &dyn Memory, address: u64, representation: Representation) -> O
     })
 }
 
-/// The rows of a table with the values of `fields`: none while the
-/// table's object does not exist, one otherwise. A value is `None` when a
-/// pointer on its path is zero or its memory is unreadable.
+/// The value of `field` in the object or element at `start`, the element
+/// at `index` of its array.
+fn field_value(
+    memory: &dyn Memory,
+    start: u64,
+    index: usize,
+    field: &FieldPlan,
+) -> Option<StateValue> {
+    if field.index {
+        return Some(StateValue::Unsigned(index as u64));
+    }
+    let steps = field.steps.as_ref().ok()?;
+    let address = walk(memory, start, steps)?;
+    value(memory, address, field.representation)
+}
+
+/// The addresses and positions of a list's used elements.
+fn elements(
+    memory: &dyn Memory,
+    table: &TablePlan,
+    list: &ListPlan,
+    object: u64,
+) -> Vec<(usize, u64)> {
+    let Some(base) = walk(memory, object, &[list.at]) else {
+        return Vec::new();
+    };
+    let mut used = usize::from(list.length);
+    if let Some((offset, kind)) = list.count {
+        let count = object
+            .checked_add(offset)
+            .and_then(|address| value(memory, address, Representation::Value(kind)));
+        used = match count {
+            Some(StateValue::Unsigned(count)) => used.min(usize::try_from(count).unwrap_or(used)),
+            Some(StateValue::Signed(count)) => used.min(usize::try_from(count).unwrap_or(0)),
+            _ => 0,
+        };
+    }
+    let present = list
+        .present
+        .as_ref()
+        .and_then(|name| table.fields.get(name));
+    (0..used)
+        .filter_map(|index| {
+            let mut element = base.checked_add(u64::from(list.stride) * index as u64)?;
+            if list.pointers {
+                element = pointer(memory, element)?;
+            }
+            if let Some(present) = present {
+                match field_value(memory, element, index, present)? {
+                    StateValue::Unsigned(0)
+                    | StateValue::Signed(0)
+                    | StateValue::Boolean(false) => {
+                        return None;
+                    }
+                    StateValue::Text(text) if text.is_empty() => return None,
+                    _ => {}
+                }
+            }
+            Some((index, element))
+        })
+        .collect()
+}
+
+/// The rows of a table with the values of `fields`: for a table of one
+/// object, none while the object does not exist and one otherwise; for a
+/// list, one per used element. A value is `None` when a pointer on its path
+/// is zero or its memory is unreadable.
 #[must_use]
 pub fn read(
     memory: &dyn Memory,
@@ -293,16 +445,18 @@ pub fn read(
     let Some(object) = walk(memory, 0, object_steps) else {
         return Vec::new();
     };
-    vec![
-        fields
-            .iter()
-            .map(|field| {
-                let steps = field.steps.as_ref().ok()?;
-                let address = walk(memory, object, steps)?;
-                value(memory, address, field.representation)
-            })
-            .collect(),
-    ]
+    let rows = match &table.list {
+        None => vec![(0, object)],
+        Some(list) => elements(memory, table, list, object),
+    };
+    rows.into_iter()
+        .map(|(index, start)| {
+            fields
+                .iter()
+                .map(|field| field_value(memory, start, index, field))
+                .collect()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -484,6 +638,113 @@ path = ["object.character.missing"]
             read(&memory(false), &table, &fields).is_empty(),
             "no player"
         );
+    }
+
+    const LIST_ENTRIES: &str = r#"
+[global."object.local_player"]
+locator = { signature = "C3" }
+type = "ptr"
+
+[field."object.character.statuses"]
+of = "object.character"
+type = "struct"
+offset = 0x10
+
+[field."object.character.status_count"]
+of = "object.character"
+type = "u8"
+offset = 0x8
+
+[field."object.status.id"]
+of = "object.status"
+type = "u16"
+offset = 0x0
+
+[field."object.status.time"]
+of = "object.status"
+type = "f32"
+offset = 0x4
+"#;
+
+    const LIST: &str = r#"
+[tables."self.statuses"]
+doc = "Statuses."
+object = ["object.local_player"]
+list = { at = "object.character.statuses", length = 4, stride = 8, count = "object.character.status_count", present = "id" }
+
+[tables."self.statuses".fields.id]
+doc = "Id."
+path = ["object.status.id"]
+
+[tables."self.statuses".fields.time]
+doc = "Time."
+path = ["object.status.time"]
+"#;
+
+    #[test]
+    fn lists_read_one_row_per_used_element() {
+        let map = Map::from_sources(
+            "format = 1",
+            &[
+                ("entries/object.toml".into(), LIST_ENTRIES.into()),
+                ("state/self.toml".into(), LIST.into()),
+            ],
+        )
+        .unwrap();
+        let mut catalog = Catalog::default();
+        for entry in map.entries() {
+            let value = match &entry.kind {
+                angelica_map::EntryKind::Field { offset, .. } => {
+                    angelica_map::Value::Offset(offset.unwrap())
+                }
+                _ => angelica_map::Value::Address(0x1000 - 0x800),
+            };
+            catalog.present.insert(
+                entry.name.clone(),
+                crate::catalog::ResolvedEntry {
+                    entry: entry.clone(),
+                    value,
+                    function_range: None,
+                },
+            );
+        }
+        let tables = StateTables::from_map(&map, &catalog, 0x800);
+
+        // The player at 0x1008: three used statuses of four, the second
+        // empty; the fourth is past the count.
+        let mut bytes = vec![0u8; 0x60];
+        bytes[..8].copy_from_slice(&0x1008u64.to_le_bytes());
+        let player = 0x8;
+        bytes[player + 0x8] = 3;
+        for (index, id, time) in [
+            (0usize, 48u16, 12.5f32),
+            (1, 0, 0.0),
+            (2, 1199, 30.0),
+            (3, 9, 1.0),
+        ] {
+            let at = player + 0x10 + index * 8;
+            bytes[at..at + 2].copy_from_slice(&id.to_le_bytes());
+            bytes[at + 4..at + 8].copy_from_slice(&time.to_le_bytes());
+        }
+        let (table, fields) = tables
+            .plan("self.statuses", &names(&["index", "id", "time"]))
+            .unwrap();
+        assert_eq!(
+            read(&Buffer(bytes), &table, &fields),
+            [
+                vec![
+                    Some(StateValue::Unsigned(0)),
+                    Some(StateValue::Unsigned(48)),
+                    Some(StateValue::Float(12.5)),
+                ],
+                vec![
+                    Some(StateValue::Unsigned(2)),
+                    Some(StateValue::Unsigned(1199)),
+                    Some(StateValue::Float(30.0)),
+                ],
+            ]
+        );
+        assert!(tables.tables()[0].fields.contains_key("index"), "listed");
     }
 
     #[test]

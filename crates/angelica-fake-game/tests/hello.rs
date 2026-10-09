@@ -641,3 +641,31 @@ fn the_characters_state_is_read_under_its_permission() {
         "cannot read the character: the plugin does not hold state.self"
     );
 }
+
+#[test]
+fn list_tables_give_one_row_per_element() {
+    use runtime::state::StateValue;
+    let test = approved(MANIFEST);
+    test.define_state_table(
+        "self.statuses",
+        "self",
+        &["status_id", "remaining_time"],
+        &[],
+    );
+    click(&test, "statuses");
+    assert_eq!(message(&test), "no statuses");
+
+    let row = |id: u64, time: f64| {
+        [
+            ("status_id".to_owned(), StateValue::Unsigned(id)),
+            ("remaining_time".to_owned(), StateValue::Float(time)),
+        ]
+        .into()
+    };
+    test.game.state.lock().unwrap().insert(
+        "self.statuses".into(),
+        vec![row(48, 1799.6), row(1199, 0.0)],
+    );
+    click(&test, "statuses");
+    assert_eq!(message(&test), "statuses: 48 (1800s), 1199");
+}

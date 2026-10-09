@@ -102,6 +102,10 @@ impl Hello {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the character: {error}")),
             },
+            "statuses" => match statuses() {
+                Ok(text) => self.say(text),
+                Err(error) => self.say(format!("cannot read the statuses: {error}")),
+            },
             "status" => match excel_text::status("example") {
                 Ok(status) => self.say(format!(
                     "table: {} rows changed, {} cells, {} mismatches",
@@ -213,6 +217,29 @@ fn who() -> Result<String, String> {
         float(8),
         float(9)
     ))
+}
+
+/// The statuses on the player's character, with the seconds they last.
+fn statuses() -> Result<String, String> {
+    let rows =
+        state::read("self.statuses", &["status_id", "remaining_time"]).map_err(|e| e.message)?;
+    if rows.is_empty() {
+        return Ok("no statuses".into());
+    }
+    let listed: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let id = row[0]
+                .as_ref()
+                .and_then(state::Value::unsigned)
+                .unwrap_or(0);
+            match row[1].as_ref().and_then(state::Value::float) {
+                Some(time) if time > 0.0 => format!("{id} ({time:.0}s)"),
+                _ => id.to_string(),
+            }
+        })
+        .collect();
+    Ok(format!("statuses: {}", listed.join(", ")))
 }
 
 /// A table that replaces the text of Item row 1, column 0, while it is
@@ -328,6 +355,7 @@ impl Plugin for Hello {
                             .button("letters", "Add letters")
                             .button("read", "Read game data")
                             .button("where", "Who am I")
+                            .button("statuses", "My statuses")
                             .button("texture", "Replace a texture")
                     })
                 })

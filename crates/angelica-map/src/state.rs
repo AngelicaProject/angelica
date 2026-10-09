@@ -7,6 +7,10 @@
 //! whose entry has the type `ptr` is followed through the pointer; a step of
 //! type `struct` stays at the address. The last step of a field is the
 //! value, read by its entry's type, or inline text when `text` is given.
+//!
+//! A list table describes the elements of an array in the object instead of
+//! the object itself: one row per element, and each field's path leads from
+//! the element.
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -32,6 +36,29 @@ pub struct StateField {
     pub representation: Representation,
 }
 
+/// The array a list table reads its rows from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateList {
+    /// A field of the object: the array (`struct`) or a pointer to it
+    /// (`ptr`).
+    pub at: String,
+    /// The most elements read.
+    pub length: u16,
+    /// Bytes from one element to the next.
+    pub stride: u32,
+    /// Whether each element is a pointer to the row's object; zero pointers
+    /// are skipped.
+    pub pointers: bool,
+    /// A field of the object holding how many elements are used.
+    pub count: Option<String>,
+    /// A field of the table: an element whose value of it is zero or none
+    /// is skipped.
+    pub present: Option<String>,
+}
+
+/// The implicit field of a list table: the element's position in its array.
+pub const INDEX: &str = "index";
+
 /// A table of a state domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateTable {
@@ -42,6 +69,9 @@ pub struct StateTable {
     /// Entry names from a global to the object; the table has one row while
     /// the path ends at a non-zero address, none otherwise.
     pub object: Vec<String>,
+    /// The array whose elements are the rows; `None` for a table of one
+    /// object.
+    pub list: Option<StateList>,
     pub fields: BTreeMap<String, StateField>,
 }
 
@@ -50,6 +80,11 @@ impl StateTable {
     pub fn references(&self) -> impl Iterator<Item = &str> {
         self.object
             .iter()
+            .chain(
+                self.list
+                    .iter()
+                    .flat_map(|list| std::iter::once(&list.at).chain(&list.count)),
+            )
             .chain(self.fields.values().flat_map(|field| field.path.iter()))
             .map(String::as_str)
     }
@@ -66,7 +101,20 @@ struct RawFile {
 struct RawTable {
     doc: String,
     object: Vec<String>,
+    list: Option<RawList>,
     fields: BTreeMap<String, RawField>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawList {
+    at: String,
+    length: u16,
+    stride: Option<u32>,
+    #[serde(default)]
+    pointers: bool,
+    count: Option<String>,
+    present: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +133,46 @@ fn is_valid_word(word: &str) -> bool {
         && word
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Parses and checks a table's `list` without looking at the entries.
+fn parse_list(
+    name: &str,
+    list: RawList,
+    fields: &BTreeMap<String, RawField>,
+) -> Result<StateList, String> {
+    if !(1..=1024).contains(&list.length) {
+        return Err(format!("table {name}: a list has 1 to 1024 elements"));
+    }
+    let stride = match (list.pointers, list.stride) {
+        (true, None | Some(8)) => 8,
+        (true, Some(_)) => {
+            return Err(format!(
+                "table {name}: a list of pointers has a stride of 8"
+            ));
+        }
+        (false, Some(stride)) if (1..=0x1_0000).contains(&stride) => stride,
+        (false, _) => {
+            return Err(format!(
+                "table {name}: a list has a stride of 1 to 65536 bytes"
+            ));
+        }
+    };
+    if list
+        .present
+        .as_ref()
+        .is_some_and(|present| !fields.contains_key(present))
+    {
+        return Err(format!("table {name}: present names none of its fields"));
+    }
+    Ok(StateList {
+        at: list.at,
+        length: list.length,
+        stride,
+        pointers: list.pointers,
+        count: list.count,
+        present: list.present,
+    })
 }
 
 /// Parses `state/<domain>.toml` without looking at the entries.
@@ -115,8 +203,15 @@ pub(crate) fn parse(relative: &str, text: &str) -> Result<Vec<StateTable>, Strin
         if table.fields.is_empty() {
             return Err(format!("table {name}: no fields"));
         }
+        let list = table
+            .list
+            .map(|list| parse_list(&name, list, &table.fields))
+            .transpose()?;
         let mut fields = BTreeMap::new();
         for (field_name, field) in table.fields {
+            if field_name == INDEX && list.is_some() {
+                return Err(format!("table {name}: `{INDEX}` is the element's position"));
+            }
             if !is_valid_word(&field_name) {
                 return Err(format!(
                     "table {name}: {field_name:?} is not a valid field name"
@@ -156,6 +251,7 @@ pub(crate) fn parse(relative: &str, text: &str) -> Result<Vec<StateTable>, Strin
             domain: domain.to_owned(),
             doc: table.doc,
             object: table.object,
+            list,
             fields,
         });
     }
@@ -191,6 +287,31 @@ pub(crate) fn check(
         if !matches!(value, ValueKind::Ptr | ValueKind::Struct) {
             return Err(format!(
                 "table {}: object step `{name}` is neither ptr nor struct",
+                table.name
+            ));
+        }
+    }
+    if let Some(list) = &table.list {
+        let at = step_value(&list.at, false)?;
+        if !matches!(at, ValueKind::Ptr | ValueKind::Struct) {
+            return Err(format!(
+                "table {}: the list `{}` is neither ptr nor struct",
+                table.name, list.at
+            ));
+        }
+        if let Some(count) = &list.count
+            && !matches!(
+                step_value(count, false)?,
+                ValueKind::U8
+                    | ValueKind::U16
+                    | ValueKind::U32
+                    | ValueKind::I8
+                    | ValueKind::I16
+                    | ValueKind::I32
+            )
+        {
+            return Err(format!(
+                "table {}: the count `{count}` is not an integer of at most 32 bits",
                 table.name
             ));
         }
@@ -296,6 +417,57 @@ text = 64
         assert_eq!(
             table.fields["name"].representation,
             super::Representation::Text(64)
+        );
+    }
+
+    const LIST: &str = r#"
+[tables."self.statuses"]
+doc = "Statuses."
+object = ["object.local_player"]
+list = { at = "object.character.data", length = 30, stride = 16, present = "level" }
+
+[tables."self.statuses".fields.level]
+doc = "Level."
+path = ["object.character_data.level"]
+"#;
+
+    #[test]
+    fn list_tables_describe_their_array() {
+        let loaded = map(&format!("{SELF}{LIST}")).unwrap();
+        let list = loaded
+            .state_table("self.statuses")
+            .unwrap()
+            .list
+            .clone()
+            .unwrap();
+        assert_eq!((list.length, list.stride, list.pointers), (30, 16, false));
+        assert_eq!(list.present.as_deref(), Some("level"));
+        for (from, to) in [
+            ("length = 30", "length = 0"),
+            ("stride = 16", "stride = 0"),
+            ("stride = 16", "pointers = true, stride = 16"),
+            ("present = \"level\"", "present = \"other\""),
+            (
+                "at = \"object.character.data\"",
+                "at = \"object.character_data.level\"",
+            ),
+            ("present = \"level\"", "count = \"object.character.name\""),
+            (
+                "[tables.\"self.statuses\".fields.level]",
+                "[tables.\"self.statuses\".fields.index]",
+            ),
+        ] {
+            assert!(
+                map(&format!("{SELF}{}", LIST.replace(from, to))).is_err(),
+                "{to}"
+            );
+        }
+        assert!(
+            map(&format!(
+                "{SELF}{}",
+                LIST.replace("stride = 16, ", "pointers = true, ")
+            ))
+            .is_ok()
         );
     }
 
