@@ -105,6 +105,19 @@ impl Panel {
         }
     }
 
+    /// The Windows virtual-key code of the key that opens and closes the
+    /// menu, and whether the menu waits for the player to press a new one.
+    #[must_use]
+    pub fn menu_key(&self) -> (u32, bool) {
+        (self.menu.key().virtual_key(), self.menu.choosing_key())
+    }
+
+    /// The key with the Windows virtual-key code `code` was pressed while
+    /// the menu waited for its new key.
+    pub fn key_pressed(&mut self, host: &Host, code: u32) {
+        self.menu.key_pressed(host, code);
+    }
+
     /// Draws the menu when `menu` is true, otherwise the plugins' windows
     /// and Angelica's sign. Returns whether the menu stays open.
     pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {

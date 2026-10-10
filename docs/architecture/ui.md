@@ -8,7 +8,7 @@ The overlay chains with other tools that draw over the game; it does not assume 
 
 Bootstrap device creation requests the swap chain, device, feature level, and immediate context together. Graphics interposers can interpret a missing device output as a capability probe and omit swap-chain creation. Incomplete outputs fail initialization and release the bootstrap window; the host log distinguishes installed hooks from attachment to a rendering swap chain.
 
-`Insert` opens and closes the Angelica menu; `Esc` and the close button in its title bar close it, and the game starts with it closed. Plugin windows are shown while the menu is closed. In text fields, Ctrl+V pastes text from the Windows clipboard and Ctrl+C and Ctrl+X copy and cut to it. Mouse messages are consumed only while egui requests them. Keyboard messages are consumed while a text field has focus and, except system keys such as Alt+F4, while the menu is open. A disabled overlay releases capture. Rendering uses a private deferred context and executes its command list with immediate-context state restoration. No back-buffer references survive a completed frame; resizing drops frame resources before forwarding to the original function.
+The menu key, `Insert` unless the player chose another, opens and closes the Angelica menu; `Esc` and the close button in its title bar close it, and the game starts with it closed. The game does not receive the menu key. Plugin windows are shown while the menu is closed. In text fields, Ctrl+V pastes text from the Windows clipboard and Ctrl+C and Ctrl+X copy and cut to it. Mouse messages are consumed only while egui requests them. Keyboard messages are consumed while a text field has focus and, except system keys such as Alt+F4, while the menu is open. A disabled overlay releases capture. Rendering uses a private deferred context and executes its command list with immediate-context state restoration. No back-buffer references survive a completed frame; resizing drops frame resources before forwarding to the original function.
 
 When rendering runs outside the startup thread, a registered Windows message schedules ticks and UI events on the window thread. Main callbacks run only if it matches the startup thread. The renderer uses cached window descriptions. A mismatch disables the overlay with a diagnostic.
 
@@ -38,7 +38,7 @@ Below the list, a field takes an `https` link to a [plugin file](../formats/plug
 
 **Settings** has a column of sections on the left, each with a small icon, on a background slightly darker than the window; the chosen section is a light rounded plate inset in that column and does not merge with the right side. The sections are:
 
-- **General**: the key that opens Angelica, `Insert`, shown as a small key token; the language; the theme; the size of Angelica's windows: small, normal, or large. The size grows with the square root of the screen's height, so a high resolution makes the windows only a little larger;
+- **General**: the key that opens Angelica, shown as a small key token; the language; the theme; the size of Angelica's windows: small, normal, or large. The size grows with the square root of the screen's height, so a high resolution makes the windows only a little larger. A click on the key token asks for another key, and the next key pressed becomes the menu key when it is `Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`; `Esc` keeps the current key, and other keys are waited out. The new key applies at once;
 - **Updates**: **Check now** for plugins from their authors, with when they were last checked in this session; plugins update by themselves, and a version that asks for more waits for the player;
 - **For developers**: the game map for the running build (whether a signed build record verified it, and every absent entry with the reason), each plugin with its id, version, state, folder, and recent log, what the plugin installer reported, and recent host diagnostics.
 
@@ -46,11 +46,11 @@ A setting is a row with its name on the left and its value on the right. Choices
 
 Enabling, disabling, approving, and retrying apply in the current session, on the main thread at the next frame.
 
-While the menu is closed, nothing of Angelica is drawn except plugin windows and short notes. A note is a small window at the top right with `angelica`, a mark, and one line: how many plugins wait for the player and how many run, for the first seconds of the game and as long as a plugin needs the player; or what the plugin installer did (a plugin installed, a plugin updated with or without new permissions, or a link that could not be installed), for a few seconds. A note says that `Insert` opens Angelica and takes no input.
+While the menu is closed, nothing of Angelica is drawn except plugin windows and short notes. A note is a small window at the top right with `angelica`, a mark, and one line: how many plugins wait for the player and how many run, for the first seconds of the game and as long as a plugin needs the player; or what the plugin installer did (a plugin installed, a plugin updated with or without new permissions, or a link that could not be installed), for a few seconds. A note says which key opens Angelica and takes no input.
 
 ## Language
 
-Angelica's own interface is in English and Russian. Without the player's choice, it follows the language of the Windows interface: Russian for Russian, English otherwise. The player's choices of language, theme, and size in Settings are kept in the installation's [state folder](../formats/host-installation-v1.md#angelica-settings). Plugins' windows show what plugins write.
+Angelica's own interface is in English and Russian. Without the player's choice, it follows the language of the Windows interface: Russian for Russian, English otherwise. The player's choices of language, theme, size, and menu key in Settings are kept in the installation's [state folder](../formats/host-installation-v1.md#angelica-settings). Plugins' windows show what plugins write.
 
 ## Look
 

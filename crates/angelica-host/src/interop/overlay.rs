@@ -346,6 +346,10 @@ impl Overlay {
             .native_pixels_per_point = Some(scale);
         let menu = self.input.menu.load(Ordering::Acquire);
         let panel = &mut frame.panel;
+        let chosen = self.input.chosen_key.swap(0, Ordering::AcqRel);
+        if chosen != 0 {
+            panel.key_pressed(&self.host, chosen);
+        }
         let mut keep = menu;
         let mut output = frame.context.run_ui(input, |ui| {
             keep = panel.draw(&self.host, ui.ctx(), menu);
@@ -353,6 +357,9 @@ impl Overlay {
         if menu && !keep {
             self.input.menu.store(false, Ordering::Release);
         }
+        let (key, choosing) = panel.menu_key();
+        self.input.key.store(key, Ordering::Release);
+        self.input.choosing_key.store(choosing, Ordering::Release);
         self.copy(std::mem::take(&mut output.platform_output.commands));
         self.input
             .mouse

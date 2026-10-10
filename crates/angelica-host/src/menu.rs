@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 use crate::{
     host::{Action, Event, Host, Plugin, Status},
+    key::MenuKey,
     language::{Language, Settings, Strings, fill},
     manifest::{Class, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
@@ -180,6 +181,8 @@ pub struct Menu {
     applied: Option<Theme>,
     settings: Settings,
     settings_path: PathBuf,
+    /// Whether the next key the player presses becomes the menu's key.
+    choosing_key: bool,
     tab: Tab,
     section: Section,
     query: String,
@@ -228,6 +231,7 @@ impl Menu {
             applied: None,
             settings,
             settings_path,
+            choosing_key: false,
             tab: Tab::Installed,
             section: Section::General,
             query: String::new(),
@@ -262,6 +266,38 @@ impl Menu {
         self.theme = theme;
         self.settings.theme = Some(theme);
         self.save(host);
+    }
+
+    /// The key that opens and closes the menu.
+    #[must_use]
+    pub fn key(&self) -> MenuKey {
+        self.settings.key.unwrap_or_default()
+    }
+
+    /// Whether the menu waits for the player to press its new key; the
+    /// next key pressed then comes to [`Self::key_pressed`] and nowhere else.
+    #[must_use]
+    pub fn choosing_key(&self) -> bool {
+        self.choosing_key
+    }
+
+    /// The key with the Windows virtual-key code `code` was pressed while
+    /// the menu waited for its new key: `Esc` keeps the key, a key the menu
+    /// can be on becomes it, and any other key is waited out.
+    pub fn key_pressed(&mut self, host: &Host, code: u32) {
+        const ESCAPE: u32 = 0x1b;
+        if !self.choosing_key {
+            return;
+        }
+        if code == ESCAPE {
+            self.choosing_key = false;
+        } else if let Some(key) = MenuKey::from_virtual_key(code) {
+            self.choosing_key = false;
+            if key != self.key() {
+                self.settings.key = Some(key);
+                self.save(host);
+            }
+        }
     }
 
     /// Draws the menu when `open`, otherwise the notes. Returns whether
@@ -302,6 +338,7 @@ impl Menu {
         } else {
             self.dialog = None;
             self.removing = None;
+            self.choosing_key = false;
             self.draw_notes(context, &view);
             false
         }
@@ -337,6 +374,9 @@ impl Menu {
                     Tab::Settings => self.draw_settings(ui, view),
                 }
             });
+        if self.tab != Tab::Settings || self.section != Section::General {
+            self.choosing_key = false;
+        }
         if self.dialog.is_some() {
             self.draw_dialog(context, view);
         }
@@ -1341,9 +1381,24 @@ impl Menu {
     fn general(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
+        let key = self.key().name();
         setting(ui, view, s.setting_key, |ui| {
-            theme::key(ui, "Insert", view.k);
+            let text = if self.choosing_key { s.key_press } else { key };
+            if theme::key(ui, text, view.k).clicked() {
+                self.choosing_key = !self.choosing_key;
+            }
         });
+        if self.choosing_key {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(fill(s.key_note, &[("key", key)]))
+                        .font(sans(view.at(12.0)))
+                        .color(p.secondary),
+                )
+                .wrap(),
+            );
+            ui.add_space(view.at(10.0));
+        }
         let mut language = None;
         setting(ui, view, s.setting_language, |ui| {
             let response = theme::value(ui, self.language.name(), view.k);
@@ -1725,6 +1780,7 @@ impl Menu {
                 fraction((age / 0.25).min((NOTE_TIME - age) / 0.5)),
             ));
         }
+        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
         let mut top = view.screen.top() + view.at(24.0);
         for (index, (text, tone, fade)) in notes.into_iter().enumerate() {
             let area = egui::Area::new(Id::new(("angelica-note", index)))
@@ -1734,7 +1790,7 @@ impl Menu {
                 .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
                 .show(context, |ui| {
                     ui.multiply_opacity(fade);
-                    note(ui, view, &text, tone, self.strings().hint);
+                    note(ui, view, &text, tone, &hint);
                 });
             top = area.response.rect.bottom() + view.at(8.0);
         }

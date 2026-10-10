@@ -2,6 +2,7 @@
 //! player's choice of one. Plugins' windows show what plugins write.
 #![forbid(unsafe_code)]
 use crate::{
+    key::MenuKey,
     manifest::{Class, Permission},
     theme::{Size, Theme},
 };
@@ -43,7 +44,7 @@ strings! {
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
     esc_closes: "Esc closes", "Esc — закрыть";
-    hint: "Insert opens Angelica", "Insert — открыть Angelica";
+    hint: "{key} opens Angelica", "{key} — открыть Angelica";
     nothing_yet: "No plugins yet", "Плагинов пока нет";
     waiting_one: "{n} waiting for you", "{n} ждёт вас";
     waiting_few: "{n} waiting for you", "{n} ждут вас";
@@ -108,6 +109,8 @@ strings! {
     section_updates: "Updates", "Обновления";
     section_developers: "For developers", "Для разработчиков";
     setting_key: "Menu key", "Клавиша меню";
+    key_press: "Press a key…", "Нажмите клавишу…";
+    key_note: "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock, or F1 to F12. Esc keeps {key}.", "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock или F1–F12. Esc оставит {key}.";
     setting_language: "Language", "Язык";
     setting_theme: "Theme", "Тема";
     theme_light: "light", "светлая";
@@ -271,6 +274,9 @@ pub struct Settings {
     /// choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Size>,
+    /// The key the player chose for the menu; `Insert` without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<MenuKey>,
 }
 
 /// The settings file's name: a plugin id cannot begin with `_`, so it never
@@ -419,6 +425,18 @@ mod tests {
             r#"{"format":1,"language":"ru","theme":"dark","size":"small"}"#
         );
         assert_eq!(Settings::load(&path), settings_with_format(&settings));
+        let settings = Settings {
+            key: MenuKey::from_virtual_key(0x78),
+            ..settings
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"format":1,"language":"ru","theme":"dark","size":"small","key":"F9"}"#
+        );
+        assert_eq!(Settings::load(&path), settings_with_format(&settings));
+        std::fs::write(&path, r#"{"format":1,"key":"A"}"#).unwrap();
+        assert_eq!(Settings::load(&path), Settings::default());
         std::fs::write(&path, r#"{"format":2,"language":"ru"}"#).unwrap();
         assert_eq!(Settings::load(&path).language, None);
     }

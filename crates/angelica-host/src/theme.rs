@@ -422,14 +422,14 @@ pub fn value(ui: &mut Ui, text: &str, k: f32) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A key as a small token in the action color.
+/// A key as a small token in the action color; a click asks for another key.
 pub fn key(ui: &mut Ui, text: &str, k: f32) -> egui::Response {
     let p = current(ui.ctx()).palette();
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), strong(12.0 * k), p.action);
     let size = galley.size() + vec2(16.0 * k, 6.0 * k);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(4), alpha(p.action, 0.1));
     painter.rect_stroke(
@@ -439,7 +439,7 @@ pub fn key(ui: &mut Ui, text: &str, k: f32) -> egui::Response {
         egui::StrokeKind::Inside,
     );
     painter.galley_with_override_text_color(rect.center() - galley.size() / 2.0, galley, p.action);
-    response
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A small header over a part of a list: its title, a count, and a thin

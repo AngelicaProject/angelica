@@ -23,6 +23,7 @@ pub mod http;
 pub mod icons;
 pub mod installer;
 pub mod jobs;
+pub mod key;
 pub mod language;
 pub mod manifest;
 pub mod menu;

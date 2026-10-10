@@ -1,7 +1,7 @@
 use egui::{Event, Key, Modifiers, PointerButton};
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 use windows_sys::Win32::{
     Foundation::HWND,
@@ -18,8 +18,14 @@ use windows_sys::Win32::{
 
 pub struct Input {
     pub raw: Mutex<egui::RawInput>,
-    /// Whether the Angelica menu is open; `Insert` toggles it.
+    /// Whether the Angelica menu is open; the key `key` toggles it.
     pub menu: AtomicBool,
+    /// The virtual-key code of the key that opens and closes the menu.
+    pub key: AtomicU32,
+    /// Whether the menu waits for the player to press its new key.
+    pub choosing_key: AtomicBool,
+    /// The virtual-key code pressed while the menu waited; 0 for none.
+    pub chosen_key: AtomicU32,
     pub mouse: AtomicBool,
     pub keyboard: AtomicBool,
     window: AtomicUsize,
@@ -30,6 +36,9 @@ impl Default for Input {
         Self {
             raw: Mutex::new(egui::RawInput::default()),
             menu: AtomicBool::new(false),
+            key: AtomicU32::new(crate::key::MenuKey::default().virtual_key()),
+            choosing_key: AtomicBool::new(false),
+            chosen_key: AtomicU32::new(0),
             mouse: AtomicBool::new(false),
             keyboard: AtomicBool::new(false),
             window: AtomicUsize::new(0),
@@ -83,10 +92,34 @@ impl Input {
         self.keyboard.store(false, Ordering::Release);
     }
 
-    fn event(&self, message: u32, wparam: usize, lparam: isize) -> bool {
-        if message == WM_KEYDOWN && wparam == 0x2d && (lparam.cast_unsigned() & (1 << 30)) == 0 {
+    /// Takes a press of the menu key, which opens or closes the menu, and
+    /// any press while the menu waits for its new key.
+    fn menu_key(&self, message: u32, wparam: usize, lparam: isize) -> bool {
+        // F10 alone arrives as a system key; with Alt held the context bit is set.
+        let pressed = message == WM_KEYDOWN
+            || (message == WM_SYSKEYDOWN && lparam.cast_unsigned() & (1 << 29) == 0);
+        let Ok(code) = u32::try_from(wparam) else {
+            return false;
+        };
+        if !pressed {
+            return false;
+        }
+        if self.choosing_key.load(Ordering::Acquire) {
+            self.chosen_key.store(code, Ordering::Release);
+            return true;
+        }
+        if code != self.key.load(Ordering::Acquire) {
+            return false;
+        }
+        if lparam.cast_unsigned() & (1 << 30) == 0 {
             self.menu.fetch_xor(true, Ordering::AcqRel);
             self.release();
+        }
+        true
+    }
+
+    fn event(&self, message: u32, wparam: usize, lparam: isize) -> bool {
+        if self.menu_key(message, wparam, lparam) {
             return true;
         }
         let Ok(mut input) = self.raw.try_lock() else {
