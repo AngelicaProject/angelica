@@ -49,6 +49,22 @@ pub fn row(
         .map(|found| found.map(|row| row.values))
 }
 
+/// The text of a text column in a row as the game shows it now: with a
+/// translation a plugin put there, or the game's own text. For showing to
+/// the player only; `None` when the sheet has no such row.
+///
+/// # Errors
+/// See `excel.shown`.
+pub fn shown(
+    sheet: &str,
+    language: u8,
+    column: &str,
+    row: u32,
+) -> Result<Option<String>, crate::Error> {
+    api::shown(sheet, language, column, RowKey { row, subrow: 0 })
+        .map(|found| found.map(|text| crate::text::sestring::plain(&text)))
+}
+
 /// Every row of a sheet with the values of `columns`, read page by page.
 #[must_use]
 pub fn rows(sheet: &str, language: u8, columns: &[&str]) -> Rows {

@@ -696,6 +696,37 @@ impl api::excel::Host for State {
             Ok(row.as_ref().map(|row| sheet_row(row, &indexes)))
         })
     }
+
+    fn shown(
+        &mut self,
+        name: String,
+        language: u8,
+        column: String,
+        key: api::excel::RowKey,
+    ) -> ApiResult<Option<Vec<u8>>> {
+        self.host(|state| {
+            let indexes = api(state.column_indexes(&name, std::slice::from_ref(&column)))?;
+            let services = &state.context.services;
+            let row = api(services.data.row(&name, language, (key.row, key.subrow)))?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let Some(crate::game_data::Cell::Text(original)) =
+                row.cells.get(usize::from(indexes[0]))
+            else {
+                return Err(Error::invalid(format!(
+                    "{column} of sheet {name} is not a text column"
+                ))
+                .into());
+            };
+            Ok(Some(
+                services
+                    .excel
+                    .shown(&name, language, key.row, key.subrow, indexes[0], original)
+                    .unwrap_or_else(|| original.clone()),
+            ))
+        })
+    }
 }
 
 impl api::file_replacements::Host for State {
