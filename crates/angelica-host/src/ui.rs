@@ -24,6 +24,9 @@ enum Group {
     Table,
 }
 
+/// The most parts a window's path has.
+pub const MAX_PATH: usize = 4;
+
 /// # Errors
 /// Names the first rule a window breaks: too many windows or widgets, text
 /// or ids too long, repeated ids, unbalanced rows, sections, and tables, a
@@ -68,6 +71,18 @@ fn validate_window(window: &Window) -> Result<usize, String> {
         }
         Ok(())
     };
+    if window.path.len() > MAX_PATH {
+        return Err(format!("a path of more than {MAX_PATH} parts"));
+    }
+    for part in &window.path {
+        if part.trim().is_empty() {
+            return Err("an empty part of the path".into());
+        }
+        label(part, "a part of the path")?;
+    }
+    if let Some(status) = &window.status {
+        label(&status.text, "the status")?;
+    }
     label(&window.title, "the title")?;
     let mut ids = BTreeSet::new();
     let mut open: Vec<Group> = Vec::new();
@@ -255,6 +270,8 @@ mod tests {
         vec![Window {
             id: "main".into(),
             title: "Main".into(),
+            path: Vec::new(),
+            status: None,
             widgets,
         }]
     }
@@ -284,6 +301,18 @@ mod tests {
             id: "items".into(),
             columns: columns.iter().map(|&c| c.into()).collect(),
         })
+    }
+
+    #[test]
+    fn a_path_has_at_most_four_parts_and_no_blank_one() {
+        let with = |path: &[&str]| {
+            let mut windows = window(vec![text("x")]);
+            windows[0].path = path.iter().map(|part| (*part).to_owned()).collect();
+            validate(&windows)
+        };
+        assert!(with(&["a", "b", "c", "d"]).is_ok());
+        assert!(with(&["a", "b", "c", "d", "e"]).is_err());
+        assert!(with(&["a", " "]).is_err());
     }
 
     #[test]

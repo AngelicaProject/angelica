@@ -19,8 +19,29 @@ impl Window {
         Self {
             id: id.into(),
             title: title.into(),
+            path: Vec::new(),
+            status: None,
             widgets: Vec::new(),
         }
+    }
+
+    /// Where the player is below the window's top level, outermost first.
+    /// The title bar shows it with a way back, which arrives as
+    /// `Event::Navigated`.
+    #[must_use]
+    pub fn path<S: Into<String>>(mut self, parts: impl IntoIterator<Item = S>) -> Self {
+        self.path = parts.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// One short line in the title bar about what the window is for.
+    #[must_use]
+    pub fn status(mut self, text: impl Into<String>, tone: Tone) -> Self {
+        self.status = Some(Status {
+            text: text.into(),
+            tone,
+        });
+        self
     }
 
     #[must_use]

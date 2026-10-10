@@ -497,6 +497,11 @@ pub enum Icon {
     Search,
     Close,
     Chevron,
+    /// The controls of a title bar.
+    Back,
+    Collapse,
+    Expand,
+    More,
     /// The classes of permissions.
     Network,
     OtherPlayers,
@@ -523,6 +528,24 @@ pub fn icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
         Icon::Close => {
             painter.line_segment([at(-6.0, -6.0), at(6.0, 6.0)], stroke);
             painter.line_segment([at(6.0, -6.0), at(-6.0, 6.0)], stroke);
+        }
+        Icon::Back => {
+            painter.add(egui::Shape::line(
+                vec![at(3.0, -6.0), at(-3.0, 0.0), at(3.0, 6.0)],
+                stroke,
+            ));
+        }
+        Icon::Collapse => {
+            painter.line_segment([at(-6.0, 0.0), at(6.0, 0.0)], stroke);
+        }
+        Icon::Expand => {
+            painter.line_segment([at(-6.0, 0.0), at(6.0, 0.0)], stroke);
+            painter.line_segment([at(0.0, -6.0), at(0.0, 6.0)], stroke);
+        }
+        Icon::More => {
+            for x in [-7.0, 0.0, 7.0] {
+                painter.circle_filled(at(x, 0.0), 1.4 * r, color);
+            }
         }
         Icon::Chevron => {
             painter.add(egui::Shape::line(

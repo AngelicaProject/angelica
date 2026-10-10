@@ -4,16 +4,16 @@
 #![forbid(unsafe_code)]
 use crate::theme::{self, Word};
 use crate::{
-    host::{Event, Host, Plugin, Status},
+    host::{Action, Event, Host, Plugin, Status},
     language::{Language, Strings},
-    menu::{self, Look, Menu},
+    menu::{self, Bar, Look, Mark, Menu},
     sandbox::bindings::angelica::plugin::ui::{
-        Choice, Chosen, Edited, Icon, Number, NumberSet, Progress, Table, Tabs, TextInput, Toggled,
-        Tone, Widget, WidgetRef,
+        Choice, Chosen, Edited, Icon, Navigated, Number, NumberSet, Progress, Table, Tabs,
+        TextInput, Toggled, Tone, Widget, WidgetRef,
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -27,6 +27,9 @@ const ICON_BUDGET: Duration = Duration::from_millis(2);
 pub struct Panel {
     menu: Menu,
     inputs: HashMap<(String, String, String), String>,
+    /// The plugin windows collapsed to their title bars, by plugin and
+    /// window id.
+    collapsed: HashSet<(String, String)>,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -101,6 +104,7 @@ impl Panel {
         Self {
             menu: Menu::new(host, system),
             inputs: HashMap::new(),
+            collapsed: HashSet::new(),
             icons: Icons::default(),
             map_status,
         }
@@ -149,23 +153,59 @@ impl Panel {
         strings: &'static Strings,
     ) {
         let id = plugin.manifest.id();
-        let name = &plugin.manifest.plugin.name;
-        let title = if window.title == *name {
-            name.clone()
-        } else {
-            format!("{} — {name}", window.title)
+        let key = (id.to_owned(), window.id.clone());
+        let collapsed = self.collapsed.contains(&key);
+        let status = window.status.as_ref().map(|status| {
+            let mark = match status.tone {
+                Tone::Good => Mark::Running,
+                Tone::Warning | Tone::Bad => Mark::Attention,
+                Tone::Normal | Tone::Muted => Mark::None,
+            };
+            (status.text.as_str(), mark)
+        });
+        let bar = Bar {
+            wordmark: false,
+            title: &window.title,
+            path: &window.path,
+            status,
+            collapsed: Some(collapsed),
+            menu: true,
+            strings,
         };
-        let mut open = true;
-        egui::Window::new(&title)
-            .id(egui::Id::new(("angelica-plugin", id, &window.id)))
-            .title_bar(false)
-            .collapsible(false)
-            .frame(menu::window_frame(context, look.p))
-            .default_width(look.at(480.0))
-            .show(context, |ui| {
+        let mut pressed = menu::Pressed::default();
+        // A collapsed window is its own small window with its own place.
+        let frame = egui::Window::new(format!(
+            "{} — {}",
+            window.title, plugin.manifest.plugin.name
+        ))
+        .id(egui::Id::new((
+            "angelica-plugin",
+            id,
+            &window.id,
+            collapsed,
+        )))
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(!collapsed)
+        .frame(menu::window_frame(context, look.p));
+        if collapsed {
+            frame.show(context, |ui| {
+                ui.set_width(look.at(330.0));
+                pressed = menu::bar(ui, &look, &bar);
+            });
+        } else {
+            frame.default_width(look.at(480.0)).show(context, |ui| {
                 ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                if menu::title_bar(ui, &look, Some(&title), strings.close) {
-                    open = false;
+                pressed = menu::bar(ui, &look, &bar);
+                if let Some(button) = &pressed.menu {
+                    egui::Popup::menu(button).show(|ui| {
+                        if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
+                            host.queue(Action::OpenFolder(id.to_owned()));
+                        }
+                        if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
+                            host.queue(Action::Disable(id.to_owned()));
+                        }
+                    });
                 }
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(
@@ -193,7 +233,24 @@ impl Panel {
                             });
                     });
             });
-        if !open {
+        }
+        if pressed.toggle {
+            if collapsed {
+                self.collapsed.remove(&key);
+            } else {
+                self.collapsed.insert(key);
+            }
+        }
+        if let Some(depth) = pressed.navigate {
+            host.queue_event(
+                id,
+                Event::Navigated(Navigated {
+                    window: window.id.clone(),
+                    depth,
+                }),
+            );
+        }
+        if pressed.close {
             host.queue_event(id, Event::Closed(window.id.clone()));
         }
     }

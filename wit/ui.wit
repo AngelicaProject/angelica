@@ -127,9 +127,24 @@ interface ui {
         icon(icon),
     }
 
+    /// One short line in a window's title bar about what the window is
+    /// for, such as what is in use or what waits for the player.
+    record status {
+        text: string,
+        /// `good` shows the mark of something running, `warning` and `bad`
+        /// the mark of something that needs the player.
+        tone: tone,
+    }
+
     record window {
         id: string,
+        /// The window's name in its title bar; usually the plugin's name.
         title: string,
+        /// Where the player is below the window's top level, outermost
+        /// first, at most 4 parts. The title bar shows it after the title
+        /// with a way back; see `navigated`.
+        path: list<string>,
+        status: option<status>,
         widgets: list<widget>,
     }
 
@@ -146,8 +161,16 @@ interface ui {
         set(number-set),
         /// The player closed the window with its close button.
         closed(string),
+        /// The player went back in a window's path.
+        navigated(navigated),
         /// The player asked to open the plugin from the Angelica menu.
         open-requested,
+    }
+
+    record navigated {
+        window: string,
+        /// How many parts of the path stay; 0 is the window's top level.
+        depth: u32,
     }
 
     record widget-ref {

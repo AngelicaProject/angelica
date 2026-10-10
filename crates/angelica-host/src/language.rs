@@ -44,6 +44,11 @@ strings! {
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
     word_on: "On", "Вкл";
+    bar_back: "Back", "Назад";
+    bar_collapse: "Collapse", "Свернуть";
+    bar_expand: "Expand", "Развернуть";
+    bar_menu: "Menu", "Меню";
+    menu_check_updates: "Check for updates", "Проверить обновления";
     word_off: "Off", "Выкл";
     esc_closes: "Esc closes", "Esc — закрыть";
     hint: "{key} opens Angelica", "{key} — открыть Angelica";

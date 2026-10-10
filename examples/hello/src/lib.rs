@@ -483,6 +483,7 @@ impl Plugin for Hello {
             Event::Chosen(chosen) if chosen.id == "tabs" => self.tab = chosen.index,
             Event::Chosen(chosen) => self.color = Some(chosen.index),
             Event::Set(set) => self.volume = set.value,
+            Event::Navigated(_) => {}
         }
     }
 
