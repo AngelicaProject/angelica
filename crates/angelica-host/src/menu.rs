@@ -9,7 +9,7 @@ use crate::{
     manifest::{Class, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
     sandbox::bindings::angelica::plugin::runtime::Level,
-    theme::{self, Icon, Palette, Theme, Word, medium, mono, sans, strong, wordmark},
+    theme::{self, Icon, Palette, Size, Theme, Word, medium, mono, sans, strong, wordmark},
 };
 use egui::{
     Align2, Color32, CornerRadius, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
@@ -148,6 +148,16 @@ const COLUMNS: f32 = 18.0;
 /// and the footer. Settings take the same height as Installed.
 const AROUND_LIST: f32 = 44.0 + 44.0 + 28.0;
 
+/// What the player can do with a plugin from its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    Open,
+    TurnOn,
+    TurnOff,
+    Review,
+    Folder,
+}
+
 /// What a note means, which picks its mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tone {
@@ -200,11 +210,6 @@ impl View<'_> {
     fn at(&self, value: f32) -> f32 {
         value * self.k
     }
-}
-
-/// The menu's size for a screen: normal at 1080 lines.
-fn scale(screen: Rect) -> f32 {
-    (screen.height() / 1080.0).clamp(0.85, 2.0)
 }
 
 impl Menu {
@@ -277,7 +282,11 @@ impl Menu {
             statuses: &statuses,
             map_status,
             screen,
-            k: scale(screen),
+            k: self
+                .settings
+                .size
+                .unwrap_or_default()
+                .scale(screen.height()),
             time: context.input(|input| input.time),
             p: self.theme.palette(),
         };
@@ -513,8 +522,8 @@ impl Menu {
             .id_salt("angelica-installed")
             .auto_shrink([false, false])
             .max_height(height * VISIBLE_ROWS)
-            .show_rows(ui, height, lines.len(), |ui, range| {
-                for line in &lines[range] {
+            .show(ui, |ui| {
+                for line in lines {
                     match *line {
                         Line::Heading(group, count) => {
                             let color = match group {
@@ -522,10 +531,8 @@ impl Menu {
                                 Group::On => p.secondary,
                                 Group::Off => p.muted,
                             };
-                            ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
-                                ui.add_space(height - view.at(26.0));
-                                theme::header(ui, group.title(s), Some(count), color, view.k);
-                            });
+                            ui.add_space(height - view.at(26.0));
+                            theme::header(ui, group.title(s), Some(count), color, view.k);
                         }
                         Line::Plugin(index) => {
                             if self.plugin_row(ui, view, index, height) {
@@ -539,7 +546,8 @@ impl Menu {
     }
 
     /// A plugin's row: its tile, name, permissions, version, and state,
-    /// with a tooltip and a menu on the right click. Returns true when the
+    /// with its actions under the pointer, a menu on the right click, and
+    /// its details when it is chosen. Returns true when the
     /// player opened the plugin.
     fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) -> bool {
         let p = view.p;
@@ -551,9 +559,10 @@ impl Menu {
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         let painter = ui.painter().clone();
         let chosen = self.selected.as_deref() == Some(id);
+        let pointed = ui.rect_contains_pointer(rect);
         if chosen {
             painter.rect_filled(rect, CornerRadius::ZERO, p.selection);
-        } else if response.hovered() {
+        } else if pointed {
             painter.rect_filled(rect, CornerRadius::ZERO, p.hover);
         }
         let off = *status == Status::Disabled;
@@ -575,41 +584,12 @@ impl Menu {
             name,
             p.text,
         );
-        let asked: Vec<Class> = if *status == Status::AwaitingApproval {
-            plugin
-                .requests()
-                .into_iter()
-                .map(|(class, _)| class)
-                .collect()
+        let (mut acted, mut opened) = (false, false);
+        if pointed && !chosen {
+            (acted, opened) = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
         } else {
-            Vec::new()
-        };
-        for (at, class) in plugin_classes(plugin, status).into_iter().enumerate() {
-            let color = if asked.contains(&class) {
-                p.attention
-            } else if off {
-                p.muted
-            } else {
-                p.secondary
-            };
-            let x = columns.permissions + view.at(20.0) * f32_of(at) + view.at(7.0);
-            theme::icon(
-                &painter,
-                class_icon(class),
-                Rect::from_center_size(
-                    pos2(x, rect.center().y),
-                    vec2(view.at(14.0), view.at(14.0)),
-                ),
-                color,
-            );
+            row_facts(&painter, view, plugin, status, rect, &columns);
         }
-        painter.text(
-            pos2(columns.version, rect.center().y),
-            Align2::RIGHT_CENTER,
-            &plugin.manifest.plugin.version,
-            sans(view.at(12.5)),
-            p.muted,
-        );
         let mark = pos2(columns.state, rect.center().y);
         match status {
             Status::AwaitingApproval | Status::Faulted(_) => {
@@ -618,21 +598,211 @@ impl Menu {
             Status::Running => theme::running(&painter, mark, view.k, p),
             Status::Disabled => theme::off(&painter, mark, view.k, p),
         }
-        if response.clicked() {
-            self.selected = Some(id.to_owned());
-            if *status == Status::AwaitingApproval {
-                self.dialog = Some(id.to_owned());
+        if !acted {
+            if response.double_clicked() && *status == Status::Running {
+                opened |= self.act(view, plugin, RowAction::Open);
+            } else if response.clicked() {
+                if *status == Status::AwaitingApproval {
+                    self.selected = Some(id.to_owned());
+                    self.dialog = Some(id.to_owned());
+                } else if chosen {
+                    self.selected = None;
+                } else {
+                    self.selected = Some(id.to_owned());
+                }
             }
         }
-        let mut opened = false;
-        let menu = response.context_menu(|ui| {
+        response.context_menu(|ui| {
             self.selected = Some(id.to_owned());
-            opened = self.row_menu(ui, view, plugin, status);
+            opened |= self.row_menu(ui, view, plugin, status);
         });
-        if menu.is_none() {
-            response.on_hover_ui(|ui| self.tooltip(ui, view, plugin, status));
+        if chosen {
+            opened |= self.details(ui, view, plugin, status);
         }
         opened
+    }
+
+    /// The actions of a pointed row, as words at its right. Returns whether
+    /// the player used one, and whether it opened the plugin.
+    #[allow(clippy::too_many_arguments)]
+    fn action_words(
+        &mut self,
+        ui: &mut Ui,
+        painter: &egui::Painter,
+        view: &View<'_>,
+        plugin: &Plugin,
+        status: &Status,
+        rect: Rect,
+        columns: &Columns,
+    ) -> (bool, bool) {
+        let p = view.p;
+        let id = plugin.manifest.id();
+        let (mut acted, mut opened) = (false, false);
+        let mut right = columns.version;
+        for (index, (text, action)) in self.row_actions(status).into_iter().enumerate().rev() {
+            let kind = if index == 0 {
+                Word::Action
+            } else {
+                Word::Secondary
+            };
+            let galley = painter.layout_no_wrap(
+                text.to_owned(),
+                if kind == Word::Action {
+                    medium(view.at(13.0))
+                } else {
+                    sans(view.at(13.0))
+                },
+                p.text,
+            );
+            let word = Rect::from_min_max(
+                pos2(right - galley.size().x, rect.top()),
+                pos2(right, rect.bottom()),
+            );
+            let hit = ui
+                .interact(
+                    word.expand2(vec2(view.at(4.0), 0.0)),
+                    Id::new(("angelica-row-action", id, index)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let color = match kind {
+                Word::Action => p.action,
+                _ if hit.hovered() => p.text,
+                _ => p.secondary,
+            };
+            let at = pos2(word.left(), rect.center().y - galley.size().y / 2.0);
+            let width = galley.size().x;
+            let bottom = at.y + galley.size().y;
+            painter.galley_with_override_text_color(at, galley, color);
+            if hit.hovered() {
+                painter.line_segment(
+                    [pos2(at.x, bottom), pos2(at.x + width, bottom)],
+                    Stroke::new(1.0, theme::alpha(color, 0.6)),
+                );
+            }
+            if hit.clicked() {
+                acted = true;
+                opened |= self.act(view, plugin, action);
+            }
+            right = word.left() - view.at(14.0);
+        }
+        (acted, opened)
+    }
+
+    /// What can be done with a plugin in its state, the main action first.
+    fn row_actions(&self, status: &Status) -> Vec<(&'static str, RowAction)> {
+        let s = self.strings();
+        match status {
+            Status::Running => vec![(s.open, RowAction::Open), (s.turn_off, RowAction::TurnOff)],
+            Status::Disabled => vec![(s.turn_on, RowAction::TurnOn)],
+            Status::AwaitingApproval => vec![(s.review, RowAction::Review)],
+            Status::Faulted(_) => vec![
+                (s.retry, RowAction::TurnOn),
+                (s.keep_off, RowAction::TurnOff),
+            ],
+        }
+    }
+
+    /// Does `action` for `plugin`. Returns true when it opened the plugin,
+    /// which closes the menu.
+    fn act(&mut self, view: &View<'_>, plugin: &Plugin, action: RowAction) -> bool {
+        let id = plugin.manifest.id();
+        match action {
+            RowAction::Open => {
+                view.host.queue_event(id, Event::OpenRequested);
+                return true;
+            }
+            RowAction::TurnOn => view.host.queue(Action::Enable(id.to_owned())),
+            RowAction::TurnOff => view.host.queue(Action::Disable(id.to_owned())),
+            RowAction::Review => {
+                self.selected = Some(id.to_owned());
+                self.dialog = Some(id.to_owned());
+            }
+            RowAction::Folder => view.host.queue(Action::OpenFolder(id.to_owned())),
+        }
+        false
+    }
+
+    /// The chosen plugin's details under its row: what it does, what it may
+    /// do, where it comes from, and every action. Returns true when the
+    /// player opened the plugin.
+    fn details(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) -> bool {
+        let s = self.strings();
+        let p = view.p;
+        let manifest = &plugin.manifest;
+        let mut action = None;
+        egui::Frame::new()
+            .fill(p.hover)
+            .inner_margin(egui::Margin {
+                left: num_u8(view.at(46.0)),
+                right: num_u8(view.at(16.0)),
+                top: num_u8(view.at(4.0)),
+                bottom: num_u8(view.at(12.0)),
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = view.at(6.0);
+                if !manifest.plugin.description.is_empty() {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&manifest.plugin.description)
+                                .font(sans(view.at(13.0)))
+                                .color(p.secondary),
+                        )
+                        .wrap(),
+                    );
+                }
+                if let Status::Faulted(reason) = status {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{} {reason}", s.state_stopped))
+                                .font(sans(view.at(12.5)))
+                                .color(p.attention),
+                        )
+                        .wrap(),
+                    );
+                }
+                let permissions = manifest.permissions();
+                if permissions.is_empty() {
+                    permission_line(ui, view, None, s.asks_nothing, p.secondary);
+                }
+                for &permission in permissions {
+                    permission_line(
+                        ui,
+                        view,
+                        Some(class_icon(permission.class())),
+                        &self.permission_text(plugin, permission),
+                        p.text,
+                    );
+                }
+                ui.label(
+                    RichText::new(format!(
+                        "{}, {}",
+                        fill(s.version, &[("version", &manifest.plugin.version)]),
+                        self.source(plugin)
+                    ))
+                    .font(sans(view.at(12.0)))
+                    .color(p.muted),
+                );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = view.at(14.0);
+                    let mut actions = self.row_actions(status);
+                    if *status != Status::AwaitingApproval {
+                        actions.push((s.open_folder, RowAction::Folder));
+                    }
+                    for (index, (text, row_action)) in actions.into_iter().enumerate() {
+                        let kind = if index == 0 {
+                            Word::Main
+                        } else {
+                            Word::Secondary
+                        };
+                        if theme::word(ui, text, kind, true, view.k).clicked() {
+                            action = Some(row_action);
+                        }
+                    }
+                });
+            });
+        action.is_some_and(|action| self.act(view, plugin, action))
     }
 
     /// The menu of a row's right click. Returns true when the player opened
@@ -730,62 +900,6 @@ impl Menu {
                 &[("authors", &manifest.plugin.authors.join(", "))],
             ),
         }
-    }
-
-    /// The tooltip of a row: name and version, description, permissions in
-    /// plain words, and state.
-    fn tooltip(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
-        let s = self.strings();
-        let p = view.p;
-        let manifest = &plugin.manifest;
-        ui.set_max_width(view.at(300.0));
-        ui.spacing_mut().item_spacing.y = view.at(6.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(&manifest.plugin.name)
-                    .font(strong(view.at(13.5)))
-                    .color(p.text),
-            );
-            ui.label(
-                RichText::new(fill(s.version, &[("version", &manifest.plugin.version)]))
-                    .font(sans(view.at(12.0)))
-                    .color(p.muted),
-            );
-        });
-        if !manifest.plugin.description.is_empty() {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&manifest.plugin.description)
-                        .font(sans(view.at(12.5)))
-                        .color(p.secondary),
-                )
-                .wrap(),
-            );
-        }
-        theme::rule(ui);
-        let permissions = manifest.permissions();
-        if permissions.is_empty() {
-            permission_line(ui, view, None, s.asks_nothing, p.secondary);
-        }
-        for &permission in permissions {
-            permission_line(
-                ui,
-                view,
-                Some(class_icon(permission.class())),
-                &self.permission_text(plugin, permission),
-                p.text,
-            );
-        }
-        theme::rule(ui);
-        ui.horizontal(|ui| {
-            let (state, color) = self.state_line(status, p);
-            ui.label(RichText::new(state).font(sans(view.at(12.0))).color(color));
-            ui.label(
-                RichText::new(self.source(plugin))
-                    .font(sans(view.at(12.0)))
-                    .color(p.muted),
-            );
-        });
     }
 
     /// A permission in plain words, with the sites of a network one.
@@ -1239,6 +1353,25 @@ impl Menu {
         if let Some(theme) = theme {
             self.set_theme(view.host, theme);
         }
+        let mut size = None;
+        setting(ui, view, s.setting_size, |ui| {
+            let current = self.settings.size.unwrap_or_default();
+            let chosen = Size::ALL
+                .iter()
+                .position(|size| *size == current)
+                .unwrap_or(1);
+            size = theme::choice(
+                ui,
+                &[s.size_small, s.size_normal, s.size_large],
+                chosen,
+                view.k,
+            )
+            .map(|index| Size::ALL[index]);
+        });
+        if let Some(size) = size {
+            self.settings.size = Some(size);
+            self.save(view.host);
+        }
     }
 
     fn updates(&self, ui: &mut Ui, view: &View<'_>) {
@@ -1535,6 +1668,51 @@ fn columns_header(ui: &mut Ui, view: &View<'_>, s: &Strings) {
     );
 }
 
+/// The permissions and the version in a row.
+fn row_facts(
+    painter: &egui::Painter,
+    view: &View<'_>,
+    plugin: &Plugin,
+    status: &Status,
+    rect: Rect,
+    columns: &Columns,
+) {
+    let p = view.p;
+    let off = *status == Status::Disabled;
+    let asked: Vec<Class> = if *status == Status::AwaitingApproval {
+        plugin
+            .requests()
+            .into_iter()
+            .map(|(class, _)| class)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for (at, class) in plugin_classes(plugin, status).into_iter().enumerate() {
+        let color = if asked.contains(&class) {
+            p.attention
+        } else if off {
+            p.muted
+        } else {
+            p.secondary
+        };
+        let x = columns.permissions + view.at(20.0) * f32_of(at) + view.at(7.0);
+        theme::icon(
+            painter,
+            class_icon(class),
+            Rect::from_center_size(pos2(x, rect.center().y), vec2(view.at(14.0), view.at(14.0))),
+            color,
+        );
+    }
+    painter.text(
+        pos2(columns.version, rect.center().y),
+        Align2::RIGHT_CENTER,
+        &plugin.manifest.plugin.version,
+        sans(view.at(12.5)),
+        p.muted,
+    );
+}
+
 /// The classes a plugin holds, and for one waiting for approval, also
 /// those it asks for.
 fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
@@ -1658,7 +1836,7 @@ fn menu_item(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color
     }
 }
 
-/// A permission in a tooltip or the dialog: its class's icon and its words.
+/// A permission in the details or the dialog: its class's icon and its words.
 fn permission_line(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color: Color32) {
     let p = view.p;
     ui.horizontal(|ui| {

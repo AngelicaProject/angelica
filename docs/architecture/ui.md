@@ -14,13 +14,13 @@ When rendering runs outside the startup thread, a registered Windows message sch
 
 ## What the host shows
 
-Angelica's interface is a small window over the game, the size of the game's own windows, and follows the same principles: a title bar, tabs, a dense list, details in a tooltip and in the right-click menu, and short actions at the bottom. It does not copy the game's look and does not dim the game. The window can be moved, and keeps its place while the game runs.
+Angelica's interface is a small window over the game, the size of the game's own windows, and follows the same principles: a title bar, tabs, a dense list, actions in the row and in the right-click menu, details under the chosen row, and short actions at the bottom. It does not copy the game's look and does not dim the game. The window can be moved, and keeps its place while the game runs.
 
 The face of Angelica uses plain words; ids, paths, permission names, logs, and technical errors appear only under **For developers**.
 
 The title bar has the word `angelica` in lowercase, small and in a muted color, and a close button. Below it are the tabs **Installed** and **Settings**.
 
-**Installed** has a search field that filters by name and description, and a filter by permission class. The list is grouped under small section headers with a count and a thin rule: needs attention (awaiting approval, also when a new version asks for more, or stopped after a failure), on, and off, each sorted by name. The list scrolls and draws only its visible rows; with fewer plugins it keeps the height of nine rows, and Settings have the same height as Installed, so the window keeps its size. A row is 36 pixels high and has, in columns:
+**Installed** has a search field that filters by name and description, and a filter by permission class. The list is grouped under small section headers with a count and a thin rule: needs attention (awaiting approval, also when a new version asks for more, or stopped after a failure), on, and off, each sorted by name. The list scrolls; with fewer plugins it keeps the height of nine rows, and Settings have the same height as Installed, so the window keeps its size. A row is 36 pixels high and has, in columns:
 
 - a square tile with rounded corners holding the first letter of the plugin's name;
 - the name;
@@ -28,7 +28,7 @@ The title bar has the word `angelica` in lowercase, small and in a muted color, 
 - the version;
 - the state: an attention mark (`!`) for a plugin that needs the player, a small dot in the "on" color for a running plugin, and a hollow ring for one that is off. An off plugin's text, tile, and icons are muted.
 
-The chosen row is highlighted across the whole width. Hovering a row shows a tooltip with the name, version, description, permissions in plain words (with the sites of a network permission), state, and where the plugin comes from: the Angelica catalog, or its authors. A right click opens a menu headed by the plugin's tile, name, and state, with the actions that apply: **Review permissions…** for a plugin awaiting approval, **Open** (which sends the plugin `open-requested` and closes the menu) and **Turn off** for a running one, **Turn on** for one that is off, **Try again** and **Keep it off** for one stopped after a failure, and **Open folder** for all but one awaiting approval. Turning a plugin on or off is never a checkbox in its row.
+Under the pointer, a row shows its actions as words in place of its permissions and version: **Open** and **Turn off** for a running plugin, **Turn on** for one that is off, **Review permissions…** for one awaiting approval, and **Try again** and **Keep it off** for one stopped after a failure. A double click opens a running plugin. Clicking a row chooses it, and clicking it again lets it go; the chosen row is highlighted across the whole width and opens its details under it: the description, why it stopped after a failure, permissions in plain words (with the sites of a network permission), the version and where the plugin comes from (the Angelica catalog, or its authors), and every action with the main one first, and **Open folder**. A right click opens a menu headed by the plugin's tile, name, and state, with the actions that apply: **Review permissions…** for a plugin awaiting approval, **Open** (which sends the plugin `open-requested` and closes the menu) and **Turn off** for a running one, **Turn on** for one that is off, **Try again** and **Keep it off** for one stopped after a failure, and **Open folder** for all but one awaiting approval. Turning a plugin on or off is never a checkbox in its row.
 
 Clicking a plugin awaiting approval, or **Review permissions…**, opens a small dialog window with its tile, name, version, and origin, and what it would be able to do, in plain words with the sites of a network permission. For a new version of an approved plugin, the dialog shows what it asks for the first time, highlighted in the attention color, and below it what is already allowed. Its actions are **Allow and turn on** and **Not now**, which leaves the plugin waiting. A permission is granted only there.
 
@@ -36,7 +36,7 @@ Below the list, a field takes an `https` link to a [plugin file](../formats/plug
 
 **Settings** has a column of sections on the left, each with a small icon, on a background slightly darker than the window; the chosen section is a light rounded plate inset in that column and does not merge with the right side. The sections are:
 
-- **General**: the key that opens Angelica, `Insert`, shown as a small key token; the language; the theme;
+- **General**: the key that opens Angelica, `Insert`, shown as a small key token; the language; the theme; the size of Angelica's windows: small, normal, or large. The size grows with the square root of the screen's height, so a high resolution makes the windows only a little larger;
 - **Updates**: plugins update by themselves, and a version that asks for more waits for the player;
 - **For developers**: the game map for the running build (whether a signed build record verified it, and every absent entry with the reason), each plugin with its id, version, state, folder, and recent log, what the plugin installer reported, and recent host diagnostics.
 
@@ -48,7 +48,7 @@ While the menu is closed, nothing of Angelica is drawn except plugin windows and
 
 ## Language
 
-Angelica's own interface is in English and Russian. Without the player's choice, it follows the language of the Windows interface: Russian for Russian, English otherwise. The player's choices of language and theme in Settings are kept in the installation's [state folder](../formats/host-installation-v1.md#angelica-settings). Plugins' windows show what plugins write.
+Angelica's own interface is in English and Russian. Without the player's choice, it follows the language of the Windows interface: Russian for Russian, English otherwise. The player's choices of language, theme, and size in Settings are kept in the installation's [state folder](../formats/host-installation-v1.md#angelica-settings). Plugins' windows show what plugins write.
 
 ## Look
 

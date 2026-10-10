@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 use crate::{
     manifest::{Class, Permission},
-    theme::Theme,
+    theme::{Size, Theme},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -100,6 +100,10 @@ strings! {
     setting_theme: "Theme", "Тема";
     theme_light: "light", "светлая";
     theme_dark: "dark", "тёмная";
+    setting_size: "Window size", "Размер окна";
+    size_small: "small", "маленький";
+    size_normal: "normal", "обычный";
+    size_large: "large", "крупный";
     setting_updates: "Update plugins", "Обновлять плагины";
     updates_auto: "by themselves", "сами";
     updates_note: "A version that asks for more waits for you.", "Версия, которая просит больше, подождёт вас.";
@@ -243,6 +247,10 @@ pub struct Settings {
     /// The theme the player chose; the light one without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<Theme>,
+    /// How large the player wants Angelica's windows; normal without a
+    /// choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Size>,
 }
 
 /// The settings file's name: a plugin id cannot begin with `_`, so it never
@@ -382,12 +390,13 @@ mod tests {
         assert_eq!(Settings::load(&path).language, Some(Language::Russian));
         let settings = Settings {
             theme: Some(Theme::Dark),
+            size: Some(Size::Small),
             ..settings
         };
         settings.save(&path).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            r#"{"format":1,"language":"ru","theme":"dark"}"#
+            r#"{"format":1,"language":"ru","theme":"dark","size":"small"}"#
         );
         assert_eq!(Settings::load(&path), settings_with_format(&settings));
         std::fs::write(&path, r#"{"format":2,"language":"ru"}"#).unwrap();

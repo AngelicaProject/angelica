@@ -20,6 +20,35 @@ pub enum Theme {
     Dark,
 }
 
+/// The player's choice of how large Angelica's windows are.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Size {
+    #[serde(rename = "small")]
+    Small,
+    #[default]
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "large")]
+    Large,
+}
+
+impl Size {
+    pub const ALL: [Self; 3] = [Self::Small, Self::Normal, Self::Large];
+
+    /// How many times its normal size the menu is drawn on a screen
+    /// `height` points high. It grows slower than the screen, so a high
+    /// resolution does not make it large.
+    #[must_use]
+    pub fn scale(self, height: f32) -> f32 {
+        let factor = match self {
+            Self::Small => 0.8,
+            Self::Normal => 0.9,
+            Self::Large => 1.05,
+        };
+        (factor * (height / 1080.0).max(0.0).sqrt()).clamp(0.7, 2.2)
+    }
+}
+
 /// The colors of a theme, each with one role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
@@ -648,6 +677,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sizes_grow_in_order_and_slower_than_the_screen() {
+        for height in [720.0, 1080.0, 1440.0, 2160.0] {
+            let [small, normal, large] = Size::ALL.map(|size| size.scale(height));
+            assert!(small < normal && normal < large, "{height}");
+        }
+        let normal = |height| Size::Normal.scale(height);
+        assert!(normal(1440.0) / normal(1080.0) < 1440.0 / 1080.0);
+        assert!((normal(1080.0) - 0.9).abs() < 1e-6);
     }
 
     #[test]
