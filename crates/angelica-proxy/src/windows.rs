@@ -2,7 +2,6 @@ use crate::{
     RELEASE_KEY,
     trust::{self, Config, LoadError},
 };
-use angelica_hook::StartupDetour;
 use std::{
     ffi::c_void,
     fs::{File, OpenOptions},
@@ -14,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         OnceLock,
-        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use windows_sys::{
@@ -26,6 +25,7 @@ use windows_sys::{
                 GetModuleFileNameW, GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32,
                 LoadLibraryExW,
             },
+            Memory::{PAGE_READWRITE, VirtualProtect},
             SystemInformation::GetSystemDirectoryW,
             Threading::GetCurrentProcess,
         },
@@ -34,7 +34,13 @@ use windows_sys::{
 };
 
 static MODULE: AtomicUsize = AtomicUsize::new(0);
-static HOOK: AtomicPtr<StartupDetour> = AtomicPtr::new(std::ptr::null_mut());
+/// The slot of the executable's import table that the startup hook
+/// replaced, and the system function it held.
+static START_SLOT: AtomicUsize = AtomicUsize::new(0);
+static START_IMPORT: AtomicUsize = AtomicUsize::new(0);
+/// The system function the executable calls first: its entry point seeds
+/// the stack cookie with the time before anything else of the game runs.
+const START_IMPORT_NAME: &std::ffi::CStr = c"GetSystemTimeAsFileTime";
 static STARTED: AtomicBool = AtomicBool::new(false);
 static STARTUP_FAILED: AtomicBool = AtomicBool::new(false);
 static SYSTEM: OnceLock<Result<usize, String>> = OnceLock::new();
@@ -130,7 +136,7 @@ fn address(name: &[u8]) -> Result<usize, LoadError> {
 fn forward<T: Copy>(fallback: T, work: impl FnOnce() -> Result<T, LoadError>) -> T {
     boundary(fallback, || {
         if STARTUP_FAILED.swap(false, Ordering::AcqRel) {
-            log("executable entry-point hook unavailable; runtime startup disabled");
+            log("the executable's first import was not found; runtime startup disabled");
         }
         match work() {
             Ok(value) => value,
@@ -150,11 +156,11 @@ unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, reserved: *mut
         if reason == 1 {
             MODULE.store(module as usize, Ordering::Release);
             // A non-null reserved pointer identifies static process initialization.
-            // A dynamically loaded proxy must not patch an already running entry point.
+            // A dynamically loaded proxy is too late: the executable already runs.
             if !reserved.is_null() {
                 STARTUP_FAILED.store(true, Ordering::Release);
-                // SAFETY: process initialization precedes execution of the executable entry point.
-                if unsafe { install_entry() }.is_some() {
+                // SAFETY: process initialization precedes execution of the executable's code.
+                if unsafe { install_start() }.is_some() {
                     STARTUP_FAILED.store(false, Ordering::Release);
                 }
             }
@@ -179,7 +185,30 @@ fn read_memory<const N: usize>(address: usize) -> Option<[u8; N]> {
     (ok != 0 && read == N).then_some(bytes)
 }
 
-unsafe fn install_entry() -> Option<()> {
+/// Stores `value` in a slot of the executable's import table.
+fn write_slot(slot: usize, value: usize) -> Option<()> {
+    let mut previous = 0;
+    // SAFETY: the slot is eight mapped bytes of the executable's import
+    // table; it is made writable for the store and protected again after.
+    unsafe {
+        if VirtualProtect(slot as *const c_void, 8, PAGE_READWRITE, &raw mut previous) == 0 {
+            return None;
+        }
+        std::ptr::write_unaligned(slot as *mut usize, value);
+        VirtualProtect(slot as *const c_void, 8, previous, &raw mut previous);
+    }
+    Some(())
+}
+
+/// Makes the executable's first call of a system function start the host:
+/// replaces the executable's import of that function. The executable's code
+/// stays as it is, so tools that rewrite or check the entry point are not
+/// disturbed, and the host starts after such a tool has run.
+///
+/// # Safety
+/// Called during static process initialization, before the executable's
+/// code runs.
+unsafe fn install_start() -> Option<()> {
     // SAFETY: NULL requests the executable's Windows module handle.
     let base = unsafe { GetModuleHandleW(std::ptr::null()) } as usize;
     let dos = read_memory::<64>(base)?;
@@ -194,27 +223,39 @@ unsafe fn install_entry() -> Option<()> {
     {
         return None;
     }
-    let entry = u32::from_le_bytes(nt[40..44].try_into().ok()?) as usize;
     let size = u32::from_le_bytes(nt[80..84].try_into().ok()?) as usize;
-    if entry == 0 || entry.checked_add(64)? > size {
+    // The import address table is the thirteenth data directory.
+    let table = u32::from_le_bytes(nt[232..236].try_into().ok()?) as usize;
+    let table_size = u32::from_le_bytes(nt[236..240].try_into().ok()?) as usize;
+    if table == 0 || table.checked_add(table_size)? > size {
         return None;
     }
-    let target = base.checked_add(entry)?;
-    // SAFETY: Windows mapped the executable; it has not entered its CRT startup yet.
-    let hook = unsafe { StartupDetour::prepare(target, entry_start as *const () as usize) }.ok()?;
-    let hook = Box::into_raw(Box::new(hook));
-    HOOK.store(hook, Ordering::Release);
-    // SAFETY: publish the original trampoline before writing the entry jump;
-    // process initialization guarantees the entry point is not executing.
-    unsafe { (*hook).enable() }.ok()?;
-    Some(())
+    let kernel: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+    // SAFETY: NUL-terminated names; kernel32 is loaded in every process.
+    let import = unsafe {
+        GetProcAddress(
+            GetModuleHandleW(kernel.as_ptr()),
+            START_IMPORT_NAME.as_ptr().cast(),
+        )
+    }? as usize;
+    let slot = (0..table_size / 8)
+        .map(|index| base + table + index * 8)
+        .find(|slot| read_memory::<8>(*slot).map(usize::from_le_bytes) == Some(import))?;
+    START_IMPORT.store(import, Ordering::Release);
+    START_SLOT.store(slot, Ordering::Release);
+    write_slot(slot, start_from_import as *const () as usize)
 }
 
-unsafe extern "system" fn entry_start() -> i32 {
-    let hook = HOOK.load(Ordering::Acquire);
-    // SAFETY: the entry jump is installed only after publishing this retained object.
-    let hook = unsafe { &*hook };
+/// The executable's first call of the replaced import: starts the host
+/// once, puts the import back, and makes the call.
+unsafe extern "system" fn start_from_import(time: *mut c_void) {
     if !STARTED.swap(true, Ordering::AcqRel) {
+        boundary((), || {
+            let slot = START_SLOT.load(Ordering::Acquire);
+            if write_slot(slot, START_IMPORT.load(Ordering::Acquire)).is_none() {
+                log("the executable's first import could not be put back");
+            }
+        });
         let completed = boundary(false, || {
             if let Err(error) = load_host() {
                 log(&error.to_string());
@@ -224,19 +265,13 @@ unsafe extern "system" fn entry_start() -> i32 {
         if !completed {
             log("runtime startup panicked; Angelica disabled");
         }
-        boundary((), || {
-            // SAFETY: the one-time entry invocation is in this replacement, not in overwritten bytes.
-            if let Err(error) = unsafe { hook.disable() } {
-                log(&format!("restore entry point: {error}"));
-            }
-        });
     }
-    // SAFETY: relocation preserves the executable's no-argument CRT entry point;
-    // trampoline remains mapped even if a later tool owns the entry point.
-    let original: unsafe extern "system" fn() -> i32 =
-        unsafe { std::mem::transmute(hook.trampoline()) };
-    // SAFETY: run the original CRT entry exactly once; game execution is outside panic handling.
-    unsafe { original() }
+    // SAFETY: the address is the system function the executable imported,
+    // which has this signature.
+    let import: unsafe extern "system" fn(*mut c_void) =
+        unsafe { std::mem::transmute(START_IMPORT.load(Ordering::Acquire)) };
+    // SAFETY: the caller's argument is passed on unchanged.
+    unsafe { import(time) }
 }
 
 fn load_host() -> Result<(), LoadError> {
