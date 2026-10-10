@@ -209,7 +209,11 @@ impl Input {
             | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
                 self.mouse.load(Ordering::Acquire)
             }
-            WM_KEYDOWN | WM_KEYUP | WM_CHAR => self.keyboard.load(Ordering::Acquire),
+            // `Esc` closes the open menu, so the game does not receive it.
+            WM_KEYDOWN | WM_KEYUP | WM_CHAR => {
+                self.keyboard.load(Ordering::Acquire)
+                    || (wparam == 27 && self.menu.load(Ordering::Acquire))
+            }
             // The open menu leaves system keys such as Alt+F4 to the game.
             WM_SYSKEYDOWN | WM_SYSKEYUP => {
                 self.keyboard.load(Ordering::Acquire) && !self.menu.load(Ordering::Acquire)

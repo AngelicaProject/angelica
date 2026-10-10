@@ -364,11 +364,10 @@ impl Overlay {
         self.input
             .mouse
             .store(frame.context.egui_wants_pointer_input(), Ordering::Release);
-        // The open menu takes the keyboard from the game.
-        self.input.keyboard.store(
-            frame.context.egui_wants_keyboard_input() || keep,
-            Ordering::Release,
-        );
+        // The game keeps the keyboard unless the player types in a text field.
+        self.input
+            .keyboard
+            .store(frame.context.egui_wants_keyboard_input(), Ordering::Release);
         let primitives = frame
             .context
             .tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
