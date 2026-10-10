@@ -216,6 +216,28 @@ impl View<'_> {
     fn at(&self, value: f32) -> f32 {
         value * self.k
     }
+
+    fn look(&self) -> Look {
+        Look {
+            k: self.k,
+            p: self.p,
+        }
+    }
+}
+
+/// The size and colors Angelica's windows are drawn with, also the windows
+/// of plugins.
+#[derive(Clone, Copy)]
+pub(crate) struct Look {
+    /// How many times their normal size the windows are drawn.
+    pub k: f32,
+    pub p: &'static Palette,
+}
+
+impl Look {
+    pub(crate) fn at(&self, value: f32) -> f32 {
+        value * self.k
+    }
 }
 
 impl Menu {
@@ -244,6 +266,19 @@ impl Menu {
             notes: Vec::new(),
             seen: 0,
         }
+    }
+
+    /// The look of this frame's windows and the interface strings.
+    pub(crate) fn look(&self, context: &egui::Context) -> (Look, &'static Strings) {
+        let look = Look {
+            k: self
+                .settings
+                .size
+                .unwrap_or_default()
+                .scale(context.content_rect().height()),
+            p: self.theme.palette(),
+        };
+        (look, self.strings())
     }
 
     fn strings(&self) -> &'static Strings {
@@ -361,7 +396,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, None, self.strings().close) {
+                if title_bar(ui, &view.look(), None, self.strings().close) {
                     keep = false;
                 }
                 self.draw_tabs(ui, view);
@@ -994,7 +1029,15 @@ impl Menu {
                 row.bottom() - view.at(9.0),
             ),
         );
-        let response = text_field(ui, view, field, &mut self.link, s.link_hint, field_id, None);
+        let response = text_field(
+            ui,
+            &view.look(),
+            field,
+            &mut self.link,
+            s.link_hint,
+            field_id,
+            None,
+        );
         if response.changed() {
             self.link_invalid = false;
         }
@@ -1115,7 +1158,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, Some(heading), s.close) {
+                if title_bar(ui, &view.look(), Some(heading), s.close) {
                     close = true;
                 }
                 egui::Frame::new()
@@ -1588,7 +1631,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, Some(s.remove_title), s.close) {
+                if title_bar(ui, &view.look(), Some(s.remove_title), s.close) {
                     close = true;
                 }
                 egui::Frame::new()
@@ -1820,7 +1863,7 @@ fn plugin_heading(ui: &mut Ui, view: &View<'_>, name: &str, line: &str) {
 }
 
 /// The frame of Angelica's windows.
-fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
+pub(crate) fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(p.window)
         .stroke(Stroke::new(1.0, p.border))
@@ -1830,7 +1873,7 @@ fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
 
 /// The bar at the top of a window: the word `angelica`, an optional title,
 /// and the close button. Returns whether the player closed the window.
-fn title_bar(ui: &mut Ui, view: &View<'_>, title: Option<&str>, close: &str) -> bool {
+pub(crate) fn title_bar(ui: &mut Ui, view: &Look, title: Option<&str>, close: &str) -> bool {
     let p = view.p;
     let (bar, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), view.at(32.0)), Sense::hover());
@@ -2005,13 +2048,21 @@ fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
 
 /// A search field: a plain field with a thin border and a magnifier.
 fn search_field(ui: &mut Ui, view: &View<'_>, rect: Rect, text: &mut String, hint: &str, id: &str) {
-    text_field(ui, view, rect, text, hint, Id::new(id), Some(Icon::Search));
+    text_field(
+        ui,
+        &view.look(),
+        rect,
+        text,
+        hint,
+        Id::new(id),
+        Some(Icon::Search),
+    );
 }
 
 /// A plain text field with a thin border.
-fn text_field(
+pub(crate) fn text_field(
     ui: &mut Ui,
-    view: &View<'_>,
+    view: &Look,
     rect: Rect,
     text: &mut String,
     hint: &str,
@@ -2070,6 +2121,17 @@ fn text_field(
 /// A line of a menu: full width, highlighted under the pointer. Returns
 /// whether it was clicked; a click closes the menu.
 fn menu_item(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color: Color32) -> bool {
+    popup_item(ui, &view.look(), icon, text, color)
+}
+
+/// A line of a popup menu, also in a plugin's window.
+pub(crate) fn popup_item(
+    ui: &mut Ui,
+    view: &Look,
+    icon: Option<Icon>,
+    text: &str,
+    color: Color32,
+) -> bool {
     let p = view.p;
     let (rect, response) = ui.allocate_exact_size(
         vec2(
@@ -2290,7 +2352,7 @@ fn f32_of(value: usize) -> f32 {
 }
 
 /// A margin in whole points.
-fn num_u8(value: f32) -> i8 {
+pub(crate) fn num_u8(value: f32) -> i8 {
     num_traits::cast(value.round()).unwrap_or(i8::MAX)
 }
 

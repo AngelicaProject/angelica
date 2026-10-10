@@ -43,6 +43,8 @@ strings! {
     tab_installed: "Installed", "Установленные";
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
+    word_on: "On", "Вкл";
+    word_off: "Off", "Выкл";
     esc_closes: "Esc closes", "Esc — закрыть";
     hint: "{key} opens Angelica", "{key} — открыть Angelica";
     nothing_yet: "No plugins yet", "Плагинов пока нет";
