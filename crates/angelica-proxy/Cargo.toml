@@ -28,7 +28,6 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 tempfile.workspace = true
-angelica-hook = { workspace = true, features = ["testing"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

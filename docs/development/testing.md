@@ -15,7 +15,7 @@ The `testing` feature of `angelica-pe` builds x64 PE images with chosen sections
 
 ## Loader tests
 
-`angelica-proxy` tests configuration, staged-version selection, and strict signature verification without an installed game. `angelica-hook` tests startup detour restoration and refusal to overwrite a later hook on private executable machine code.
+`angelica-proxy` tests configuration, staged-version selection, and strict signature verification without an installed game.
 
 The Windows bootstrap integration test builds an isolated proxy with a test signing key, a signed synthetic runtime, and an executable that statically imports the proxy. It checks that the host starts before executable code and that invalid signatures, missing files, failed host startup, and incomplete staged updates leave the executable running:
 

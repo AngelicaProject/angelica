@@ -13,7 +13,7 @@
 
 ## Entry detours
 
-`StartupDetour` is restricted to the executable entry point before it can execute. It allocates a private block without the shared allocator mutex and installs the jump without suspending threads. Preparation and installation run during static process initialization; restoration runs from the one-time replacement while no thread executes the overwritten entry bytes. It retains its trampoline and refuses restoration over a later tool's jump. Ordinary hooks use `Detour` and the synchronization rules below.
+The executable's entry point is never hooked: the host starts before it without a change to the executable's code ([loading](./loading.md)).
 
 A detour overwrites the start of a function with a 5-byte `jmp rel32` to a relay, and fills the rest of the overwritten instructions with `int3`. The relay, an absolute `jmp qword ptr [rip]`, jumps to the replacement anywhere in the address space. The overwritten instructions move into a trampoline that ends with a jump back to the first instruction after them; calling the trampoline runs the original function. Relay and trampoline lie in executable memory within 2 GiB of the target.
 

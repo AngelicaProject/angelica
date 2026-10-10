@@ -6,8 +6,9 @@ The game executable imports several system DLLs by name. Windows resolves a DLL 
 
 - The proxy is `dinput8.dll`: the executable imports it, it is not a KnownDLL, and it has few exports. Graphics injectors commonly take `dxgi.dll` and `d3d11.dll`, so those names are never used.
 - The proxy forwards every export to the system DLL of the same name, loaded by full path from the system directory.
-- `DllMain` does nothing that can take the loader lock: it records its own module, installs a one-time hook on the executable's entry point, and returns.
-- The entry point hook loads `runtime.dll`, calls its start function, removes itself, and continues into the game's entry point.
+- `DllMain` does nothing that can take the loader lock: it records its own module, queues the host's start to its own thread, and returns.
+- Windows runs the queued start on the process's initial thread when process initialization ends: every library is initialized, the loader lock is released, and the executable's entry point has not run. The start loads `runtime.dll` and calls its start function; then the game's entry point runs.
+- The proxy changes no code of the executable. A tool that rewrites the executable's entry point to load itself, or that compares the executable's code with the file, finds the entry point as it expects, and runs after the host has started.
 
 The proxy changes rarely. It contains no game knowledge, so a game patch never requires a new proxy.
 
@@ -31,7 +32,7 @@ Diagnostics are appended to `angelica-loader.log` next to the proxy. A logging f
 
 The signed runtime exports `angelica_start_v1` with the Windows system calling convention and signature `int32_t angelica_start_v1(void)`. Zero means startup succeeded; any nonzero status means startup failed after removing every registered hook and callback. The proxy unloads a failed host. The host catches all panics inside this export; no exception or panic may cross the ABI. A successful host remains loaded until process exit. Plugin startup, crash reports, and the overlay belong to the host.
 
-The proxy installs the entry hook only during static process initialization. Loading it dynamically into an already running process provides forwarding without host startup. The startup hook does not suspend threads or use the ordinary hook allocator's shared mutex. It retains an original-code trampoline, removes only its own jump after host startup, and continues through the trampoline even if restoration fails or another tool has installed a later hook.
+The proxy queues the start only during static process initialization. Loading it dynamically into an already running process provides forwarding without host startup. When the start cannot be queued, the game starts without Angelica, and the log says so.
 
 ## Failure behavior
 
