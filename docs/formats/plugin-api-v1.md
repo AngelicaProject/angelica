@@ -54,6 +54,12 @@ Widgets are a flat list. `begin-row` … `end-row` lays widgets side by side, `b
 
 The host checks the windows before drawing them: at most 16 windows and 4096 widgets, ids of 1–128 bytes unique within a window (window ids unique per plugin), texts of at most 4096 bytes and 512 KiB in total, a path of at most 4 non-blank parts, at most 1024 options per choice and a selected option that exists, 1–32 tabs with a selected tab that exists, 1–16 table columns, icons of size 1–256, numbers with finite `min` ≤ `value` ≤ `max`, a step of at least 0, and at most 6 decimals, a tooltip right after a widget the player sees, and every `begin` ended by its own `end`. Windows that break a rule fault the plugin.
 
+A `button` is an action word of a `kind`: `normal`, `main` (the main action of a window, at most one in view), `quiet` (a side action), or `danger` (what cannot be undone). A `fact` is a name and its value on one line.
+
+An `entry` is a row of a list, drawn like the rows of Angelica's own list: a tile with the first letter of its `title`, the title, a `note` after it, a short `value` at the right, and a `mark` — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. With `progress`, a thin line takes the note's place. Under the pointer the row shows its `actions`, up to 4, in place of the note and the value. A click on the row arrives as `clicked` with the entry's id and a pressed action as `clicked` with the action's id; the plugin decides which entry is `chosen`. The chosen entry is highlighted and shows under its row its `facts`, up to 16, and its `more` actions, up to 8. The ids of an entry and of all its actions are unique within the window like any widget's id, so a plugin gives the facts and `more` actions only to the chosen entry or makes their ids differ per entry.
+
+`runtime.language` returns the language of Angelica's interface, `en` or `ru`, which the player can change while the plugin runs; a plugin shows its own text in that language when it has it and in English otherwise.
+
 `open-requested` arrives when the player presses the plugin's Open button in the Angelica menu; `closed` when the player closes a window.
 
 ## Storage

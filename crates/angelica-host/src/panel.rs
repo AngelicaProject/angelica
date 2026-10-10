@@ -8,8 +8,9 @@ use crate::{
     language::{Language, Strings},
     menu::{self, Bar, Look, Mark, Menu},
     sandbox::bindings::angelica::plugin::ui::{
-        Choice, Chosen, Edited, Icon, Navigated, Number, NumberSet, Progress, Table, Tabs,
-        TextInput, Toggled, Tone, Widget, WidgetRef,
+        Action as EntryAction, ActionKind, Choice, Chosen, Edited, Entry, Fact, Icon,
+        Mark as EntryMark, Navigated, Number, NumberSet, Progress, Table, Tabs, TextInput, Toggled,
+        Tone, Widget, WidgetRef,
     },
 };
 use std::{
@@ -383,8 +384,13 @@ impl Drawer<'_> {
                 ui.label(self.rich(&text.text, color))
             }
             Widget::Button(button) => {
-                let response =
-                    theme::word(ui, &button.label, Word::Action, button.enabled, self.look.k);
+                let response = theme::word(
+                    ui,
+                    &button.label,
+                    word_of(button.kind),
+                    button.enabled,
+                    self.look.k,
+                );
                 if response.clicked() {
                     self.host
                         .queue_event(self.plugin, Event::Clicked(self.reference(&button.id)));
@@ -415,6 +421,8 @@ impl Drawer<'_> {
             Widget::Number(number) => self.number(ui, number),
             Widget::Tabs(tabs) => self.tabs(ui, tabs),
             Widget::Progress(progress) => self.progress(ui, progress),
+            Widget::Fact(fact) => self.fact(ui, fact),
+            Widget::Entry(entry) => self.entry(ui, entry),
             Widget::Icon(icon) => self.icon(ui, *icon),
             Widget::Separator => {
                 ui.add_space(self.look.at(4.0));
@@ -463,6 +471,241 @@ impl Drawer<'_> {
             egui::Stroke::new(1.0, look.p.line),
         );
         response
+    }
+
+    /// A name in the secondary color and its value.
+    fn fact(&self, ui: &mut egui::Ui, fact: &Fact) -> egui::Response {
+        let look = self.look;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = look.at(8.0);
+            let (name, _) = ui.allocate_exact_size(
+                egui::vec2(look.at(120.0), look.at(20.0)),
+                egui::Sense::hover(),
+            );
+            let galley = ui.painter().layout(
+                fact.name.clone(),
+                theme::sans(look.at(13.0)),
+                look.p.secondary,
+                name.width(),
+            );
+            ui.painter().galley(
+                egui::pos2(name.left(), name.center().y - look.at(8.5)),
+                galley,
+                look.p.secondary,
+            );
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&fact.value)
+                        .font(theme::sans(look.at(13.0)))
+                        .color(look.p.text),
+                )
+                .wrap(),
+            )
+        })
+        .inner
+    }
+
+    fn act(&self, action: &EntryAction) {
+        self.host
+            .queue_event(self.plugin, Event::Clicked(self.reference(&action.id)));
+    }
+
+    /// What follows an entry's title: its actions under the pointer,
+    /// otherwise its value and its progress or note. Returns whether an
+    /// action was pressed.
+    fn entry_side(
+        &mut self,
+        ui: &mut egui::Ui,
+        entry: &Entry,
+        row: egui::Rect,
+        left: f32,
+        mut right: f32,
+        hovered: bool,
+    ) -> bool {
+        let look = self.look;
+        let p = look.p;
+        let painter = ui.painter().clone();
+        let y = row.center().y;
+        let mut acted = false;
+        if hovered && !entry.actions.is_empty() && entry.progress.is_none() {
+            let room = egui::Rect::from_min_max(
+                egui::pos2(left, row.top()),
+                egui::pos2(right, row.bottom()),
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(room)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = look.at(8.0);
+                    for action in entry.actions.iter().rev() {
+                        let word = theme::word(
+                            ui,
+                            &action.label,
+                            word_of(action.kind),
+                            action.enabled,
+                            look.k,
+                        );
+                        if word.clicked() {
+                            self.act(action);
+                            acted = true;
+                        }
+                    }
+                },
+            );
+        } else {
+            if !entry.value.is_empty() {
+                let value = painter.text(
+                    egui::pos2(right, y),
+                    egui::Align2::RIGHT_CENTER,
+                    &entry.value,
+                    theme::sans(look.at(12.5)),
+                    p.muted,
+                );
+                right = value.left() - look.at(10.0);
+            }
+            if let Some(fraction) = entry.progress {
+                let line = egui::Rect::from_min_max(
+                    egui::pos2(left, y - 1.0),
+                    egui::pos2(right.max(left), y + 1.0),
+                );
+                painter.rect_filled(line, 1.0, p.line);
+                painter.rect_filled(
+                    line.with_max_x(line.left() + line.width() * fraction.clamp(0.0, 1.0)),
+                    1.0,
+                    p.action,
+                );
+            } else if !entry.note.is_empty() && right - left > look.at(24.0) {
+                let mut job = egui::text::LayoutJob::simple_singleline(
+                    entry.note.clone(),
+                    theme::sans(look.at(13.0)),
+                    p.secondary,
+                );
+                job.wrap = egui::text::TextWrapping::truncate_at_width(right - left);
+                let galley = painter.layout_job(job);
+                painter.galley(
+                    egui::pos2(left, y - galley.size().y / 2.0),
+                    galley,
+                    p.secondary,
+                );
+            }
+        }
+        acted
+    }
+
+    /// The chosen entry's facts and actions under its row.
+    fn entry_details(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        let look = self.look;
+        let p = look.p;
+        egui::Frame::new()
+            .fill(p.selection)
+            .corner_radius(egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 4,
+                se: 4,
+            })
+            .inner_margin(egui::Margin {
+                left: menu::num_u8(look.at(42.0)),
+                right: menu::num_u8(look.at(10.0)),
+                top: 0,
+                bottom: menu::num_u8(look.at(8.0)),
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(2.0));
+                for fact in &entry.facts {
+                    self.fact(ui, fact);
+                }
+                if !entry.more.is_empty() {
+                    ui.add_space(look.at(4.0));
+                    ui.horizontal_wrapped(|ui| {
+                        for action in &entry.more {
+                            let word = theme::word(
+                                ui,
+                                &action.label,
+                                word_of(action.kind),
+                                action.enabled,
+                                look.k,
+                            );
+                            if word.clicked() {
+                                self.act(action);
+                            }
+                        }
+                    });
+                }
+            });
+    }
+
+    /// A row of a list and, when it is chosen, its facts and actions under
+    /// it.
+    fn entry(&mut self, ui: &mut egui::Ui, entry: &Entry) -> egui::Response {
+        let look = self.look;
+        let p = look.p;
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            let (row, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), look.at(36.0)),
+                egui::Sense::click(),
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let hovered = ui.rect_contains_pointer(row);
+            let details = entry.chosen && !(entry.facts.is_empty() && entry.more.is_empty());
+            let painter = ui.painter().clone();
+            if entry.chosen || hovered {
+                let below = if details { 0 } else { 4 };
+                painter.rect_filled(
+                    row,
+                    egui::CornerRadius {
+                        nw: 4,
+                        ne: 4,
+                        sw: below,
+                        se: below,
+                    },
+                    if entry.chosen { p.selection } else { p.hover },
+                );
+            }
+            let faded = entry.mark == EntryMark::Off;
+            let y = row.center().y;
+            let tile = egui::Rect::from_center_size(
+                egui::pos2(row.left() + look.at(20.0), y),
+                egui::Vec2::splat(look.at(24.0)),
+            );
+            theme::tile(&painter, tile, &entry.title, faded, p);
+            let name = painter.text(
+                egui::pos2(row.left() + look.at(42.0), y),
+                egui::Align2::LEFT_CENTER,
+                &entry.title,
+                if entry.chosen {
+                    theme::medium(look.at(13.5))
+                } else {
+                    theme::sans(look.at(13.5))
+                },
+                if faded { p.secondary } else { p.text },
+            );
+            let left = name.right() + look.at(10.0);
+            let mut right = row.right() - look.at(10.0);
+            let center = egui::pos2(right - look.at(4.0), y);
+            match entry.mark {
+                EntryMark::None => {}
+                EntryMark::On => theme::running(&painter, center, look.k, p),
+                EntryMark::Off => theme::off(&painter, center, look.k, p),
+                EntryMark::Attention => theme::attention(&painter, center, look.k * 0.8, p),
+            }
+            if entry.mark != EntryMark::None {
+                right -= look.at(22.0);
+            }
+            let acted = self.entry_side(ui, entry, row, left, right, hovered);
+            if response.clicked() && !acted {
+                self.host
+                    .queue_event(self.plugin, Event::Clicked(self.reference(&entry.id)));
+            }
+            if details {
+                self.entry_details(ui, entry);
+            }
+            response
+        })
+        .inner
     }
 
     /// A thin line that fills with the action color, and its label.
@@ -718,6 +961,16 @@ impl Drawer<'_> {
             );
         }
         response
+    }
+}
+
+/// The look of an action of `kind`.
+fn word_of(kind: ActionKind) -> Word {
+    match kind {
+        ActionKind::Normal => Word::Action,
+        ActionKind::Main => Word::Main,
+        ActionKind::Quiet => Word::Secondary,
+        ActionKind::Danger => Word::Danger,
     }
 }
 

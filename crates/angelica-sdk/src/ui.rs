@@ -13,6 +13,100 @@
 //! ```
 pub use crate::bindings::angelica::plugin::ui::*;
 
+impl Entry {
+    /// A row of a list with its title. A click on it arrives as
+    /// `Event::Clicked` with `id`.
+    #[must_use]
+    pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            note: String::new(),
+            value: String::new(),
+            mark: Mark::None,
+            chosen: false,
+            progress: None,
+            actions: Vec::new(),
+            facts: Vec::new(),
+            more: Vec::new(),
+        }
+    }
+
+    /// A few words after the title.
+    #[must_use]
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.note = note.into();
+        self
+    }
+
+    /// A short value at the right, such as a version.
+    #[must_use]
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.value = value.into();
+        self
+    }
+
+    #[must_use]
+    pub fn mark(mut self, mark: Mark) -> Self {
+        self.mark = mark;
+        self
+    }
+
+    /// Highlights the row and shows its facts and other actions under it.
+    #[must_use]
+    pub fn chosen(mut self, chosen: bool) -> Self {
+        self.chosen = chosen;
+        self
+    }
+
+    /// A thin progress line in place of the note, from 0 to 1.
+    #[must_use]
+    pub fn progress(mut self, fraction: f32) -> Self {
+        self.progress = Some(fraction);
+        self
+    }
+
+    /// An action shown in the row under the pointer.
+    #[must_use]
+    pub fn action(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.actions.push(Action {
+            id: id.into(),
+            label: label.into(),
+            kind: ActionKind::Normal,
+            enabled: true,
+        });
+        self
+    }
+
+    /// A fact under the chosen row.
+    #[must_use]
+    pub fn fact(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.facts.push(Fact {
+            name: name.into(),
+            value: value.into(),
+        });
+        self
+    }
+
+    /// An action under the chosen row's facts.
+    #[must_use]
+    pub fn more(
+        mut self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        kind: ActionKind,
+        enabled: bool,
+    ) -> Self {
+        self.more.push(Action {
+            id: id.into(),
+            label: label.into(),
+            kind,
+            enabled,
+        });
+        self
+    }
+}
+
 impl Window {
     #[must_use]
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
@@ -85,11 +179,40 @@ impl Window {
         label: impl Into<String>,
         enabled: bool,
     ) -> Self {
+        self.action(id, label, ActionKind::Normal, enabled)
+    }
+
+    /// An action word of `kind`: the main action of the window, a side
+    /// action, or one that cannot be undone.
+    #[must_use]
+    pub fn action(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        kind: ActionKind,
+        enabled: bool,
+    ) -> Self {
         self.with(Widget::Button(Button {
             id: id.into(),
             label: label.into(),
             enabled,
+            kind,
         }))
+    }
+
+    /// A name and its value on one line.
+    #[must_use]
+    pub fn fact(self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.with(Widget::Fact(Fact {
+            name: name.into(),
+            value: value.into(),
+        }))
+    }
+
+    /// A row of a list; see [`Entry`].
+    #[must_use]
+    pub fn entry(self, entry: Entry) -> Self {
+        self.with(Widget::Entry(entry))
     }
 
     #[must_use]

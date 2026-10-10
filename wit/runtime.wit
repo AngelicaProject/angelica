@@ -18,6 +18,12 @@ interface runtime {
     /// has already loaded data.
     started-with-game: func() -> bool;
 
+    /// The language of Angelica's interface, which the player chooses:
+    /// `en` or `ru`. It can change while the plugin runs. A plugin shows
+    /// its own text in this language when it has it, and in English
+    /// otherwise.
+    language: func() -> string;
+
     /// The game build: the contents of `game/ffxivgame.ver`.
     game-version: func() -> string;
 }

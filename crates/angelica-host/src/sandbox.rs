@@ -164,6 +164,8 @@ pub struct Services {
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
+    /// Whether Angelica's interface is in Russian; English otherwise.
+    pub russian: AtomicBool,
 }
 
 /// One log line of a plugin.
@@ -449,6 +451,15 @@ impl api::runtime::Host for State {
 
     fn started_with_game(&mut self) -> bool {
         self.context.services.starting.load(Ordering::Acquire)
+    }
+
+    fn language(&mut self) -> String {
+        if self.context.services.russian.load(Ordering::Acquire) {
+            "ru"
+        } else {
+            "en"
+        }
+        .to_owned()
     }
 
     fn game_version(&mut self) -> String {

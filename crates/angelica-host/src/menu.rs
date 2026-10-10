@@ -248,8 +248,10 @@ impl Menu {
     pub fn new(host: &Host, system: Language) -> Self {
         let settings_path = Settings::path(host.state_directory());
         let settings = Settings::load(&settings_path);
+        let language = settings.language.unwrap_or(system);
+        Self::tell_plugins(host, language);
         Self {
-            language: settings.language.unwrap_or(system),
+            language,
             theme: settings.theme.unwrap_or_default(),
             applied: None,
             settings,
@@ -292,7 +294,16 @@ impl Menu {
         }
     }
 
+    /// Plugins read the interface language from the host.
+    fn tell_plugins(host: &Host, language: Language) {
+        host.services().russian.store(
+            language == Language::Russian,
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+
     fn set_language(&mut self, host: &Host, language: Language) {
+        Self::tell_plugins(host, language);
         self.language = language;
         self.settings.language = Some(language);
         self.save(host);

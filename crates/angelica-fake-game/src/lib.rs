@@ -336,6 +336,7 @@ impl TestHost {
             ui: Arc::new(runtime::game_ui::GameUi::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
+            russian: AtomicBool::new(false),
         });
         let opened = Arc::new(Mutex::new(Vec::new()));
         let recorded = opened.clone();
