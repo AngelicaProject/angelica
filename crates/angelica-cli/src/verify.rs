@@ -64,16 +64,27 @@ impl VerifyError {
 /// knows it.
 type SheetReport = BTreeMap<String, (Option<String>, Result<(), String>)>;
 
+/// What `verify` found: the build record, each schema's sheet, each
+/// schema's window (the layout file the game has, and whether the schema
+/// knows it), and the record's file when it was written.
+struct Verified {
+    record: BuildRecord,
+    sheets: SheetReport,
+    windows: SheetReport,
+    written: Option<PathBuf>,
+}
+
 pub fn run(args: &VerifyArgs) -> ExitCode {
     match verify(args) {
-        Ok((record, sheets, written)) => {
+        Ok(verified) => {
             if args.output.json {
-                println!("{}", report_json(&record, &sheets, written.as_deref()));
+                println!("{}", report_json(&verified));
             } else {
-                print!("{}", report_text(&record, &sheets, written.as_deref()));
+                print!("{}", report_text(&verified));
             }
-            if record.resolution.absent().next().is_none()
-                && sheets.values().all(|(_, known)| known.is_ok())
+            if verified.record.resolution.absent().next().is_none()
+                && verified.sheets.values().all(|(_, known)| known.is_ok())
+                && verified.windows.values().all(|(_, known)| known.is_ok())
             {
                 ExitCode::SUCCESS
             } else {
@@ -91,7 +102,7 @@ pub fn run(args: &VerifyArgs) -> ExitCode {
     }
 }
 
-fn verify(args: &VerifyArgs) -> Result<(BuildRecord, SheetReport, Option<PathBuf>), VerifyError> {
+fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
     let map = Map::load(&args.map)?;
 
     let executable_path = args.game.join(EXECUTABLE);
@@ -123,8 +134,20 @@ fn verify(args: &VerifyArgs) -> Result<(BuildRecord, SheetReport, Option<PathBuf
     };
 
     let mut sheets = SheetReport::new();
-    if map.sheets().next().is_some() {
+    let mut windows = SheetReport::new();
+    if map.sheets().next().is_some() || map.windows().next().is_some() {
         let data = runtime::game_data::GameData::new(args.game.parent());
+        for schema in map.windows() {
+            let report = match data.read(&schema.layout) {
+                Ok(layout) => {
+                    let fingerprint = angelica_map::window_layout_fingerprint(&layout);
+                    let known = schema.resolve(&fingerprint).map(drop);
+                    (Some(fingerprint), known)
+                }
+                Err(error) => (None, Err(error.message)),
+            };
+            windows.insert(schema.window.clone(), report);
+        }
         for schema in map.sheets() {
             let report = match data.sheet(&schema.sheet) {
                 Ok(info) => {
@@ -150,11 +173,16 @@ fn verify(args: &VerifyArgs) -> Result<(BuildRecord, SheetReport, Option<PathBuf
     } else {
         None
     };
-    Ok((record, sheets, written))
+    Ok(Verified {
+        record,
+        sheets,
+        windows,
+        written,
+    })
 }
 
-fn report_json(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path>) -> Json {
-    let sheets = sheets
+fn schemas_json(report: &SheetReport) -> JsonObject<String, Json> {
+    report
         .iter()
         .map(|(name, (layout, known))| {
             (
@@ -166,7 +194,13 @@ fn report_json(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path
                 }),
             )
         })
-        .collect::<JsonObject<_, _>>();
+        .collect()
+}
+
+fn report_json(verified: &Verified) -> Json {
+    let record = &verified.record;
+    let sheets = schemas_json(&verified.sheets);
+    let windows = schemas_json(&verified.windows);
     let present = record
         .resolution
         .present()
@@ -185,11 +219,16 @@ fn report_json(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path
         "absent": absent,
         "constant_offsets": record.resolution.constant_offsets(),
         "sheets": sheets,
-        "written": written.map(|path| path.display().to_string()),
+        "windows": windows,
+        "written": verified
+            .written
+            .as_ref()
+            .map(|path| path.display().to_string()),
     })
 }
 
-fn report_text(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path>) -> String {
+fn report_text(verified: &Verified) -> String {
+    let record = &verified.record;
     let present = record.resolution.present().count();
     let absent = record.resolution.absent().collect::<Vec<_>>();
     let mut text = format!(
@@ -203,20 +242,23 @@ fn report_text(record: &BuildRecord, sheets: &SheetReport, written: Option<&Path
     for name in record.resolution.constant_offsets() {
         let _ = writeln!(text, "  constant offset {name}");
     }
-    if !sheets.is_empty() {
-        let unknown = sheets.values().filter(|(_, known)| known.is_err()).count();
+    for (kind, report) in [("sheets", &verified.sheets), ("windows", &verified.windows)] {
+        if report.is_empty() {
+            continue;
+        }
+        let unknown = report.values().filter(|(_, known)| known.is_err()).count();
         let _ = writeln!(
             text,
-            "sheets: {} known, {unknown} unknown",
-            sheets.len() - unknown
+            "{kind}: {} known, {unknown} unknown",
+            report.len() - unknown
         );
-        for (name, (_, known)) in sheets {
+        for (name, (_, known)) in report {
             if let Err(reason) = known {
                 let _ = writeln!(text, "  unknown {name}: {reason}");
             }
         }
     }
-    if let Some(path) = written {
+    if let Some(path) = &verified.written {
         let _ = writeln!(text, "wrote {}", path.display());
     }
     text

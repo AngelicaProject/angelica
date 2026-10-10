@@ -13,6 +13,8 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | only for you | Prints its messages in your chat log |
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the public hosts the manifest lists in `http.hosts` | internet | Downloads from these internet hosts, followed by the list |
 | `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | other players | Reads the messages in your chat log, including other players' |
+| `gameui.hide` | keeping named elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) hidden | what you see | Hides parts of the game's interface |
+| `gameui.text` | putting text in named text elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) | what you see | Puts its own text in the game's windows |
 | `state.self` | reading the [game state](../formats/plugin-api-v1.md#game-state) of the `self` domain: the player's character and where the player is | only for you | Reads your character: name, class, level, HP and MP, position, and zone |
 
 The player sees permissions in plain words, grouped by class, the most serious first: **Uses the internet**, **Sees other players**, **Changes what you see**, **Only for you**. Permission names stay with authors and are not shown. Every new permission belongs to one class; operations that act for the player will form a class of their own, above the others.

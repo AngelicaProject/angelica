@@ -7,6 +7,7 @@ mod entries;
 mod excel_rows;
 mod file_reads;
 mod game;
+mod game_ui;
 mod input;
 pub mod memory;
 mod overlay;

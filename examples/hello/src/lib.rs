@@ -2,8 +2,9 @@
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
 //! commands that print in the chat log, HTTPS requests from a job, the
-//! player's character from the game's state, and the chat log's messages
-//! as events. The host's integration tests drive
+//! player's character from the game's state, the chat log's messages as
+//! events, and rules for the game's own windows. The host's integration
+//! tests drive
 //! it through its window and its commands.
 use angelica_sdk::{
     Plugin,
@@ -11,7 +12,7 @@ use angelica_sdk::{
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
     events::{self, EventKind, GameEvent},
-    excel, http,
+    excel, game_ui, http,
     jobs::{self, Job, Poll},
     state, storage,
     text::{
@@ -39,12 +40,72 @@ struct Hello {
     /// The selected tab of the widgets section.
     tab: u32,
     volume: f64,
+    bar: ExperienceBar,
+}
+
+/// What the example does to the game's experience bar.
+#[derive(Default)]
+struct ExperienceBar {
+    /// Whether the bar is hidden.
+    hidden: bool,
+    /// Whether the clicks are shown after the bar's text.
+    clicks: bool,
 }
 
 impl Hello {
     fn say(&mut self, message: impl Into<String>) {
         self.message = message.into();
         angelica_sdk::info(&self.message);
+    }
+
+    /// Puts the clicks after the game's experience text, or removes them.
+    fn show_clicks(&mut self) {
+        let rules = if self.bar.clicks {
+            vec![game_ui::after(
+                "_Exp",
+                "text",
+                format!(" · {} clicks", self.clicks),
+            )]
+        } else {
+            Vec::new()
+        };
+        match game_ui::texts(&rules) {
+            Ok(missing) if missing.is_empty() => {}
+            Ok(_) => self.say("this game build has no name for the experience text"),
+            Err(error) => self.say(format!("text refused: {}", error.message)),
+        }
+    }
+
+    /// Hides the game's experience bar, or shows it again.
+    fn hide_bar(&mut self) {
+        let elements = if self.bar.hidden {
+            Vec::new()
+        } else {
+            vec![game_ui::element("_Exp", "window")]
+        };
+        match game_ui::hide(&elements) {
+            Ok(missing) if missing.is_empty() => {
+                self.bar.hidden = !self.bar.hidden;
+                self.say(if self.bar.hidden {
+                    "experience bar hidden"
+                } else {
+                    "experience bar shown"
+                });
+            }
+            Ok(_) => self.say("this game build has no name for the experience bar"),
+            Err(error) => self.say(format!("hiding refused: {}", error.message)),
+        }
+    }
+
+    /// Shows the clicks in the game's experience text, or stops.
+    fn label_clicks(&mut self) {
+        self.bar.clicks = !self.bar.clicks;
+        self.say(if self.bar.clicks {
+            "clicks in the experience text"
+        } else {
+            "clicks removed from the experience text"
+        });
+        self.show_clicks();
     }
 
     fn click(&mut self, id: &str) {
@@ -54,7 +115,12 @@ impl Hello {
                 if let Err(error) = storage::save("clicks.json", &self.clicks) {
                     self.say(format!("cannot save: {}", error.message));
                 }
+                if self.bar.clicks {
+                    self.show_clicks();
+                }
             }
+            "hide" => self.hide_bar(),
+            "label" => self.label_clicks(),
             "count" | "fail" | "fetch" => match jobs::start(id, &"hello job") {
                 Ok(job) => self.job = Some(job),
                 Err(error) => self.say(format!("job refused: {}", error.message)),
@@ -303,6 +369,7 @@ impl Plugin for Hello {
             heard: None,
             tab: 0,
             volume: 0.5,
+            bar: ExperienceBar::default(),
         };
         if let Err(error) = events::subscribe(&[EventKind::ChatMessage]) {
             hello.say(format!("events refused: {}", error.message));
@@ -360,16 +427,28 @@ impl Plugin for Hello {
                         .progress(self.progress, "")
                 })
                 .section("game", "Game", false, |section| {
-                    section.row(|row| {
-                        row.button("table", "Activate the table")
-                            .button("status", "Table status")
-                            .button("letters", "Add letters")
-                            .button("read", "Read game data")
-                            .button("where", "Who am I")
-                            .button("statuses", "My statuses")
-                            .button("heard", "Last chat message")
-                            .button("texture", "Replace a texture")
-                    })
+                    section
+                        .row(|row| {
+                            row.button("table", "Activate the table")
+                                .button("status", "Table status")
+                                .button("letters", "Add letters")
+                                .button("read", "Read game data")
+                                .button("where", "Who am I")
+                                .button("statuses", "My statuses")
+                                .button("heard", "Last chat message")
+                                .button("texture", "Replace a texture")
+                        })
+                        .row(|row| {
+                            row.button(
+                                "hide",
+                                if self.bar.hidden {
+                                    "Show the experience bar"
+                                } else {
+                                    "Hide the experience bar"
+                                },
+                            )
+                            .button("label", "Clicks in the experience text")
+                        })
                 })
                 .section("widgets", "Widgets", false, |section| {
                     let section = section.tabs("tabs", &["Numbers", "Table"], self.tab);

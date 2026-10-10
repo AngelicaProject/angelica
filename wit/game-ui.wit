@@ -1,0 +1,68 @@
+package angelica:plugin@1.0.0;
+
+/// Rules for the game's own windows: elements the plugin keeps hidden and
+/// text it puts in text elements.
+///
+/// A window is named as the game names it, and an element by the name the
+/// game map gives it for the window's layout in the running game build. An
+/// element the map does not name cannot be changed. The host applies the
+/// rules every frame: it hides an element again when the game shows it, and
+/// writes the plugin's text again when the game writes its own. When the
+/// plugin stops, hidden elements are shown and the game's text returns.
+/// Called from the main instance only.
+interface game-ui {
+    use types.{error};
+
+    /// A named element of a named window.
+    record element {
+        /// The window's name in the game, such as `_Exp`.
+        window: string,
+        /// The element's name in the game map.
+        name: string,
+    }
+
+    /// An element the game map names in the running game build.
+    record element-info {
+        name: string,
+        /// Whether the element shows text, so `set-texts` accepts it.
+        text: bool,
+    }
+
+    /// Where the plugin's text goes in an element.
+    enum placement {
+        /// After the game's text.
+        after,
+        /// Before the game's text.
+        before,
+        /// In place of the game's text.
+        instead,
+    }
+
+    /// The plugin's text for an element.
+    record text-rule {
+        element: element,
+        /// At most 256 bytes, without control characters.
+        text: string,
+        placement: placement,
+    }
+
+    /// The elements of a window the game map names in this game build,
+    /// sorted by name. `unavailable` when the map names none or does not
+    /// know the build's layout of the window.
+    elements: func(window: string) -> result<list<element-info>, error>;
+
+    /// Replaces the elements the plugin keeps hidden; an empty list shows
+    /// them again. At most 256 elements. Returns the elements that are not
+    /// available in this game build; they stay as the game shows them, and
+    /// the others are hidden. Requires `gameui.hide`.
+    set-hidden: func(elements: list<element>) -> result<list<element>, error>;
+
+    /// Replaces the texts the plugin puts in elements; an empty list
+    /// removes them. At most 64 texts, one per element. When several
+    /// plugins put text in one element, their texts are joined in the order
+    /// of plugin ids, and the first `instead` replaces the game's text.
+    /// Returns the elements that are not available in this game build; they
+    /// keep the game's text. An element that does not show text is
+    /// refused. Requires `gameui.text`.
+    set-texts: func(rules: list<text-rule>) -> result<list<element>, error>;
+}

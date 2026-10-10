@@ -42,6 +42,7 @@ pub mod chat;
 pub mod commands;
 pub mod events;
 pub mod excel;
+pub mod game_ui;
 pub mod http;
 pub mod jobs;
 pub mod state;
@@ -51,8 +52,8 @@ pub mod ui;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        chat, commands, events, excel, excel_text, file_replacements, game_files, http, jobs,
-        runtime, state, storage, text_case, types,
+        chat, commands, events, excel, excel_text, file_replacements, game_files, game_ui, http,
+        jobs, runtime, state, storage, text_case, types,
     };
 }
 

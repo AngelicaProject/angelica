@@ -65,6 +65,7 @@ Each crate owns one boundary:
 - `host` owns installed plugins, their lifecycle, grants, settings, and the work of each frame; `sandbox` and `jobs` own wasmtime stores, the imports, and per-call limits; `storage` the plugins' folders; `ui` and `panel` plugin windows; `menu` the Angelica menu, `language` its English and Russian strings and the player's settings, and `theme` and `fonts` Angelica's look.
 - `game_data` reads the installed game's files and sheets through `angelica-sqpack` and caches decoded sheets.
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
+- `game_ui` owns the rules for the game's own windows and applies them once per frame through `Screen`, the game's windows as the game adapter offers them.
 - `game::Game` is the boundary to the game process: the version and the adapters a service needs.
 - `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay through a private deferred Direct3D 11 context, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.
 

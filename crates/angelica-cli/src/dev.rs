@@ -155,7 +155,7 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
                 );
             }
         }
-        for folder in ["sheets", "state"] {
+        for folder in ["sheets", "state", "windows"] {
             add_folder(&map.join(folder), folder, &mut files)?;
         }
         package(&args.installation.join("map"), &files, &key)?;

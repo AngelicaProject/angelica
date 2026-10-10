@@ -38,6 +38,12 @@ pub enum Permission {
     /// Receive the messages added to the chat log.
     #[serde(rename = "chat.read")]
     ChatRead,
+    /// Keep elements of the game's own windows hidden.
+    #[serde(rename = "gameui.hide")]
+    GameUiHide,
+    /// Put text in text elements of the game's own windows.
+    #[serde(rename = "gameui.text")]
+    GameUiText,
 }
 
 impl Permission {
@@ -52,6 +58,8 @@ impl Permission {
             Self::HttpGet => "http.get",
             Self::StateSelf => "state.self",
             Self::ChatRead => "chat.read",
+            Self::GameUiHide => "gameui.hide",
+            Self::GameUiText => "gameui.text",
         }
     }
 
@@ -69,6 +77,8 @@ impl Permission {
                 "Reads your character: name, class, level, HP and MP, position, and zone"
             }
             Self::ChatRead => "Reads the messages in your chat log, including other players'",
+            Self::GameUiHide => "Hides parts of the game's interface",
+            Self::GameUiText => "Puts its own text in the game's windows",
         }
     }
 
@@ -78,7 +88,11 @@ impl Permission {
         match self {
             Self::HttpGet => Class::Network,
             Self::ChatRead => Class::OtherPlayers,
-            Self::ExcelText | Self::TextCase | Self::FilesReplace => Class::WhatYouSee,
+            Self::ExcelText
+            | Self::TextCase
+            | Self::FilesReplace
+            | Self::GameUiHide
+            | Self::GameUiText => Class::WhatYouSee,
             Self::ChatCommands | Self::ChatPrint | Self::StateSelf => Class::YoursOnly,
         }
     }

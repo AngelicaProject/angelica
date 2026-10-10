@@ -22,6 +22,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `http` | HTTPS GET requests to the hosts the manifest lists | `http.get` |
 | `state` | game state as the game map's tables: the player's character | `state.<domain>`: `state.self` |
 | `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
+| `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 
 Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -39,7 +40,7 @@ The calls of one frame — `tick`, the commands, the events, the window events, 
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, event subscriptions, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, `state.tables`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `state.read`, `events`, `game-ui`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -80,6 +81,17 @@ Every table belongs to a domain, and reading it requires the domain's permission
 - `chat-message` (`chat.read`): a message the game added to the chat log, whatever the channel, with its kind (a row of the LogKind sheet), the game's full log information, the sender's name and the message as game text of at most 8192 bytes each, and the time in seconds since 1970. Messages printed by Angelica's plugins are not delivered, so a plugin that answers messages never hears itself.
 
 The host keeps at most 256 events between two frames, for all plugins together; when more arrive, every subscribed plugin first receives `dropped` with how many were left out. A subscription ends when the plugin stops. Subscribing to a kind whose map entries the game build lacks returns `unavailable`.
+
+## Game windows
+
+`game-ui` changes the game's own windows through rules the host applies. A rule names a window as the game names it and an element by the name the [game map](./game-map-v1.md#window-schemas) gives it for the window's layout in the running game build. An element the map does not name cannot be changed. `elements(window)` lists the names of a window with whether each shows text, and returns `unavailable` when the map names none or does not know the build's layout of the window.
+
+- `set-hidden` (`gameui.hide`) replaces the elements the plugin keeps hidden, at most 256. The host hides an element again whenever the game shows it.
+- `set-texts` (`gameui.text`) replaces the texts the plugin puts in text elements, at most 64, one per element: after the game's text, before it, or instead of it. A text has at most 256 bytes and no control characters. The host writes the text again whenever the game writes its own, and a plugin whose value changes calls `set-texts` again. An element that does not show text is refused.
+
+Both return the elements that are not available in the running game build: those rules wait, and the others apply. Rules are applied on the game's main thread once per frame, after the plugins' calls of the frame, so a change is visible in the next frame the game draws; a window the game has not built is left alone until it is. When several plugins hide one element, it is hidden while any of them does. When several put text in one element, their texts are joined in the order of plugin ids, and the first `instead` replaces the game's text; an element's text with the plugins' texts has at most 4096 bytes, and longer text is left as the game wrote it.
+
+An empty list, and disabling the plugin, remove the rules: in the next frame the host shows the elements it hid and writes back the game's text where its own is still there. An element the host hid is shown again even when the game would have hidden it meanwhile for its own reasons; the game shows or hides it as it wants from its next update. A game build that lacks the [window entries](./game-structures.md#game-windows) returns `unavailable`.
 
 ## Text tables
 

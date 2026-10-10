@@ -50,6 +50,16 @@ pub trait Game: Send + Sync {
     /// Names the map entries the game build lacks.
     fn enable_chat_messages(&self) -> Result<(), String>;
 
+    /// Runs `work` with the game's own windows, when the game has them
+    /// yet. On the main thread only.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks.
+    fn with_screen(
+        &self,
+        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
+    ) -> Result<(), String>;
+
     /// The rows of a state table with the values of `fields` (named
     /// `names`), read from the game's memory. On the main thread only.
     fn read_state(

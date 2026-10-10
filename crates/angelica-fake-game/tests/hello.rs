@@ -831,3 +831,105 @@ fn removing_a_plugin_deletes_its_approval_and_its_data_only_when_asked() {
         assert_eq!(storage.join("notes.txt").is_file(), !data, "data: {data}");
     }
 }
+
+/// A host whose game has the experience bar's layout file and names for
+/// two of its elements, with the bar built.
+fn with_experience_bar(manifest: &str) -> TestHost {
+    let game = FakeGame::new("2026.09.15.0000.0000")
+        .with_file("ui/uld/Exp.uld", b"uldh0100 experience".to_vec());
+    let test = approved_over(&game, manifest, |test| {
+        test.name_elements("_Exp", "Exp", &[("window", 1, false), ("text", 4, true)]);
+    });
+    test.build_element("_Exp", 1, None);
+    test.build_element("_Exp", 4, Some("EXP 10/20"));
+    test
+}
+
+#[test]
+fn elements_of_the_games_windows_stay_hidden_until_the_plugin_stops() {
+    let test = with_experience_bar(MANIFEST);
+    click(&test, "hide");
+    assert_eq!(message(&test), "experience bar hidden");
+    assert!(!test.element("_Exp", 1).visible);
+
+    // The game shows the bar again; the next frame hides it.
+    test.game
+        .windows
+        .lock()
+        .unwrap()
+        .get_mut(&("_Exp".to_owned(), 1))
+        .unwrap()
+        .visible = true;
+    test.frames(1);
+    assert!(!test.element("_Exp", 1).visible);
+
+    click(&test, "hide");
+    assert_eq!(message(&test), "experience bar shown");
+    assert!(test.element("_Exp", 1).visible);
+
+    click(&test, "hide");
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(2);
+    assert!(test.element("_Exp", 1).visible);
+}
+
+#[test]
+fn text_in_the_games_windows_follows_the_game_and_the_plugin() {
+    let test = with_experience_bar(MANIFEST);
+    let shown = |test: &TestHost| String::from_utf8(test.element("_Exp", 4).text.unwrap()).unwrap();
+    click(&test, "label");
+    assert_eq!(message(&test), "clicks in the experience text");
+    assert_eq!(shown(&test), "EXP 10/20 · 0 clicks");
+
+    click(&test, "click");
+    assert_eq!(shown(&test), "EXP 10/20 · 1 clicks");
+
+    test.game_writes("_Exp", 4, "EXP 11/20");
+    test.frames(1);
+    assert_eq!(shown(&test), "EXP 11/20 · 1 clicks");
+
+    // The game builds the window again.
+    test.build_element("_Exp", 4, Some("EXP 0/30"));
+    test.frames(1);
+    assert_eq!(shown(&test), "EXP 0/30 · 1 clicks");
+
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(2);
+    assert_eq!(shown(&test), "EXP 0/30");
+}
+
+#[test]
+fn rules_for_the_games_windows_need_permissions_names_and_the_game() {
+    let without = without_permissions(&["gameui.hide", "gameui.text"]);
+    let test = with_experience_bar(&without);
+    click(&test, "hide");
+    assert_eq!(
+        message(&test),
+        "hiding refused: the plugin does not hold gameui.hide"
+    );
+    click(&test, "label");
+    assert_eq!(
+        message(&test),
+        "text refused: the plugin does not hold gameui.text"
+    );
+    assert!(test.element("_Exp", 1).visible);
+
+    // A game build whose layout file the map does not know.
+    let test = approved(MANIFEST);
+    click(&test, "hide");
+    assert_eq!(
+        message(&test),
+        "this game build has no name for the experience bar"
+    );
+
+    let test = with_experience_bar(MANIFEST);
+    test.game
+        .windows_available
+        .store(false, std::sync::atomic::Ordering::Release);
+    click(&test, "hide");
+    assert_eq!(
+        message(&test),
+        "hiding refused: map entry ui.stage is absent"
+    );
+    assert!(test.element("_Exp", 1).visible);
+}

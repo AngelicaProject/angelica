@@ -12,6 +12,7 @@ mod record;
 mod resolve;
 mod sheets;
 mod state;
+mod windows;
 
 pub use error::MapError;
 pub use load::{FORMAT, Map};
@@ -20,3 +21,6 @@ pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};
 pub use sheets::{ColumnType, KnownLayout, NamedColumn, SheetLayout, SheetSchema};
 pub use state::{INDEX, Representation, StateField, StateList, StateTable};
+pub use windows::{
+    ElementKind, KnownWindowLayout, NamedElement, WindowSchema, window_layout_fingerprint,
+};

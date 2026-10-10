@@ -7,6 +7,7 @@ map.toml                 format version
 entries/<area>.toml      hand-maintained entries, one file per area
 sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
 state/<domain>.toml      state tables: game state plugins may read, by domain
+windows/<window>.toml    window schemas: names for elements of the game's own windows
 builds/<version>.toml    generated build records, one per game executable
 ```
 
@@ -164,6 +165,34 @@ list = { at = "status.status_manager.statuses", length = 60, stride = 16, presen
 Every list table has the implicit field `index`, the element's position in its array from 0; a list table defines no field of that name.
 
 A table that breaks a rule or names an entry that does not exist or has the wrong kind makes the whole map invalid. State tables are not part of `entries_sha256`.
+
+## Window schemas
+
+A window schema names elements of one of the game's own windows. Its path is `windows/` followed by the window's name as the game has it and `.toml`.
+
+```toml
+window = "_Exp"
+doc = "The experience bar."
+layout = "ui/uld/Exp.uld"
+
+[elements.text]
+kind = "text"
+doc = "The class or job, its level, and the experience points, above the bar."
+
+[[layouts]]
+fingerprint = "f136eacebcde360e"
+elements = { text = 4 }
+```
+
+- `window`: the window's name in the game: ASCII letters, digits, and underscores, at most 31 bytes, equal to the file's name without `.toml`.
+- `doc`, and each element's `doc`: what the window or element shows, not how it was found; not blank.
+- `layout`: the path of the window's layout file in the game's archives, `ui/uld/<name>.uld`. The game builds the window from it, and it gives every element its id.
+- `elements`: at least one named element. A name is a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes. `kind` is `text` for an element that shows text and `other` for any other.
+- `layouts`: at least one layout file the names were checked against. `fingerprint` is 16 lowercase hexadecimal digits: the first 8 bytes of the SHA-256 of the layout file's bytes; `elements` gives every named element its id in that file, each id above zero and once.
+
+A name applies in a game build only when the build's layout file has the fingerprint of one of the schema's layouts. Otherwise every name of the window is absent in that build: a patch that changes the window's layout file in any way leaves its names absent until a layout for the new build is added. A name never means another element.
+
+A schema that breaks a rule makes the whole map invalid. Window schemas are not part of `entries_sha256`.
 
 ## Build records
 

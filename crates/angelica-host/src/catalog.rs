@@ -131,7 +131,7 @@ impl Catalog {
         let entries = files
             .iter()
             .filter(|(name, _)| {
-                ["entries/", "sheets/", "state/"]
+                ["entries/", "sheets/", "state/", "windows/"]
                     .iter()
                     .any(|folder| name.starts_with(folder))
             })

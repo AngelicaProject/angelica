@@ -14,7 +14,7 @@ An operation is as narrow as its verified contract. A game structure the map doe
 
 | Kind | Example | Rule |
 | --- | --- | --- |
-| Declarative game rules | text tables, letter case, replacement files | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
+| Declarative game rules | text tables, letter case, replacement files, hidden elements and text in the game's own windows | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
 | Game state | the player, the party, the inventory | the plugin reads fields the game map makes visible to plugins, by entry name, under a read permission for their domain; reads happen on the main thread between frames and never write |
 | Game events | a chat message arrived, a window opened, the zone changed | an adapter's hook records the event; the plugin receives it in the next frame and cannot change what the game did |
 | Operations on the game | using an action, moving an item | one host operation per kind of action, with its own permission, validated arguments, and a rate the host enforces; automation is built from these operations |

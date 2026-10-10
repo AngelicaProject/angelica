@@ -17,6 +17,8 @@ authors = ["AngelicaProject contributors"]
 "http.get" = true
 "state.self" = true
 "chat.read" = true
+"gameui.hide" = true
+"gameui.text" = true
 
 [http]
 hosts = ["example.com"]

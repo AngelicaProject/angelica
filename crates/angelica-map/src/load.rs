@@ -17,6 +17,7 @@ pub struct Map {
     entries: BTreeMap<String, Entry>,
     sheets: BTreeMap<String, crate::SheetSchema>,
     state: BTreeMap<String, crate::StateTable>,
+    windows: BTreeMap<String, crate::WindowSchema>,
     /// Entry names, each after every entry it references.
     order: Vec<String>,
     entries_sha256: String,
@@ -29,8 +30,8 @@ struct RawMapFile {
 }
 
 impl Map {
-    /// Reads a map directory: `map.toml`, every file in `entries/`, and
-    /// every file under `sheets/`.
+    /// Reads a map directory: `map.toml`, every file in `entries/`, `state/`,
+    /// and `windows/`, and every file under `sheets/`.
     ///
     /// # Errors
     ///
@@ -76,6 +77,25 @@ impl Map {
                 files.push((format!("state/{file_name}"), read_text(&path)?));
             }
         }
+        let windows_directory = directory.join("windows");
+        if windows_directory.exists() {
+            let listing = std::fs::read_dir(&windows_directory)
+                .map_err(|error| io_error(&windows_directory, &error))?;
+            for item in listing {
+                let path = item
+                    .map_err(|error| io_error(&windows_directory, &error))?
+                    .path();
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                if !path.is_file() || path.extension().is_none_or(|extension| extension != "toml") {
+                    return Err(MapError::UnexpectedFile { path });
+                }
+                files.push((format!("windows/{file_name}"), read_text(&path)?));
+            }
+        }
         let sheets_directory = directory.join("sheets");
         if sheets_directory.exists() {
             collect_sheets(&sheets_directory, "sheets", &mut files)?;
@@ -84,8 +104,9 @@ impl Map {
     }
 
     /// Builds a map from the text of `map.toml` and of each entries and
-    /// sheet schema file, given with its path relative to the map directory
-    /// (`entries/<area>.toml`, `sheets/<sheet>.toml`).
+    /// schema file, given with its path relative to the map directory
+    /// (`entries/<area>.toml`, `sheets/<sheet>.toml`, `state/<domain>.toml`,
+    /// `windows/<window>.toml`).
     ///
     /// # Errors
     ///
@@ -111,6 +132,7 @@ impl Map {
                 })?;
             sheets.insert(schema.sheet.clone(), schema);
         }
+        let windows = window_schemas(files)?;
         let mut state = Vec::new();
         for (relative, text) in files.iter().filter(|(path, _)| path.starts_with("state/")) {
             let tables =
@@ -122,7 +144,11 @@ impl Map {
         }
         let mut sorted = files
             .iter()
-            .filter(|(path, _)| !path.starts_with("sheets/") && !path.starts_with("state/"))
+            .filter(|(path, _)| {
+                !path.starts_with("sheets/")
+                    && !path.starts_with("state/")
+                    && !path.starts_with("windows/")
+            })
             .collect::<Vec<_>>();
         sorted.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -174,6 +200,7 @@ impl Map {
             entries,
             sheets,
             state: tables,
+            windows,
             order,
             entries_sha256: content_hash(map_toml, &sorted),
         })
@@ -211,6 +238,17 @@ impl Map {
         self.sheets.get(name)
     }
 
+    /// Every window schema, by window name.
+    pub fn windows(&self) -> impl Iterator<Item = &crate::WindowSchema> {
+        self.windows.values()
+    }
+
+    /// The schema of a window.
+    #[must_use]
+    pub fn window(&self, name: &str) -> Option<&crate::WindowSchema> {
+        self.windows.get(name)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -232,6 +270,25 @@ impl Map {
     pub(crate) fn order(&self) -> &[String] {
         &self.order
     }
+}
+
+/// The window schemas among `files`, by window name.
+fn window_schemas(
+    files: &[(String, String)],
+) -> Result<BTreeMap<String, crate::WindowSchema>, MapError> {
+    let mut windows = BTreeMap::new();
+    for (relative, text) in files
+        .iter()
+        .filter(|(path, _)| path.starts_with("windows/"))
+    {
+        let schema =
+            crate::windows::parse(relative, text).map_err(|message| MapError::InvalidWindow {
+                path: PathBuf::from(relative),
+                message,
+            })?;
+        windows.insert(schema.window.clone(), schema);
+    }
+    Ok(windows)
 }
 
 /// Adds every `.toml` file under `directory`, by its path relative to the

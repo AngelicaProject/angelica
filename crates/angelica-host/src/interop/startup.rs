@@ -132,6 +132,7 @@ fn initialize() -> Result<(), String> {
         seen: None,
         sheets: host.services().sheets.clone(),
         state: host.services().state.clone(),
+        ui: host.services().ui.clone(),
     };
     host.watch(Box::new(FolderPackages::new(
         config.plugin_directory.clone(),
@@ -207,7 +208,7 @@ fn services(
         events: events.clone(),
         version: WindowsGame::read_version(&executable),
     });
-    let (sheets, state) = map_services(map, catalog, base);
+    let (sheets, state, ui) = map_services(map, catalog, base);
     Ok(Arc::new(Services {
         // The executable is in `game/`; the archives are in `game/sqpack`.
         data: Arc::new(crate::game_data::GameData::new(
@@ -221,23 +222,29 @@ fn services(
         sheets,
         state,
         events,
+        ui,
         game,
         starting: AtomicBool::new(false),
     }))
 }
 
-/// The sheet schemas and state tables of the map, resolved for the game
-/// loaded at `base`; none without a map.
+/// The sheet schemas, state tables, and window schemas of the map, resolved
+/// for the game loaded at `base`; none without a map.
 fn map_services(
     map: Option<&angelica_map::Map>,
     catalog: &Catalog,
     base: usize,
-) -> (Arc<crate::sheets::Sheets>, Arc<crate::state::StateTables>) {
+) -> (
+    Arc<crate::sheets::Sheets>,
+    Arc<crate::state::StateTables>,
+    Arc<crate::game_ui::GameUi>,
+) {
     let sheets = crate::sheets::Sheets::new(map.iter().flat_map(|map| map.sheets().cloned()));
     let state = map.map_or_else(Default::default, |map| {
         crate::state::StateTables::from_map(map, catalog, base as u64)
     });
-    (Arc::new(sheets), Arc::new(state))
+    let ui = crate::game_ui::GameUi::new(map.iter().flat_map(|map| map.windows().cloned()));
+    (Arc::new(sheets), Arc::new(state), Arc::new(ui))
 }
 
 /// The signed map resolved for this executable, the map, and the lines the
@@ -386,13 +393,14 @@ struct FolderPackages {
     map: MapData,
 }
 
-/// The game map's data the host uses without hooks: sheet schemas and
-/// state tables, which a reloaded map replaces.
+/// The game map's data the host uses without hooks: sheet schemas, state
+/// tables, and window schemas, which a reloaded map replaces.
 struct MapData {
     directory: std::path::PathBuf,
     seen: Option<Vec<u8>>,
     sheets: Arc<crate::sheets::Sheets>,
     state: Arc<crate::state::StateTables>,
+    ui: Arc<crate::game_ui::GameUi>,
 }
 
 impl MapData {
@@ -416,10 +424,12 @@ impl MapData {
             &catalog,
             base as u64,
         ));
+        self.ui.set(map.windows().cloned());
         Ok(format!(
-            "game map reloaded: {} sheet schemas and {} state tables; entries that hooks use change at the next game start",
+            "game map reloaded: {} sheet schemas, {} state tables, and {} window schemas; entries that hooks use change at the next game start",
             map.sheets().count(),
-            map.state_tables().count()
+            map.state_tables().count(),
+            map.windows().count()
         ))
     }
 }

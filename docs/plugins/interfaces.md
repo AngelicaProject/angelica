@@ -114,6 +114,16 @@ Teach the game's capitalization letters it does not know.
 - Permission: `text.case`. Instance: main.
 - Contract: [letter case](../formats/plugin-api-v1.md#letter-case).
 
+## The game's own windows
+
+Hide parts of the game's interface, or put your own text after, before, or instead of the text of one of its elements.
+
+- SDK: `game_ui::hide(&[game_ui::element("_Exp", "window")])`, `game_ui::texts(&[game_ui::after("_Exp", "text", " (75%)")])`; `game_ui::elements("_Exp")` lists the names a window has.
+- Permissions: `gameui.hide` for hiding, `gameui.text` for text. Instance: main.
+- Each call replaces the plugin's whole list; an empty list removes the rules. Call `texts` again when your value changes; the host keeps the text in place when the game rewrites its own.
+- Both return the elements the running game build has no names for; decide whether your feature works without them. A window or element the game map does not name needs an [API request](./api-requests.md) for the name.
+- Contract: [game windows](../formats/plugin-api-v1.md#game-windows).
+
 ## Replacement game files
 
 Serve a changed font or texture instead of the game's.

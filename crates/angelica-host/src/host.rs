@@ -559,6 +559,7 @@ impl Host {
         self.services.commands.remove_plugin(id);
         self.services.chat.remove_plugin(id);
         self.services.events.remove_plugin(id);
+        self.services.ui.remove_plugin(id);
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -675,6 +676,15 @@ impl Host {
         };
         for plugin in self.plugins() {
             self.frame_plugin(&plugin, &frame);
+        }
+        let ui = &self.services.ui;
+        if !ui.idle() {
+            // Without the game's windows the rules wait; `set-hidden` and
+            // `set-texts` already told the plugin why.
+            let _ = self
+                .services
+                .game
+                .with_screen(&mut |screen| ui.apply(screen, &self.services.data));
         }
     }
 

@@ -229,6 +229,8 @@ impl Language {
                     "Видит вашего персонажа: имя, класс, уровень, HP и MP, место и зону"
                 }
                 Permission::ChatRead => "Читает сообщения в вашем чате, в том числе других игроков",
+                Permission::GameUiHide => "Скрывает части интерфейса игры",
+                Permission::GameUiText => "Вписывает свой текст в окна игры",
             },
         }
     }
@@ -355,6 +357,8 @@ mod tests {
             Permission::HttpGet,
             Permission::StateSelf,
             Permission::ChatRead,
+            Permission::GameUiHide,
+            Permission::GameUiText,
         ];
         for permission in permissions {
             assert_ne!(

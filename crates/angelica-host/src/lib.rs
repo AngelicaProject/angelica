@@ -18,6 +18,7 @@ pub mod file_replacements;
 pub mod fonts;
 pub mod game;
 pub mod game_data;
+pub mod game_ui;
 pub mod host;
 pub mod http;
 pub mod icons;

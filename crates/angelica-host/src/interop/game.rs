@@ -71,6 +71,13 @@ impl Game for WindowsGame {
         super::chat::install_messages(&self.catalog, self.base, self.events.clone())
     }
 
+    fn with_screen(
+        &self,
+        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
+    ) -> Result<(), String> {
+        super::game_ui::with_screen(&self.catalog, self.base, work)
+    }
+
     fn read_state(
         &self,
         table: &crate::state::TablePlan,

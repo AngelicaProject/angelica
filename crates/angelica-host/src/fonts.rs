@@ -125,6 +125,8 @@ mod tests {
             Permission::HttpGet,
             Permission::StateSelf,
             Permission::ChatRead,
+            Permission::GameUiHide,
+            Permission::GameUiText,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());
