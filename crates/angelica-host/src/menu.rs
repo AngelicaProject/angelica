@@ -139,8 +139,14 @@ const START_TIME: f64 = 12.0;
 const WIDTH: f32 = 640.0;
 /// The height of a line of the list.
 const ROW: f32 = 36.0;
-/// How many lines the list shows before it scrolls.
-const VISIBLE_ROWS: f32 = 11.0;
+/// How many lines the list shows before it scrolls; the list keeps this
+/// height with fewer plugins, so the window does not change its size.
+const VISIBLE_ROWS: f32 = 9.0;
+/// The height of the columns' header over the list.
+const COLUMNS: f32 = 18.0;
+/// The height of Installed around the list: the search, the link field,
+/// and the footer. Settings take the same height as Installed.
+const AROUND_LIST: f32 = 44.0 + 44.0 + 28.0;
 
 /// What a note means, which picks its mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,7 +482,9 @@ impl Menu {
         {
             self.selected = None;
         }
+        let list_height = view.at(COLUMNS + ROW * VISIBLE_ROWS);
         if lines.is_empty() {
+            let top = ui.cursor().top();
             let text = if self.query.trim().is_empty() && self.filter.is_none() {
                 s.empty
             } else {
@@ -494,7 +502,8 @@ impl Menu {
                     .wrap(),
                 );
             });
-            ui.add_space(view.at(18.0));
+            let used = ui.cursor().top() - top;
+            ui.add_space((list_height - used).max(0.0));
             return false;
         }
         columns_header(ui, view, s);
@@ -502,7 +511,7 @@ impl Menu {
         let mut opened = false;
         egui::ScrollArea::vertical()
             .id_salt("angelica-installed")
-            .auto_shrink([false, true])
+            .auto_shrink([false, false])
             .max_height(height * VISIBLE_ROWS)
             .show_rows(ui, height, lines.len(), |ui, range| {
                 for line in &lines[range] {
@@ -1086,7 +1095,7 @@ impl Menu {
     /// Settings: the sections on the left, the chosen one on the right.
     fn draw_settings(&mut self, ui: &mut Ui, view: &View<'_>) {
         let p = view.p;
-        let height = view.at(300.0);
+        let height = view.at(COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST);
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
         let column = Rect::from_min_size(area.min, vec2(view.at(180.0), height));
         let painter = ui.painter().clone();

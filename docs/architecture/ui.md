@@ -20,7 +20,7 @@ The face of Angelica uses plain words; ids, paths, permission names, logs, and t
 
 The title bar has the word `angelica` in lowercase, small and in a muted color, and a close button. Below it are the tabs **Installed** and **Settings**.
 
-**Installed** has a search field that filters by name and description, and a filter by permission class. The list is grouped under small section headers with a count and a thin rule: needs attention (awaiting approval, also when a new version asks for more, or stopped after a failure), on, and off, each sorted by name. The list scrolls and draws only its visible rows. A row is 36 pixels high and has, in columns:
+**Installed** has a search field that filters by name and description, and a filter by permission class. The list is grouped under small section headers with a count and a thin rule: needs attention (awaiting approval, also when a new version asks for more, or stopped after a failure), on, and off, each sorted by name. The list scrolls and draws only its visible rows; with fewer plugins it keeps the height of nine rows, and Settings have the same height as Installed, so the window keeps its size. A row is 36 pixels high and has, in columns:
 
 - a square tile with rounded corners holding the first letter of the plugin's name;
 - the name;
