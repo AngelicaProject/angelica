@@ -28,6 +28,8 @@ pub use sandbox::bindings::angelica::plugin::ui::{Event, Window};
 /// Where the host keeps what it persists.
 #[derive(Debug, Clone)]
 pub struct Directories {
+    /// The plugin packages, each in a folder named by its id.
+    pub plugins: PathBuf,
     pub grants: PathBuf,
     pub state: PathBuf,
     pub storage: PathBuf,
@@ -148,6 +150,11 @@ pub enum Action {
     Enable(String),
     Disable(String),
     OpenFolder(String),
+    /// Removes the plugin, and with `data` also its storage folder.
+    Remove {
+        id: String,
+        data: bool,
+    },
 }
 
 pub struct Host {
@@ -851,7 +858,8 @@ impl Host {
             Action::Approve(id)
             | Action::Enable(id)
             | Action::Disable(id)
-            | Action::OpenFolder(id) => id,
+            | Action::OpenFolder(id)
+            | Action::Remove { id, .. } => id,
         };
         let plugin = self
             .plugin(id)
@@ -880,8 +888,50 @@ impl Host {
                 }
             }
             Action::OpenFolder(_) => (self.opener)(plugin.storage.root()),
+            Action::Remove { data, .. } => self.remove(plugin, *data)?,
         }
         Ok(())
+    }
+
+    /// Stops `plugin`, takes it out of the list, and deletes its approval
+    /// first, so a removal cut short never leaves it approved; then its
+    /// settings, its package, and with `data` its storage folder.
+    fn remove(&self, plugin: &Plugin, data: bool) -> Result<(), String> {
+        let id = plugin.manifest.id();
+        if plugin.status() == Status::Running {
+            self.stop(plugin, Status::Disabled);
+        }
+        self.plugins
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+        let mut failed = Vec::new();
+        for file in [
+            self.directories.grants.join(format!("{id}.json")),
+            self.directories.state.join(format!("{id}.json")),
+        ] {
+            if let Err(error) = std::fs::remove_file(&file)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                failed.push(format!("{}: {error}", file.display()));
+            }
+        }
+        let mut folders = vec![self.directories.plugins.join(id)];
+        if data {
+            folders.push(plugin.storage.root().to_path_buf());
+        }
+        for folder in folders {
+            if let Err(error) = std::fs::remove_dir_all(&folder)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                failed.push(format!("{}: {error}", folder.display()));
+            }
+        }
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("removed from the list, but {}", failed.join("; ")))
+        }
     }
 
     fn set_enabled(&self, plugin: &Plugin, enabled: bool) -> Result<(), String> {

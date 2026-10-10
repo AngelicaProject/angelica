@@ -268,6 +268,7 @@ impl TestHost {
             limits,
             services,
             Directories {
+                plugins: root.join("plugins"),
                 grants: root.join("grants"),
                 state: root.join("state"),
                 storage: root.join("storage"),

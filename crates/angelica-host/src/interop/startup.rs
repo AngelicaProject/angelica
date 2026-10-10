@@ -102,14 +102,7 @@ fn initialize() -> Result<(), String> {
         sandbox.clone(),
         config.limits(),
         services,
-        crate::host::Directories {
-            grants: config.grants_directory.clone(),
-            state: config
-                .state_directory
-                .clone()
-                .unwrap_or_else(|| root.join("state")),
-            storage: config.storage_directory.clone(),
-        },
+        directories(&config, root),
         Arc::new(|line: &str| super::log(line)),
         Box::new(|folder: &Path| super::open_folder(folder)),
     );
@@ -457,7 +450,11 @@ impl FolderPackages {
     /// The folders whose signed file list changed since the last look.
     fn look(&mut self) -> Vec<std::path::PathBuf> {
         let mut changed = Vec::new();
-        for folder in package_folders(&self.directory).unwrap_or_default() {
+        let folders = package_folders(&self.directory).unwrap_or_default();
+        // A removed package is forgotten, so the same package installed
+        // again loads.
+        self.seen.retain(|folder, _| folders.contains(folder));
+        for folder in folders {
             // The installer writes the file list last; a package without one
             // is still being written.
             let Ok(list) = std::fs::read(folder.join("files.json")) else {
@@ -498,6 +495,19 @@ impl crate::host::Updates for FolderPackages {
             self.installer.repair(repairs);
         }
         packages
+    }
+}
+
+/// Where the host keeps plugins and what the player chose for them.
+fn directories(config: &Config, root: &Path) -> crate::host::Directories {
+    crate::host::Directories {
+        plugins: config.plugin_directory.clone(),
+        grants: config.grants_directory.clone(),
+        state: config
+            .state_directory
+            .clone()
+            .unwrap_or_else(|| root.join("state")),
+        storage: config.storage_directory.clone(),
     }
 }
 

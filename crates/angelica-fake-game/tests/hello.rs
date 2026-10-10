@@ -794,3 +794,40 @@ fn numbers_tabs_tables_tooltips_and_icons() {
     assert!(matches!(&widgets[table + 5], Widget::Text(shown) if shown.text == "1"));
     assert!(matches!(&widgets[table + 6], Widget::EndTable));
 }
+
+#[test]
+fn removing_a_plugin_deletes_its_approval_and_its_data_only_when_asked() {
+    for data in [false, true] {
+        let test = approved(MANIFEST);
+        if !data {
+            // Removed while off; the other one is removed while it runs.
+            test.host.queue(Action::Disable("hello".into()));
+            test.frames(1);
+        }
+        let root = test.game_folder().parent().unwrap().to_path_buf();
+        let package = root.join("plugins").join("hello");
+        std::fs::create_dir_all(&package).unwrap();
+        let storage = test
+            .host
+            .plugin("hello")
+            .unwrap()
+            .storage
+            .root()
+            .to_path_buf();
+        std::fs::create_dir_all(&storage).unwrap();
+        std::fs::write(storage.join("notes.txt"), b"kept").unwrap();
+        assert!(root.join("grants").join("hello.json").is_file());
+
+        test.host.queue(Action::Remove {
+            id: "hello".into(),
+            data,
+        });
+        test.frames(1);
+
+        assert!(test.host.plugin("hello").is_none());
+        assert!(!root.join("grants").join("hello.json").exists());
+        assert!(!root.join("state").join("hello.json").exists());
+        assert!(!package.exists());
+        assert_eq!(storage.join("notes.txt").is_file(), !data, "data: {data}");
+    }
+}
