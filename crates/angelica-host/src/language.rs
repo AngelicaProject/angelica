@@ -1,7 +1,10 @@
 //! The languages of Angelica's own interface, English and Russian, and the
 //! player's choice of one. Plugins' windows show what plugins write.
 #![forbid(unsafe_code)]
-use crate::manifest::{Class, Permission};
+use crate::{
+    manifest::{Class, Permission},
+    theme::Theme,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -36,10 +39,11 @@ macro_rules! strings {
 }
 
 strings! {
-    tab_mine: "My plugins", "Мои плагины";
+    tab_installed: "Installed", "Установленные";
     tab_settings: "Settings", "Настройки";
-    back_to_game: "back to the game", "вернуться в игру";
-    hint: "Insert — Angelica", "Insert — Angelica";
+    close: "Close", "Закрыть";
+    esc_closes: "Esc closes", "Esc — закрыть";
+    hint: "Insert opens Angelica", "Insert — открыть Angelica";
     nothing_yet: "No plugins yet", "Плагинов пока нет";
     waiting_one: "{n} waiting for you", "{n} ждёт вас";
     waiting_few: "{n} waiting for you", "{n} ждут вас";
@@ -50,62 +54,59 @@ strings! {
     plugins_one: "{n} plugin", "{n} плагин";
     plugins_few: "{n} plugins", "{n} плагина";
     plugins_many: "{n} plugins", "{n} плагинов";
-    find: "Find among yours", "Найти среди своих";
-    group_waiting: "Waiting for you", "Ждут вас";
+    find: "Search", "Поиск";
+    filter_all: "All permissions", "Все права";
+    column_plugin: "Plugin", "Плагин";
+    column_permissions: "Permissions", "Права";
+    column_version: "Version", "Версия";
+    group_attention: "Needs attention", "Требуют внимания";
     group_on: "On", "Включены";
     group_off: "Off", "Выключены";
-    row_review: "review", "посмотреть";
-    row_stopped: "stopped", "остановлен";
     nothing_found: "Nothing found", "Ничего не нашлось";
     empty: "Your plugins will appear here. Paste a plugin link below.", "Здесь появятся ваши плагины. Вставьте ссылку на плагин ниже.";
-    link_hint: "Paste a plugin link", "Вставьте ссылку на плагин";
+    link_hint: "Plugin link", "Ссылка на плагин";
     link_note: "A plugin from a link comes from its author. What it may do, you decide before it runs.", "Плагин по ссылке приходит от автора. Что ему можно, вы решаете до его запуска.";
     link_invalid: "A plugin link starts with https:// and has no spaces", "Ссылка на плагин начинается с https:// и без пробелов";
-    add: "Add", "Добавить";
+    add: "+ Add", "+ Добавить";
     adding: "Adding…", "Добавляю…";
-    from_catalog: "FROM THE ANGELICA CATALOG", "ИЗ КАТАЛОГА ANGELICA";
-    from_author: "FROM ITS AUTHOR", "ОТ АВТОРА";
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
     source_author: "from its author", "от автора";
-    asks: "To work, it asks to", "Чтобы работать, он просит";
-    asks_more: "The new version also asks to", "Новая версия просит ещё";
+    source_authors: "from {authors}", "от {authors}";
+    version: "version {version}", "версия {version}";
+    dialog_new: "Turning on", "Включение";
+    dialog_more: "New permissions", "Новые права";
+    asks: "Will be able to", "Сможет";
+    asks_first: "Asks for the first time", "Просит впервые";
+    already: "Already allowed", "Уже разрешено";
     asks_nothing: "Only its own windows and files", "Только свои окна и файлы";
     allow: "Allow and turn on", "Разрешить и включить";
     not_now: "Not now", "Не сейчас";
+    review: "Review permissions…", "Посмотреть права…";
     open: "Open", "Открыть";
-    version: "version", "версия";
-    how: "How it works", "Как он устроен";
-    front: "Front", "Лицо";
-    stopped: "It stopped after an error. The game was not affected.", "Он остановился после ошибки. Игра не пострадала.";
+    turn_off: "Turn off", "Выключить";
+    turn_on: "Turn on", "Включить";
     retry: "Try again", "Попробовать снова";
     keep_off: "Keep it off", "Оставить выключенным";
-    back_does: "does", "делает";
-    back_own: "its own windows and folder", "свои окна и папку";
-    back_cannot: "cannot", "не может";
-    cannot_online: "go online", "выходить в интернет";
-    cannot_chat: "read your chat", "читать ваш чат";
-    cannot_look: "change the game's look", "менять вид игры";
-    cannot_always: "touch other plugins or your files", "трогать другие плагины и ваши файлы";
-    back_sandbox: "sandbox", "песочница";
-    back_frame: "frame", "кадр";
-    back_signed: "signed", "подпись";
-    back_id: "id", "id";
+    open_folder: "Open folder", "Открыть папку";
+    state_running: "Running", "Работает";
+    state_off: "Off", "Выключен";
+    state_waiting: "Waiting for your permission", "Ждёт вашего разрешения";
+    state_stopped: "Stopped after an error. The game was not affected.", "Остановлен после ошибки. Игра не пострадала.";
+    section_general: "General", "Общие";
+    section_updates: "Updates", "Обновления";
+    section_developers: "For developers", "Для разработчиков";
+    setting_key: "Menu key", "Клавиша меню";
     setting_language: "Language", "Язык";
-    setting_language_note: "Angelica and its windows", "Angelica и её окна";
-    setting_key: "Open Angelica", "Открыть Angelica";
-    setting_key_note: "The key over the game", "Клавиша поверх игры";
-    setting_updates: "Plugins update on their own", "Плагины обновляются сами";
-    setting_updates_note: "A version that asks for more waits for you", "Версия, которая просит больше, подождёт вас";
-    setting_updates_value: "always", "всегда";
-    setting_developers: "For developers", "Для разработчиков";
-    setting_developers_note: "Game map, logs, plugin folders", "Карта игры, журналы, папки плагинов";
-    show: "Show", "Показать";
-    hide: "Hide", "Скрыть";
+    setting_theme: "Theme", "Тема";
+    theme_light: "light", "светлая";
+    theme_dark: "dark", "тёмная";
+    setting_updates: "Update plugins", "Обновлять плагины";
+    updates_auto: "by themselves", "сами";
+    updates_note: "A version that asks for more waits for you.", "Версия, которая просит больше, подождёт вас.";
     dev_map: "Game map", "Карта игры";
     dev_installer: "Plugin installer", "Установщик плагинов";
     dev_diagnostics: "Diagnostics", "Диагностика";
     dev_plugins: "Plugins", "Плагины";
-    dev_open_folder: "Open plugin folder", "Открыть папку плагина";
     dev_log: "Log", "Журнал";
     dev_nothing: "Nothing yet", "Пока пусто";
     status_running: "running", "работает";
@@ -239,6 +240,9 @@ pub struct Settings {
     /// The language the player chose; the system's without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// The theme the player chose; the light one without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<Theme>,
 }
 
 /// The settings file's name: a plugin id cannot begin with `_`, so it never
@@ -354,6 +358,13 @@ mod tests {
         assert_eq!(Language::from_windows(0x0411), Language::English);
     }
 
+    fn settings_with_format(settings: &Settings) -> Settings {
+        Settings {
+            format: 1,
+            ..settings.clone()
+        }
+    }
+
     #[test]
     fn settings_round_trip_and_unreadable_ones_are_defaults() {
         let folder = tempfile::tempdir().unwrap();
@@ -369,6 +380,16 @@ mod tests {
             r#"{"format":1,"language":"ru"}"#
         );
         assert_eq!(Settings::load(&path).language, Some(Language::Russian));
+        let settings = Settings {
+            theme: Some(Theme::Dark),
+            ..settings
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"format":1,"language":"ru","theme":"dark"}"#
+        );
+        assert_eq!(Settings::load(&path), settings_with_format(&settings));
         std::fs::write(&path, r#"{"format":2,"language":"ru"}"#).unwrap();
         assert_eq!(Settings::load(&path).language, None);
     }

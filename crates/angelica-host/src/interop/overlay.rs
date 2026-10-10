@@ -379,7 +379,7 @@ impl Overlay {
     fn attach(&self, chain: &IDXGISwapChain, window: usize) -> Result<Frames, String> {
         let context = egui::Context::default();
         context.set_fonts(crate::fonts::definitions(system_fonts()?));
-        crate::theme::apply(&context);
+        crate::theme::apply(&context, crate::theme::Theme::default());
         self.input.attach(window)?;
         Ok(Frames {
             painter: Painter::new(chain)?,

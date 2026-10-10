@@ -36,8 +36,8 @@ Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
 
 | File | Font | Source |
 | --- | --- | --- |
-| `CormorantGaramond-LightItalic.ttf`, `CormorantGaramond-Italic.ttf` | Cormorant Garamond italic, weights 300 and 400 | `ofl/cormorantgaramond` in the Google Fonts repository |
-| `Manrope-Regular.ttf`, `Manrope-SemiBold.ttf` | Manrope, weights 400 and 600 | `ofl/manrope` |
+| `GolosText-Regular.ttf`, `GolosText-Medium.ttf`, `GolosText-SemiBold.ttf` | Golos Text, weights 400, 500, and 600 | `ofl/golostext` in the Google Fonts repository |
+| `Quicksand-SemiBold.ttf` | Quicksand, weight 600 | `ofl/quicksand` |
 | `JetBrainsMono-Regular.ttf` | JetBrains Mono, weight 400 | `ofl/jetbrainsmono` |
 
 Each file is a static instance of the variable font at that weight, cut with fontTools (`varLib.instancer`, then `subset` with only the `kern` feature and no hinting) to U+0020–007E, U+00A0–017F, U+0400–04FF, U+2000–206F, U+20AC, U+2116, U+2122, U+2190–2193, U+2212, and U+2264–2265. A test checks that every interface string in both languages has its glyphs. Fonts are not code and are outside `cargo deny`; a new font needs a license on the same terms and its license file.

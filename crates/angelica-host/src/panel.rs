@@ -274,7 +274,9 @@ impl Drawer<'_> {
                 match text.tone {
                     Tone::Normal => ui.label(rich),
                     Tone::Muted => ui.label(rich.weak()),
-                    Tone::Good => ui.colored_label(crate::theme::ON, rich),
+                    Tone::Good => {
+                        ui.colored_label(crate::theme::current(ui.ctx()).palette().on, rich)
+                    }
                     Tone::Warning => ui.colored_label(ui.visuals().warn_fg_color, rich),
                     Tone::Bad => ui.colored_label(ui.visuals().error_fg_color, rich),
                 }

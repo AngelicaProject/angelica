@@ -1,30 +1,26 @@
-//! The Angelica menu over the game: the player's plugins as a calm list in
-//! groups, the chosen plugin's card with its face and how it works,
-//! settings, and the details for developers. While the menu is closed, a
-//! small living feather in the corner shows how Angelica is, and short
-//! notes tell what the plugin installer did.
+//! The Angelica menu over the game: a small window with the player's plugins
+//! in a dense list, a dialog for what a plugin asks, settings, and the
+//! details for developers. While the menu is closed, short notes at the top
+//! right tell what happened (`docs/architecture/ui.md`).
 #![forbid(unsafe_code)]
 use crate::{
-    feather::{self, Mood, Place},
     host::{Action, Event, Host, Plugin, Status},
     language::{Language, Settings, Strings, fill},
     manifest::{Class, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
     sandbox::bindings::angelica::plugin::runtime::Level,
-    theme::{self, Button, alpha, mono, sans, soft, soft_light, strong},
+    theme::{self, Icon, Palette, Theme, Word, medium, mono, sans, strong, wordmark},
 };
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2,
-    text::LayoutJob, vec2,
+    Align2, Color32, CornerRadius, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use std::{path::PathBuf, sync::Arc};
 
 /// Where a plugin is listed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
-    /// Waiting for the player: to approve it, or to retry it after a
-    /// failure.
-    Waiting,
+    /// Needs the player: to approve it, or to retry it after a failure.
+    Attention,
     On,
     Off,
 }
@@ -33,7 +29,7 @@ impl Group {
     #[must_use]
     pub fn of(status: &Status) -> Self {
         match status {
-            Status::AwaitingApproval | Status::Faulted(_) => Self::Waiting,
+            Status::AwaitingApproval | Status::Faulted(_) => Self::Attention,
             Status::Running => Self::On,
             Status::Disabled => Self::Off,
         }
@@ -41,7 +37,7 @@ impl Group {
 
     fn title(self, s: &Strings) -> &'static str {
         match self {
-            Self::Waiting => s.group_waiting,
+            Self::Attention => s.group_attention,
             Self::On => s.group_on,
             Self::Off => s.group_off,
         }
@@ -53,6 +49,8 @@ pub struct Entry<'a> {
     pub name: &'a str,
     pub description: &'a str,
     pub group: Group,
+    /// The classes of the permissions it holds or asks for.
+    pub classes: Vec<Class>,
 }
 
 /// A line of the list: a group's heading with how many it holds, or a
@@ -64,17 +62,19 @@ pub enum Line {
 }
 
 /// The list's lines: the plugins whose name or description contains
-/// `query`, in groups, each by name.
+/// `query` and, with a `class`, that hold or ask for a permission of it,
+/// in groups, each by name.
 #[must_use]
-pub fn lines(entries: &[Entry<'_>], query: &str) -> Vec<Line> {
+pub fn lines(entries: &[Entry<'_>], query: &str, class: Option<Class>) -> Vec<Line> {
     let query = query.trim().to_lowercase();
     let mut lines = Vec::new();
-    for group in [Group::Waiting, Group::On, Group::Off] {
+    for group in [Group::Attention, Group::On, Group::Off] {
         let mut members: Vec<(String, usize)> = entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
                 entry.group == group
+                    && class.is_none_or(|class| entry.classes.contains(&class))
                     && (query.is_empty()
                         || entry.name.to_lowercase().contains(&query)
                         || entry.description.to_lowercase().contains(&query))
@@ -90,59 +90,65 @@ pub fn lines(entries: &[Entry<'_>], query: &str) -> Vec<Line> {
     lines
 }
 
-/// How Angelica is: something went wrong, something waits for the player,
-/// the installer works, or all is calm, in that order.
+/// The classes of permissions, in the order they are shown.
+const CLASSES: [Class; 4] = [
+    Class::Network,
+    Class::OtherPlayers,
+    Class::WhatYouSee,
+    Class::YoursOnly,
+];
+
+/// The icon of a class of permissions.
 #[must_use]
-pub fn mood<'a>(statuses: impl IntoIterator<Item = &'a Status>, working: bool) -> Mood {
-    let mut waiting = false;
-    for status in statuses {
-        match status {
-            Status::Faulted(_) => return Mood::Wrong,
-            Status::AwaitingApproval => waiting = true,
-            Status::Running | Status::Disabled => {}
-        }
-    }
-    if waiting {
-        Mood::NeedsYou
-    } else if working {
-        Mood::Working
-    } else {
-        Mood::Calm
+pub fn class_icon(class: Class) -> Icon {
+    match class {
+        Class::Network => Icon::Network,
+        Class::OtherPlayers => Icon::OtherPlayers,
+        Class::WhatYouSee => Icon::WhatYouSee,
+        Class::YoursOnly => Icon::YoursOnly,
     }
 }
 
-/// The color a class of permissions is marked with, the most serious
-/// warmest.
-#[must_use]
-pub fn class_color(class: Class) -> Color32 {
-    match class {
-        Class::Network => theme::EMBER,
-        Class::OtherPlayers => theme::LIGHT,
-        Class::WhatYouSee => theme::BLUEPRINT_PALE,
-        Class::YoursOnly => theme::ON,
-    }
+/// The classes of `permissions`, each once, in the order they are shown.
+fn classes_of(permissions: impl IntoIterator<Item = Permission>) -> Vec<Class> {
+    let held: Vec<Class> = permissions.into_iter().map(Permission::class).collect();
+    CLASSES
+        .into_iter()
+        .filter(|class| held.contains(class))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Mine,
+    Installed,
     Settings,
 }
 
-/// The card's side and its turn: the side it turns to and when the turn
-/// began.
-#[derive(Debug, Default, Clone, Copy)]
-struct Flip {
-    back: bool,
-    since: Option<f64>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    General,
+    Updates,
+    Developers,
 }
 
-/// Half a turn of the card, in seconds: squash, then open.
-const HALF_TURN: f64 = 0.16;
 /// How long a note stays.
 const NOTE_TIME: f64 = 7.0;
-/// How long the corner shows how to open Angelica after the game starts.
-const HINT_TIME: f64 = 20.0;
+/// How long the note of how Angelica is stays after the game starts.
+const START_TIME: f64 = 12.0;
+/// The width of the menu's window, in points at the normal size.
+const WIDTH: f32 = 640.0;
+/// The height of a line of the list.
+const ROW: f32 = 36.0;
+/// How many lines the list shows before it scrolls.
+const VISIBLE_ROWS: f32 = 11.0;
+
+/// What a note means, which picks its mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Good,
+    Attention,
+    Failed,
+}
 
 struct Note {
     report: Report,
@@ -152,31 +158,22 @@ struct Note {
 /// The menu's state between frames.
 pub struct Menu {
     language: Language,
+    theme: Theme,
+    /// The theme last applied to the context.
+    applied: Option<Theme>,
     settings: Settings,
     settings_path: PathBuf,
     tab: Tab,
+    section: Section,
     query: String,
+    filter: Option<Class>,
     link: String,
     link_invalid: bool,
     selected: Option<String>,
-    flip: Flip,
-    developers: bool,
+    /// The plugin whose permissions the dialog shows.
+    dialog: Option<String>,
     notes: Vec<Note>,
     seen: u64,
-}
-
-/// Sizes of the menu, in points, for a screen of this height.
-#[derive(Clone, Copy)]
-struct Scale(f32);
-
-impl Scale {
-    fn of(screen: Rect) -> Self {
-        Self((screen.height() / 900.0).clamp(0.8, 1.6))
-    }
-
-    fn at(self, value: f32) -> f32 {
-        value * self.0
-    }
 }
 
 /// What one frame of the menu works with.
@@ -187,44 +184,21 @@ struct View<'a> {
     statuses: &'a [Status],
     map_status: &'a [String],
     screen: Rect,
-    k: Scale,
+    /// How many times its normal size the menu is drawn.
+    k: f32,
     time: f64,
-    mood: Mood,
+    p: &'static Palette,
 }
 
-/// The parts of My plugins.
-struct Layout {
-    detail: Rect,
-    find: Rect,
-    list: Rect,
-    link: Rect,
-}
-
-impl Layout {
-    fn of(screen: Rect, k: Scale) -> Self {
-        let left = screen.left() + k.at(64.0);
-        let width = k.at(600.0).min(screen.width() * 0.42);
-        let find = Rect::from_min_size(
-            pos2(left, screen.top() + k.at(124.0)),
-            vec2(width, k.at(44.0)),
-        );
-        let link = Rect::from_min_max(
-            pos2(left, screen.bottom() - k.at(84.0)),
-            pos2(left + width, screen.bottom() - k.at(40.0)),
-        );
-        Self {
-            detail: Rect::from_min_max(
-                pos2(left + width + k.at(116.0), screen.top() + k.at(124.0)),
-                pos2(screen.right() - k.at(64.0), screen.bottom() - k.at(40.0)),
-            ),
-            find,
-            list: Rect::from_min_max(
-                pos2(left, find.bottom() + k.at(10.0)),
-                pos2(left + width, link.top() - k.at(36.0)),
-            ),
-            link,
-        }
+impl View<'_> {
+    fn at(&self, value: f32) -> f32 {
+        value * self.k
     }
+}
+
+/// The menu's size for a screen: normal at 1080 lines.
+fn scale(screen: Rect) -> f32 {
+    (screen.height() / 1080.0).clamp(0.85, 2.0)
 }
 
 impl Menu {
@@ -236,15 +210,18 @@ impl Menu {
         let settings = Settings::load(&settings_path);
         Self {
             language: settings.language.unwrap_or(system),
+            theme: settings.theme.unwrap_or_default(),
+            applied: None,
             settings,
             settings_path,
-            tab: Tab::Mine,
+            tab: Tab::Installed,
+            section: Section::General,
             query: String::new(),
+            filter: None,
             link: String::new(),
             link_invalid: false,
             selected: None,
-            flip: Flip::default(),
-            developers: false,
+            dialog: None,
             notes: Vec::new(),
             seen: 0,
         }
@@ -254,16 +231,26 @@ impl Menu {
         self.language.strings()
     }
 
-    fn set_language(&mut self, host: &Host, language: Language) {
-        self.language = language;
-        self.settings.language = Some(language);
+    fn save(&self, host: &Host) {
         if let Err(error) = self.settings.save(&self.settings_path) {
             host.diagnostic(format!("settings: {error}"));
         }
     }
 
-    /// Draws the menu when `open`, or the sign in the corner, and the
-    /// notes. Returns whether the menu stays open.
+    fn set_language(&mut self, host: &Host, language: Language) {
+        self.language = language;
+        self.settings.language = Some(language);
+        self.save(host);
+    }
+
+    fn set_theme(&mut self, host: &Host, theme: Theme) {
+        self.theme = theme;
+        self.settings.theme = Some(theme);
+        self.save(host);
+    }
+
+    /// Draws the menu when `open`, otherwise the notes. Returns whether
+    /// the menu stays open.
     pub fn draw(
         &mut self,
         host: &Host,
@@ -271,9 +258,12 @@ impl Menu {
         map_status: &[String],
         open: bool,
     ) -> bool {
+        if self.applied != Some(self.theme) {
+            theme::apply(context, self.theme);
+            self.applied = Some(self.theme);
+        }
         let plugins = host.plugins();
         let statuses: Vec<Status> = plugins.iter().map(|plugin| plugin.status()).collect();
-        let installer = host.plugin_installer();
         let screen = context.content_rect();
         let view = View {
             host,
@@ -281,251 +271,123 @@ impl Menu {
             statuses: &statuses,
             map_status,
             screen,
-            k: Scale::of(screen),
+            k: scale(screen),
             time: context.input(|input| input.time),
-            mood: mood(
-                &statuses,
-                installer.is_some_and(|installer| installer.busy()),
-            ),
+            p: self.theme.palette(),
         };
-        if let Some(installer) = installer {
+        if let Some(installer) = host.plugin_installer() {
             self.collect_notes(installer, view.time);
         }
-        let keep = if open {
+        if open {
             self.draw_menu(context, &view)
         } else {
-            self.draw_sign(context, &view);
+            self.dialog = None;
+            self.draw_notes(context, &view);
             false
-        };
-        self.draw_notes(context, &view, open);
-        keep
+        }
     }
 
     fn draw_menu(&mut self, context: &egui::Context, view: &View<'_>) -> bool {
-        let screen = view.screen;
         let typing = context.memory(|memory| memory.focused().is_some());
         let mut keep = typing || !context.input(|input| input.key_pressed(egui::Key::Escape));
-        egui::Area::new(Id::new("angelica-menu"))
-            .order(egui::Order::Middle)
-            .fixed_pos(screen.min)
-            .constrain(false)
+        let width = view.at(WIDTH);
+        egui::Window::new("angelica")
+            .id(Id::new("angelica-menu"))
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .frame(window_frame(context, view.p))
+            .default_pos(pos2(
+                view.screen.center().x - width / 2.0,
+                view.screen.top() + view.screen.height() * 0.12,
+            ))
             .show(context, |ui| {
-                ui.set_clip_rect(screen);
-                let _backdrop = ui.allocate_rect(screen, Sense::click_and_drag());
-                theme::gradient(
-                    ui.painter(),
-                    screen,
-                    Color32::from_rgba_unmultiplied(11, 18, 32, 196),
-                    Color32::from_rgba_unmultiplied(13, 19, 31, 224),
-                );
-                if !self.draw_header(ui, view) {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                if title_bar(ui, view, None, self.strings().close) {
                     keep = false;
                 }
+                self.draw_tabs(ui, view);
                 match self.tab {
-                    Tab::Mine => {
-                        if self.draw_mine(ui, view) {
+                    Tab::Installed => {
+                        if self.draw_installed(ui, view) {
                             keep = false;
                         }
                     }
                     Tab::Settings => self.draw_settings(ui, view),
                 }
             });
+        if self.dialog.is_some() {
+            self.draw_dialog(context, view);
+        }
         keep
     }
 
-    /// The small living feather, the word, the tabs, the pulse, and the way
-    /// back to the game. Returns false when the player goes back.
-    fn draw_header(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
-        let (screen, k) = (view.screen, view.k);
-        let painter = ui.painter().clone();
-        let margin = k.at(64.0);
-        feather::living(
-            &painter,
-            Place::with_height(
-                screen.left() + margin,
-                screen.top() + k.at(18.0),
-                k.at(74.0),
-            ),
-            view.time,
-            view.mood,
-            k.at(0.7),
-        );
-        let word = painter.text(
-            pos2(
-                screen.left() + margin + k.at(40.0),
-                screen.top() + k.at(30.0),
-            ),
-            Align2::LEFT_TOP,
-            "angelica",
-            soft_light(k.at(42.0)),
-            theme::PEARL,
-        );
-        let baseline = word.bottom() - k.at(9.0);
-        let x = self.draw_tabs(ui, &painter, word.right() + k.at(44.0), baseline, k);
-        let pulse = painter.layout_job(self.pulse(view.statuses, k));
-        painter.galley(
-            pos2(x + k.at(14.0), baseline - pulse.size().y),
-            pulse,
-            theme::SOFT_TEXT,
-        );
-        !self.back_to_game(ui, &painter, view)
-    }
-
-    /// The tabs from `x` on `baseline`; returns where they end.
-    fn draw_tabs(
-        &mut self,
-        ui: &mut Ui,
-        painter: &egui::Painter,
-        mut x: f32,
-        baseline: f32,
-        k: Scale,
-    ) -> f32 {
+    fn draw_tabs(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
-        for (tab, title) in [(Tab::Mine, s.tab_mine), (Tab::Settings, s.tab_settings)] {
+        let p = view.p;
+        let (row, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(34.0)), Sense::hover());
+        let painter = ui.painter().clone();
+        painter.line_segment(
+            [row.left_bottom(), row.right_bottom()],
+            Stroke::new(1.0, p.line),
+        );
+        let mut x = row.left() + view.at(10.0);
+        for (tab, title) in [
+            (Tab::Installed, s.tab_installed),
+            (Tab::Settings, s.tab_settings),
+        ] {
             let active = self.tab == tab;
-            let font = if active {
-                strong(k.at(16.0))
-            } else {
-                sans(k.at(16.0))
-            };
-            let galley = painter.layout_no_wrap(title.to_owned(), font, theme::PEARL);
-            let rect = Rect::from_min_size(pos2(x, baseline - galley.size().y), galley.size());
+            let galley = painter.layout_no_wrap(title.to_owned(), sans(view.at(13.0)), p.text);
+            let rect = Rect::from_min_size(
+                pos2(x, row.bottom() - view.at(26.0)),
+                vec2(galley.size().x + view.at(28.0), view.at(26.0)),
+            );
             let response = ui
-                .interact(
-                    rect.expand(k.at(6.0)),
-                    Id::new(("angelica-tab", title)),
-                    Sense::click(),
-                )
+                .interact(rect, Id::new(("angelica-tab", title)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let color = if active {
-                theme::PEARL
-            } else if response.hovered() {
-                theme::SOFT_TEXT
+            let color = if active || response.hovered() {
+                p.text
             } else {
-                Color32::from_rgba_unmultiplied(255, 255, 255, 120)
+                p.secondary
             };
-            painter.galley_with_override_text_color(rect.min, galley, color);
             if active {
-                let y = rect.bottom() + k.at(9.0);
-                painter.line_segment(
-                    [pos2(rect.left(), y), pos2(rect.right(), y)],
-                    Stroke::new(k.at(1.5), theme::LIGHT),
-                );
+                let tab = rect.with_max_y(rect.bottom() + 1.0);
+                let corner = CornerRadius {
+                    nw: 4,
+                    ne: 4,
+                    sw: 0,
+                    se: 0,
+                };
+                painter.rect_filled(tab, corner, p.window);
+                painter.rect_filled(tab, corner, p.chosen);
+                painter.add(egui::Shape::line(
+                    vec![
+                        tab.left_bottom(),
+                        tab.left_top(),
+                        tab.right_top(),
+                        tab.right_bottom(),
+                    ],
+                    Stroke::new(1.0, p.border),
+                ));
             }
-            if response.clicked() && !active {
+            painter.galley_with_override_text_color(
+                rect.center() - galley.size() / 2.0,
+                galley,
+                color,
+            );
+            if response.clicked() {
                 self.tab = tab;
             }
-            x = rect.right() + k.at(30.0);
+            x = rect.right() + view.at(4.0);
         }
-        x
     }
 
-    /// "1 waiting for you · 14 running".
-    fn pulse(&self, statuses: &[Status], k: Scale) -> LayoutJob {
-        let waiting = statuses
-            .iter()
-            .filter(|status| Group::of(status) == Group::Waiting)
-            .count();
-        let running = statuses
-            .iter()
-            .filter(|status| **status == Status::Running)
-            .count();
-        let mut job = LayoutJob::default();
-        let font = sans(k.at(13.5));
-        if statuses.is_empty() {
-            append(&mut job, self.strings().nothing_yet, font, theme::SOFT_TEXT);
-            return job;
-        }
-        if waiting > 0 {
-            append(
-                &mut job,
-                &self.language.waiting(waiting),
-                strong(k.at(13.5)),
-                theme::LIGHT_TEXT,
-            );
-            append(&mut job, " · ", font.clone(), theme::MUTED);
-        }
-        append(
-            &mut job,
-            &self.language.running(running),
-            font,
-            theme::SOFT_TEXT,
-        );
-        job
-    }
-
-    /// "Esc — back to the game" at the top right; returns whether the
-    /// player clicked it.
-    fn back_to_game(&self, ui: &mut Ui, painter: &egui::Painter, view: &View<'_>) -> bool {
-        let k = view.k;
-        let back = painter.layout_no_wrap(
-            self.strings().back_to_game.to_owned(),
-            sans(k.at(14.0)),
-            theme::MUTED,
-        );
-        let key = painter.layout_no_wrap("Esc".to_owned(), mono(k.at(12.0)), theme::PEARL);
-        let top = view.screen.top() + k.at(44.0);
-        let back_rect = Rect::from_min_size(
-            pos2(view.screen.right() - k.at(64.0) - back.size().x, top),
-            back.size(),
-        );
-        let key_rect = Rect::from_center_size(
-            pos2(
-                back_rect.left() - k.at(16.0) - key.size().x / 2.0,
-                back_rect.center().y,
-            ),
-            key.size() + vec2(k.at(12.0), k.at(4.0)),
-        );
-        let response = ui
-            .interact(
-                back_rect.union(key_rect).expand(k.at(6.0)),
-                Id::new("angelica-back-to-game"),
-                Sense::click(),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        let color = if response.hovered() {
-            theme::PEARL
-        } else {
-            theme::MUTED
-        };
-        painter.rect_stroke(
-            key_rect,
-            CornerRadius::same(4),
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
-            egui::StrokeKind::Inside,
-        );
-        painter.galley(key_rect.center() - key.size() / 2.0, key, theme::PEARL);
-        painter.galley_with_override_text_color(back_rect.min, back, color);
-        response.clicked()
-    }
-
-    /// My plugins: the list on the left, the chosen plugin's card on the
-    /// right, and the link field. Returns true when the player opened a
-    /// plugin, which closes the menu.
-    fn draw_mine(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
-        let k = view.k;
-        let layout = Layout::of(view.screen, k);
-        let painter = ui.painter().clone();
-        feather::blueprint(
-            &painter,
-            Place::with_height(
-                layout.detail.right() - k.at(250.0),
-                view.screen.top() + k.at(50.0),
-                k.at(810.0),
-            ),
-            0.07,
-        );
-        painter.text(
-            pos2(layout.detail.left(), view.screen.bottom() - k.at(16.0)),
-            Align2::LEFT_BOTTOM,
-            "wasm sandbox · signed packages · your permission",
-            mono(k.at(11.5)),
-            alpha(theme::BLUEPRINT_PALE, 0.5),
-        );
-        self.find_field(ui, view, layout.find);
-        if let Some(installer) = view.host.plugin_installer() {
-            self.draw_link(ui, installer, layout.link, k);
-        }
+    /// Installed: the search, the list, and the link field. Returns true
+    /// when the player opened a plugin, which closes the menu.
+    fn draw_installed(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
+        self.toolbar(ui, view);
         let entries: Vec<Entry<'_>> = view
             .plugins
             .iter()
@@ -534,180 +396,144 @@ impl Menu {
                 name: &plugin.manifest.plugin.name,
                 description: &plugin.manifest.plugin.description,
                 group: Group::of(status),
+                classes: plugin_classes(plugin, status),
             })
             .collect();
-        let lines = lines(&entries, &self.query);
-        self.keep_a_choice(&lines, view.plugins);
-        let row = self.draw_list(ui, view, layout.list, &lines);
-        let chosen = self.selected.as_deref().and_then(|id| {
-            view.plugins
-                .iter()
-                .position(|plugin| plugin.manifest.id() == id)
-        });
-        let Some(index) = chosen else {
-            return false;
-        };
-        if let Some(row) = row {
-            leader(&painter, row, &layout, k);
+        let lines = lines(&entries, &self.query, self.filter);
+        let opened = self.draw_list(ui, view, &lines);
+        if let Some(installer) = view.host.plugin_installer() {
+            self.draw_link(ui, view, installer);
         }
-        self.draw_card(ui, view, index, layout.detail, &lines)
+        self.footer(ui, view);
+        opened
     }
 
-    /// Chooses the first plugin of the list when the chosen one is not in
-    /// it, unless a search found nothing.
-    fn keep_a_choice(&mut self, lines: &[Line], plugins: &[Arc<Plugin>]) {
-        let ids = plugin_ids(lines, plugins);
-        if self.selected.as_deref().is_none_or(|id| !ids.contains(&id)) {
-            let first = ids.first().map(|id| (*id).to_owned());
-            if first.is_some() || self.query.trim().is_empty() {
-                self.select(first);
-            }
-        }
-    }
-
-    fn find_field(&mut self, ui: &mut Ui, view: &View<'_>, find: Rect) {
-        let k = view.k;
-        let painter = ui.painter().clone();
-        let count = painter.layout_no_wrap(
-            self.language.plugins(view.plugins.len()),
-            sans(k.at(13.0)),
-            theme::MUTED,
-        );
-        let count_width = count.size().x;
-        painter.galley(
+    /// The search field and the filter by class.
+    fn toolbar(&mut self, ui: &mut Ui, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        let (row, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(44.0)), Sense::hover());
+        let filter_text = self
+            .filter
+            .map_or(s.filter_all, |class| self.language.class(class));
+        let filter_width = ui
+            .painter()
+            .layout_no_wrap(filter_text.to_owned(), medium(view.at(13.5)), p.action)
+            .size()
+            .x
+            + view.at(26.0);
+        let field = Rect::from_min_max(
+            pos2(row.left() + view.at(10.0), row.top() + view.at(9.0)),
             pos2(
-                find.right() - count_width,
-                find.bottom() - k.at(12.0) - count.size().y,
+                row.right() - view.at(22.0) - filter_width,
+                row.bottom() - view.at(9.0),
             ),
-            count,
-            theme::MUTED,
         );
-        let hint = self.strings().find;
-        ui.scope_builder(UiBuilder::new().max_rect(find), |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .id(Id::new("angelica-find"))
-                    .font(soft_light(k.at(27.0)))
-                    .text_color(theme::PEARL)
-                    .hint_text(
-                        RichText::new(hint)
-                            .font(soft_light(k.at(27.0)))
-                            .color(Color32::from_rgba_unmultiplied(255, 255, 255, 112)),
-                    )
-                    .frame(egui::Frame::NONE)
-                    .desired_width(find.width() - count_width - k.at(20.0)),
-            );
-        });
-        painter.line_segment(
-            [find.left_bottom(), find.right_bottom()],
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 56)),
+        search_field(ui, view, field, &mut self.query, s.find, "angelica-find");
+        let filter = Rect::from_min_max(
+            pos2(field.right() + view.at(12.0), row.top()),
+            pos2(row.right() - view.at(10.0), row.bottom()),
         );
-    }
-
-    /// The list of plugins in `list`. Returns the chosen plugin's row when
-    /// it is in view.
-    fn draw_list(
-        &mut self,
-        ui: &mut Ui,
-        view: &View<'_>,
-        list: Rect,
-        lines: &[Line],
-    ) -> Option<Rect> {
-        let k = view.k;
-        let mut chosen = None;
-        ui.scope_builder(UiBuilder::new().max_rect(list), |ui| {
-            if lines.is_empty() {
-                let s = self.strings();
-                let text = if self.query.trim().is_empty() {
-                    s.empty
-                } else {
-                    s.nothing_found
-                };
-                ui.add_space(k.at(16.0));
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(text)
-                            .font(soft(k.at(22.0)))
-                            .color(theme::MUTED),
-                    )
-                    .wrap(),
-                );
-                return;
-            }
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let height = k.at(46.0);
-            let output = egui::ScrollArea::vertical()
-                .id_salt("angelica-mine")
-                .auto_shrink([false, false])
-                .max_height(list.height())
-                .show_rows(ui, height, lines.len(), |ui, range| {
-                    for line in &lines[range] {
-                        match *line {
-                            Line::Heading(group, count) => {
-                                self.heading_row(ui, group, count, height, k);
-                            }
-                            Line::Plugin(index) => {
-                                let rect = self.plugin_row(ui, view, index, height);
-                                if self.selected.as_deref()
-                                    == Some(view.plugins[index].manifest.id())
-                                {
-                                    chosen = Some(rect);
-                                }
-                            }
+        let mut choose = None;
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(filter)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                let response = theme::value(ui, filter_text, view.k);
+                egui::Popup::menu(&response).show(|ui| {
+                    if menu_item(ui, view, None, s.filter_all, p.text) {
+                        choose = Some(None);
+                    }
+                    for class in CLASSES {
+                        if menu_item(
+                            ui,
+                            view,
+                            Some(class_icon(class)),
+                            self.language.class(class),
+                            p.text,
+                        ) {
+                            choose = Some(Some(class));
                         }
                     }
                 });
-            let visible = output.inner_rect;
-            chosen =
-                chosen.filter(|row| (visible.top()..=visible.bottom()).contains(&row.center().y));
-        });
-        chosen
-    }
-
-    fn select(&mut self, id: Option<String>) {
-        if self.selected != id {
-            self.selected = id;
-            self.flip = Flip::default();
+            },
+        );
+        if let Some(filter) = choose {
+            self.filter = filter;
         }
     }
 
-    fn heading_row(&self, ui: &mut Ui, group: Group, count: usize, height: f32, k: Scale) {
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-        let (color, number) = if group == Group::Waiting {
-            (theme::LIGHT_TEXT, theme::LIGHT_TEXT)
-        } else {
-            (theme::FAINT, theme::SOFT_TEXT)
-        };
-        let mut job = LayoutJob::default();
-        spaced(
-            &mut job,
-            &group.title(self.strings()).to_uppercase(),
-            mono(k.at(11.5)),
-            color,
-            k.at(1.6),
-        );
-        spaced(
-            &mut job,
-            &format!("   {count}"),
-            mono(k.at(11.5)),
-            number,
-            k.at(1.6),
-        );
-        let galley = ui.painter().layout_job(job);
-        ui.painter().galley(
-            pos2(
-                rect.left() + k.at(4.0),
-                rect.bottom() - k.at(9.0) - galley.size().y,
-            ),
-            galley,
-            color,
-        );
+    /// The list. Returns true when the player opened a plugin.
+    fn draw_list(&mut self, ui: &mut Ui, view: &View<'_>, lines: &[Line]) -> bool {
+        let s = self.strings();
+        let p = view.p;
+        if self
+            .selected
+            .as_deref()
+            .is_some_and(|id| !view.plugins.iter().any(|plugin| plugin.manifest.id() == id))
+        {
+            self.selected = None;
+        }
+        if lines.is_empty() {
+            let text = if self.query.trim().is_empty() && self.filter.is_none() {
+                s.empty
+            } else {
+                s.nothing_found
+            };
+            ui.add_space(view.at(18.0));
+            ui.horizontal(|ui| {
+                ui.add_space(view.at(16.0));
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(text)
+                            .font(sans(view.at(13.5)))
+                            .color(p.secondary),
+                    )
+                    .wrap(),
+                );
+            });
+            ui.add_space(view.at(18.0));
+            return false;
+        }
+        columns_header(ui, view, s);
+        let height = view.at(ROW);
+        let mut opened = false;
+        egui::ScrollArea::vertical()
+            .id_salt("angelica-installed")
+            .auto_shrink([false, true])
+            .max_height(height * VISIBLE_ROWS)
+            .show_rows(ui, height, lines.len(), |ui, range| {
+                for line in &lines[range] {
+                    match *line {
+                        Line::Heading(group, count) => {
+                            let color = match group {
+                                Group::Attention => p.attention,
+                                Group::On => p.secondary,
+                                Group::Off => p.muted,
+                            };
+                            ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
+                                ui.add_space(height - view.at(26.0));
+                                theme::header(ui, group.title(s), Some(count), color, view.k);
+                            });
+                        }
+                        Line::Plugin(index) => {
+                            if self.plugin_row(ui, view, index, height) {
+                                opened = true;
+                            }
+                        }
+                    }
+                }
+            });
+        opened
     }
 
-    /// A plugin's row: its light, its name and phrase, and its switch or
-    /// what it waits for. Returns the row.
-    fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) -> Rect {
-        let k = view.k;
+    /// A plugin's row: its tile, name, permissions, version, and state,
+    /// with a tooltip and a menu on the right click. Returns true when the
+    /// player opened the plugin.
+    fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) -> bool {
+        let p = view.p;
         let plugin = &view.plugins[index];
         let status = &view.statuses[index];
         let id = plugin.manifest.id();
@@ -715,805 +541,764 @@ impl Menu {
             ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         let painter = ui.painter().clone();
-        if self.selected.as_deref() == Some(id) {
-            let mut mesh = egui::Mesh::default();
-            let warm = alpha(theme::LIGHT, 0.15);
-            let fade = alpha(theme::LIGHT, 0.02);
-            mesh.colored_vertex(rect.left_top(), warm);
-            mesh.colored_vertex(rect.right_top(), fade);
-            mesh.colored_vertex(rect.right_bottom(), fade);
-            mesh.colored_vertex(rect.left_bottom(), warm);
-            mesh.add_triangle(0, 1, 2);
-            mesh.add_triangle(0, 2, 3);
-            painter.add(mesh);
+        let chosen = self.selected.as_deref() == Some(id);
+        if chosen {
+            painter.rect_filled(rect, CornerRadius::ZERO, p.selection);
         } else if response.hovered() {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(8),
-                Color32::from_rgba_unmultiplied(255, 255, 255, 8),
-            );
+            painter.rect_filled(rect, CornerRadius::ZERO, p.hover);
         }
-        state_dot(
-            &painter,
-            status,
-            pos2(rect.left() + k.at(12.0), rect.center().y),
-            k,
+        let off = *status == Status::Disabled;
+        let columns = Columns::of(rect, view);
+        let tile = Rect::from_center_size(
+            pos2(columns.tile, rect.center().y),
+            vec2(view.at(24.0), view.at(24.0)),
         );
-        let side = self.row_side(ui, &painter, view, index, rect);
-        let name_left = rect.left() + k.at(34.0);
+        theme::tile(&painter, tile, &plugin.manifest.plugin.name, off, p);
         let name = elided(
             &painter,
             &plugin.manifest.plugin.name,
-            soft(k.at(25.0)),
-            theme::PEARL,
-            side - k.at(14.0) - name_left,
+            sans(view.at(13.5)),
+            if off { p.muted } else { p.text },
+            columns.permissions - view.at(12.0) - columns.name,
         );
-        let name_rect = Rect::from_min_size(
-            pos2(name_left, rect.center().y - name.size().y / 2.0),
-            name.size(),
+        painter.galley(
+            pos2(columns.name, rect.center().y - name.size().y / 2.0),
+            name,
+            p.text,
         );
-        painter.galley(name_rect.min, name, theme::PEARL);
-        let room = side - k.at(14.0) - (name_rect.right() + k.at(12.0));
-        if room > k.at(30.0) {
-            let phrase = elided(
+        let asked: Vec<Class> = if *status == Status::AwaitingApproval {
+            plugin
+                .requests()
+                .into_iter()
+                .map(|(class, _)| class)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for (at, class) in plugin_classes(plugin, status).into_iter().enumerate() {
+            let color = if asked.contains(&class) {
+                p.attention
+            } else if off {
+                p.muted
+            } else {
+                p.secondary
+            };
+            let x = columns.permissions + view.at(20.0) * f32_of(at) + view.at(7.0);
+            theme::icon(
                 &painter,
-                &plugin.manifest.plugin.description,
-                sans(k.at(14.0)),
-                theme::MUTED,
-                room,
-            );
-            painter.galley(
-                pos2(
-                    name_rect.right() + k.at(12.0),
-                    rect.center().y - phrase.size().y / 2.0 + k.at(2.0),
+                class_icon(class),
+                Rect::from_center_size(
+                    pos2(x, rect.center().y),
+                    vec2(view.at(14.0), view.at(14.0)),
                 ),
-                phrase,
-                theme::MUTED,
+                color,
             );
+        }
+        painter.text(
+            pos2(columns.version, rect.center().y),
+            Align2::RIGHT_CENTER,
+            &plugin.manifest.plugin.version,
+            sans(view.at(12.5)),
+            p.muted,
+        );
+        let mark = pos2(columns.state, rect.center().y);
+        match status {
+            Status::AwaitingApproval | Status::Faulted(_) => {
+                theme::attention(&painter, mark, view.k, p);
+            }
+            Status::Running => theme::running(&painter, mark, view.k, p),
+            Status::Disabled => theme::off(&painter, mark, view.k, p),
         }
         if response.clicked() {
-            self.select(Some(id.to_owned()));
-        }
-        rect
-    }
-
-    /// The row's right side: what waits for the player, or the switch.
-    /// Returns where it begins.
-    fn row_side(
-        &self,
-        ui: &mut Ui,
-        painter: &egui::Painter,
-        view: &View<'_>,
-        index: usize,
-        rect: Rect,
-    ) -> f32 {
-        let s = self.strings();
-        let (plugin, status, k) = (&view.plugins[index], &view.statuses[index], view.k);
-        let right = rect.right() - k.at(12.0);
-        let center = pos2(right, rect.center().y);
-        match status {
-            Status::AwaitingApproval => painter
-                .text(
-                    center,
-                    Align2::RIGHT_CENTER,
-                    s.row_review,
-                    strong(k.at(13.0)),
-                    theme::LIGHT_TEXT,
-                )
-                .left(),
-            Status::Faulted(_) => painter
-                .text(
-                    center,
-                    Align2::RIGHT_CENTER,
-                    s.row_stopped,
-                    sans(k.at(13.0)),
-                    theme::EMBER,
-                )
-                .left(),
-            Status::Running | Status::Disabled => {
-                let id = plugin.manifest.id();
-                let on = *status == Status::Running;
-                let switch = Rect::from_center_size(
-                    pos2(right - k.at(17.0), rect.center().y),
-                    vec2(k.at(34.0), k.at(20.0)),
-                );
-                let toggle = ui
-                    .interact(switch, Id::new(("angelica-row-switch", id)), Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                let progress = ui.ctx().animate_bool(toggle.id, on);
-                theme::paint_switch(painter, switch, progress, toggle.hovered());
-                if toggle.clicked() {
-                    view.host.queue(switched(id, on));
-                }
-                switch.left()
+            self.selected = Some(id.to_owned());
+            if *status == Status::AwaitingApproval {
+                self.dialog = Some(id.to_owned());
             }
         }
+        let mut opened = false;
+        let menu = response.context_menu(|ui| {
+            self.selected = Some(id.to_owned());
+            opened = self.row_menu(ui, view, plugin, status);
+        });
+        if menu.is_none() {
+            response.on_hover_ui(|ui| self.tooltip(ui, view, plugin, status));
+        }
+        opened
     }
 
-    /// The field for a plugin's link, its button, and what is wrong with
-    /// the link.
-    fn draw_link(&mut self, ui: &mut Ui, installer: &PluginInstaller, rect: Rect, k: Scale) {
+    /// The menu of a row's right click. Returns true when the player opened
+    /// the plugin.
+    fn row_menu(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) -> bool {
         let s = self.strings();
-        let painter = ui.painter().clone();
+        let p = view.p;
+        let id = plugin.manifest.id();
+        ui.set_min_width(view.at(250.0));
+        ui.set_max_width(view.at(280.0));
+        ui.horizontal(|ui| {
+            ui.add_space(view.at(6.0));
+            let (tile, _) =
+                ui.allocate_exact_size(vec2(view.at(30.0), view.at(30.0)), Sense::hover());
+            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+            ui.add_space(view.at(4.0));
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(&plugin.manifest.plugin.name)
+                        .font(strong(view.at(13.5)))
+                        .color(p.text),
+                );
+                let (state, color) = self.state_line(status, p);
+                ui.label(RichText::new(state).font(sans(view.at(12.0))).color(color));
+            });
+        });
+        ui.add_space(view.at(4.0));
+        let mut opened = false;
+        let separate = |ui: &mut Ui| {
+            ui.add_space(view.at(3.0));
+            theme::rule(ui);
+            ui.add_space(view.at(3.0));
+        };
+        separate(ui);
+        match status {
+            Status::AwaitingApproval => {
+                if menu_item(ui, view, None, s.review, p.action) {
+                    self.dialog = Some(id.to_owned());
+                }
+            }
+            Status::Running => {
+                if menu_item(ui, view, None, s.open, p.action) {
+                    opened = true;
+                }
+                if menu_item(ui, view, None, s.turn_off, p.text) {
+                    view.host.queue(Action::Disable(id.to_owned()));
+                }
+            }
+            Status::Disabled => {
+                if menu_item(ui, view, None, s.turn_on, p.action) {
+                    view.host.queue(Action::Enable(id.to_owned()));
+                }
+            }
+            Status::Faulted(_) => {
+                if menu_item(ui, view, None, s.retry, p.action) {
+                    view.host.queue(Action::Enable(id.to_owned()));
+                }
+                if menu_item(ui, view, None, s.keep_off, p.text) {
+                    view.host.queue(Action::Disable(id.to_owned()));
+                }
+            }
+        }
+        if *status != Status::AwaitingApproval {
+            separate(ui);
+            if menu_item(ui, view, None, s.open_folder, p.text) {
+                view.host.queue(Action::OpenFolder(id.to_owned()));
+            }
+        }
+        if opened {
+            view.host.queue_event(id, Event::OpenRequested);
+        }
+        opened
+    }
+
+    /// What a plugin's state is called, and its color.
+    fn state_line(&self, status: &Status, p: &Palette) -> (&'static str, Color32) {
+        let s = self.strings();
+        match status {
+            Status::Running => (s.state_running, p.on),
+            Status::Disabled => (s.state_off, p.secondary),
+            Status::AwaitingApproval => (s.state_waiting, p.attention),
+            Status::Faulted(_) => (s.state_stopped, p.attention),
+        }
+    }
+
+    /// Where a plugin comes from: the catalog, or its authors.
+    fn source(&self, plugin: &Plugin) -> String {
+        let s = self.strings();
+        let manifest = &plugin.manifest;
+        match manifest.origin {
+            Origin::Catalog => s.source_catalog.to_owned(),
+            Origin::Author if manifest.plugin.authors.is_empty() => s.source_author.to_owned(),
+            Origin::Author => fill(
+                s.source_authors,
+                &[("authors", &manifest.plugin.authors.join(", "))],
+            ),
+        }
+    }
+
+    /// The tooltip of a row: name and version, description, permissions in
+    /// plain words, and state.
+    fn tooltip(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
+        let s = self.strings();
+        let p = view.p;
+        let manifest = &plugin.manifest;
+        ui.set_max_width(view.at(300.0));
+        ui.spacing_mut().item_spacing.y = view.at(6.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&manifest.plugin.name)
+                    .font(strong(view.at(13.5)))
+                    .color(p.text),
+            );
+            ui.label(
+                RichText::new(fill(s.version, &[("version", &manifest.plugin.version)]))
+                    .font(sans(view.at(12.0)))
+                    .color(p.muted),
+            );
+        });
+        if !manifest.plugin.description.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&manifest.plugin.description)
+                        .font(sans(view.at(12.5)))
+                        .color(p.secondary),
+                )
+                .wrap(),
+            );
+        }
+        theme::rule(ui);
+        let permissions = manifest.permissions();
+        if permissions.is_empty() {
+            permission_line(ui, view, None, s.asks_nothing, p.secondary);
+        }
+        for &permission in permissions {
+            permission_line(
+                ui,
+                view,
+                Some(class_icon(permission.class())),
+                &self.permission_text(plugin, permission),
+                p.text,
+            );
+        }
+        theme::rule(ui);
+        ui.horizontal(|ui| {
+            let (state, color) = self.state_line(status, p);
+            ui.label(RichText::new(state).font(sans(view.at(12.0))).color(color));
+            ui.label(
+                RichText::new(self.source(plugin))
+                    .font(sans(view.at(12.0)))
+                    .color(p.muted),
+            );
+        });
+    }
+
+    /// A permission in plain words, with the sites of a network one.
+    fn permission_text(&self, plugin: &Plugin, permission: Permission) -> String {
+        let text = self.language.permission(permission);
+        if permission == Permission::HttpGet {
+            let hosts: Vec<String> = plugin.manifest.http_hosts().into_iter().collect();
+            format!("{text}: {}", hosts.join(", "))
+        } else {
+            text.to_owned()
+        }
+    }
+
+    /// The field for a plugin's link, and what is wrong with the link.
+    fn draw_link(&mut self, ui: &mut Ui, view: &View<'_>, installer: &PluginInstaller) {
+        let s = self.strings();
+        let p = view.p;
         let busy = installer.busy();
         let label = if busy { s.adding } else { s.add };
         let field_id = Id::new("angelica-link");
-        let button_width = painter
-            .layout_no_wrap(label.to_owned(), strong(k.at(14.5)), theme::PEARL)
+        let (row, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(44.0)), Sense::hover());
+        ui.painter()
+            .line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
+        let button_width = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), medium(view.at(13.5)), p.action)
             .size()
             .x
-            + k.at(40.0);
-        ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = k.at(14.0);
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut self.link)
-                        .id(field_id)
-                        .font(sans(k.at(15.0)))
-                        .text_color(theme::PEARL)
-                        .hint_text(
-                            RichText::new(s.link_hint)
-                                .font(soft(k.at(21.0)))
-                                .color(Color32::from_rgba_unmultiplied(255, 255, 255, 112)),
-                        )
-                        .frame(egui::Frame::NONE)
-                        .desired_width(rect.width() - button_width - k.at(14.0)),
-                );
-                let y = field.rect.bottom() + k.at(4.0);
-                painter.line_segment(
-                    [pos2(field.rect.left(), y), pos2(field.rect.right(), y)],
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 56)),
-                );
-                if field.changed() {
-                    self.link_invalid = false;
-                }
-                let submit =
-                    field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                let enabled = !busy && !self.link.trim().is_empty();
-                let clicked = theme::button(ui, label, Button::Ghost, enabled, k.0).clicked();
-                if enabled && (clicked || submit) {
-                    match installer.install(&self.link) {
-                        Ok(()) => self.link.clear(),
-                        Err(_) => self.link_invalid = true,
-                    }
-                }
-            });
-        });
+            + view.at(8.0);
+        let field = Rect::from_min_max(
+            pos2(row.left() + view.at(10.0), row.top() + view.at(9.0)),
+            pos2(
+                row.right() - view.at(22.0) - button_width,
+                row.bottom() - view.at(9.0),
+            ),
+        );
+        let response = text_field(ui, view, field, &mut self.link, s.link_hint, field_id, None);
+        if response.changed() {
+            self.link_invalid = false;
+        }
+        let submit = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        let enabled = !busy && !self.link.trim().is_empty();
+        let button = Rect::from_min_max(
+            pos2(field.right() + view.at(12.0), row.top()),
+            pos2(row.right() - view.at(10.0), row.bottom()),
+        );
+        let clicked = ui
+            .scope_builder(
+                UiBuilder::new()
+                    .max_rect(button)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| theme::word(ui, label, Word::Action, enabled, view.k).clicked(),
+            )
+            .inner;
+        if enabled && (clicked || submit) {
+            match installer.install(&self.link) {
+                Ok(()) => self.link.clear(),
+                Err(_) => self.link_invalid = true,
+            }
+        }
         let focused = ui.ctx().memory(|memory| memory.has_focus(field_id));
         let note = if self.link_invalid {
-            Some((s.link_invalid, theme::EMBER))
+            Some((s.link_invalid, p.danger))
         } else if focused || !self.link.is_empty() {
-            Some((s.link_note, theme::MUTED))
+            Some((s.link_note, p.secondary))
         } else {
             None
         };
         if let Some((text, color)) = note {
-            painter.text(
-                pos2(rect.left(), rect.top() - k.at(6.0)),
-                Align2::LEFT_BOTTOM,
-                text,
-                sans(k.at(12.5)),
-                color,
-            );
-        }
-    }
-
-    /// The side the card shows and how open it is, from 0 to 1, while it
-    /// turns: squash, change the side, open.
-    fn turn_state(&mut self, time: f64) -> (bool, f32) {
-        let (back, open) = match self.flip.since {
-            Some(since) => {
-                let phase = (time - since) / HALF_TURN;
-                if phase < 1.0 {
-                    (!self.flip.back, 1.0 - phase)
-                } else if phase < 2.0 {
-                    (self.flip.back, phase - 1.0)
-                } else {
-                    self.flip.since = None;
-                    (self.flip.back, 1.0)
-                }
-            }
-            None => (self.flip.back, 1.0),
-        };
-        let open = num_traits::cast::<f64, f32>(open).unwrap_or(1.0);
-        (back, open * open * (3.0 - 2.0 * open))
-    }
-
-    /// The chosen plugin's card: its face, or how it works on the back.
-    /// Returns true when the player opened the plugin.
-    fn draw_card(
-        &mut self,
-        ui: &mut Ui,
-        view: &View<'_>,
-        index: usize,
-        area: Rect,
-        lines: &[Line],
-    ) -> bool {
-        let k = view.k;
-        let plugin = &view.plugins[index];
-        let (back, open) = self.turn_state(view.time);
-        let turning = self.flip.since.is_some();
-        let padding = vec2(k.at(44.0), k.at(36.0));
-        let background = ui.painter().add(egui::Shape::Noop);
-        let squashed = Rect::from_center_size(
-            area.center(),
-            vec2(area.width() * open.max(0.001), area.height()),
-        );
-        let mut content = ui.new_child(
-            UiBuilder::new()
-                .max_rect(area.shrink2(padding))
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        content.set_clip_rect(squashed.intersect(ui.clip_rect()));
-        content.multiply_opacity(open);
-        content.spacing_mut().item_spacing = vec2(k.at(12.0), k.at(16.0));
-        let (opened, turn) = if back {
-            (false, self.card_back(&mut content, view.host, plugin, k))
-        } else {
-            let face = self.card_face(&mut content, view.host, plugin, &view.statuses[index], k);
-            if face.not_now {
-                self.select_next(lines, view.plugins);
-            }
-            (face.opened, face.turn)
-        };
-        let bottom = (content.min_rect().bottom() + padding.y).min(area.bottom());
-        let card = Rect::from_min_max(area.min, pos2(area.right(), bottom));
-        let shown = Rect::from_center_size(
-            card.center(),
-            vec2(card.width() * open.max(0.001), card.height()),
-        );
-        ui.painter()
-            .set(background, card_background(shown, back, k));
-        if turn && !turning {
-            self.flip = Flip {
-                back: !self.flip.back,
-                since: Some(view.time),
-            };
-        }
-        if opened {
-            view.host
-                .queue_event(plugin.manifest.id(), Event::OpenRequested);
-        }
-        opened
-    }
-
-    /// Moves the choice to the next plugin in the list.
-    fn select_next(&mut self, lines: &[Line], plugins: &[Arc<Plugin>]) {
-        let ids = plugin_ids(lines, plugins);
-        let at = ids
-            .iter()
-            .position(|id| Some(*id) == self.selected.as_deref());
-        if let Some(at) = at
-            && ids.len() > 1
-        {
-            self.select(Some(ids[(at + 1) % ids.len()].to_owned()));
-        }
-    }
-
-    /// The face: where the plugin comes from, its name and phrase, and what
-    /// the player can do.
-    fn card_face(
-        &self,
-        ui: &mut Ui,
-        host: &Host,
-        plugin: &Plugin,
-        status: &Status,
-        k: Scale,
-    ) -> Face {
-        let s = self.strings();
-        let manifest = &plugin.manifest;
-        let over = match manifest.origin {
-            Origin::Catalog => s.from_catalog.to_owned(),
-            Origin::Author if manifest.plugin.authors.is_empty() => s.from_author.to_owned(),
-            Origin::Author => format!(
-                "{} · {}",
-                s.from_author,
-                manifest.plugin.authors.join(", ").to_uppercase()
-            ),
-        };
-        let mut job = LayoutJob::default();
-        spaced(&mut job, &over, mono(k.at(11.5)), theme::LIGHT, k.at(1.4));
-        ui.label(job);
-        ui.add(
-            egui::Label::new(
-                RichText::new(&manifest.plugin.name)
-                    .font(soft(k.at(64.0)))
-                    .color(theme::PEARL),
-            )
-            .wrap(),
-        );
-        ui.scope(|ui| {
-            ui.set_max_width(k.at(560.0));
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&manifest.plugin.description)
-                        .font(sans(k.at(17.0)))
-                        .color(theme::SOFT_TEXT),
-                )
-                .wrap(),
-            );
-        });
-        let mut face = Face::default();
-        match status {
-            Status::AwaitingApproval => face.not_now = self.approval(ui, host, plugin, k),
-            Status::Running | Status::Disabled => {
-                face.opened = self.controls(ui, host, plugin, status, k);
-            }
-            Status::Faulted(_) => {
-                let id = manifest.id();
-                rule(ui, k);
-                ui.label(
-                    RichText::new(s.stopped)
-                        .font(sans(k.at(15.0)))
-                        .color(theme::SOFT_TEXT),
+            ui.horizontal(|ui| {
+                ui.add_space(view.at(12.0));
+                ui.add(
+                    egui::Label::new(RichText::new(text).font(sans(view.at(12.0))).color(color))
+                        .wrap(),
                 );
+            });
+            ui.add_space(view.at(8.0));
+        }
+    }
+
+    /// How many plugins wait and run, and how to close the menu.
+    fn footer(&self, ui: &mut Ui, view: &View<'_>) {
+        let p = view.p;
+        let (row, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(28.0)), Sense::hover());
+        let painter = ui.painter();
+        painter.line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
+        painter.text(
+            pos2(row.left() + view.at(12.0), row.center().y),
+            Align2::LEFT_CENTER,
+            self.pulse(view.statuses),
+            sans(view.at(12.0)),
+            p.muted,
+        );
+        painter.text(
+            pos2(row.right() - view.at(12.0), row.center().y),
+            Align2::RIGHT_CENTER,
+            self.strings().esc_closes,
+            sans(view.at(12.0)),
+            p.muted,
+        );
+    }
+
+    /// "1 waiting for you, 14 running".
+    fn pulse(&self, statuses: &[Status]) -> String {
+        if statuses.is_empty() {
+            return self.strings().nothing_yet.to_owned();
+        }
+        let waiting = statuses
+            .iter()
+            .filter(|status| Group::of(status) == Group::Attention)
+            .count();
+        let running = statuses
+            .iter()
+            .filter(|status| **status == Status::Running)
+            .count();
+        let running = self.language.running(running);
+        if waiting > 0 {
+            format!("{}, {running}", self.language.waiting(waiting))
+        } else {
+            running
+        }
+    }
+
+    /// The dialog of what a plugin waiting for approval asks.
+    fn draw_dialog(&mut self, context: &egui::Context, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        let plugin = self.dialog.as_deref().and_then(|id| {
+            view.plugins
+                .iter()
+                .find(|plugin| plugin.manifest.id() == id)
+        });
+        let Some(plugin) = plugin.filter(|plugin| plugin.status() == Status::AwaitingApproval)
+        else {
+            self.dialog = None;
+            return;
+        };
+        let id = plugin.manifest.id().to_owned();
+        let more = plugin.approved_before();
+        let heading = if more { s.dialog_more } else { s.dialog_new };
+        let width = view.at(420.0);
+        let mut close = false;
+        egui::Window::new("angelica-dialog")
+            .id(Id::new(("angelica-dialog", &id)))
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .order(egui::Order::Foreground)
+            .frame(window_frame(context, p))
+            .default_pos(pos2(
+                view.screen.center().x - width / 2.0,
+                view.screen.top() + view.screen.height() * 0.22,
+            ))
+            .show(context, |ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                if title_bar(ui, view, Some(heading), s.close) {
+                    close = true;
+                }
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(
+                        num_u8(view.at(16.0)),
+                        num_u8(view.at(14.0)),
+                    ))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = view.at(6.0);
+                        ui.horizontal(|ui| {
+                            let (tile, _) = ui.allocate_exact_size(
+                                vec2(view.at(40.0), view.at(40.0)),
+                                Sense::hover(),
+                            );
+                            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+                            ui.add_space(view.at(12.0));
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new(&plugin.manifest.plugin.name)
+                                        .font(strong(view.at(14.0)))
+                                        .color(p.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{}, {}",
+                                        fill(
+                                            s.version,
+                                            &[("version", &plugin.manifest.plugin.version)]
+                                        ),
+                                        self.source(plugin)
+                                    ))
+                                    .font(sans(view.at(12.0)))
+                                    .color(p.secondary),
+                                );
+                            });
+                        });
+                        ui.add_space(view.at(8.0));
+                        self.dialog_requests(ui, view, plugin, more);
+                    });
+                let (row, _) = ui
+                    .allocate_exact_size(vec2(ui.available_width(), view.at(40.0)), Sense::hover());
+                ui.painter()
+                    .line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(row.shrink2(vec2(view.at(10.0), 0.0)))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = view.at(14.0);
+                        if theme::word(ui, s.allow, Word::Main, true, view.k).clicked() {
+                            view.host.queue(Action::Approve(id.clone()));
+                            close = true;
+                        }
+                        if theme::word(ui, s.not_now, Word::Secondary, true, view.k).clicked() {
+                            close = true;
+                        }
+                    },
+                );
+            });
+        if close {
+            self.dialog = None;
+        }
+    }
+
+    /// What the plugin asks for, highlighted, and, for a new version, what
+    /// it already has.
+    fn dialog_requests(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, more: bool) {
+        let s = self.strings();
+        let p = view.p;
+        let requests = plugin.requests();
+        let asked: Vec<Permission> = requests
+            .iter()
+            .flat_map(|(_, requests)| requests.iter().map(|request| request.permission))
+            .collect();
+        let title = if more { s.asks_first } else { s.asks };
+        theme::header(
+            ui,
+            title,
+            None,
+            if more { p.attention } else { p.secondary },
+            view.k,
+        );
+        let tint = if more { p.attention } else { p.line };
+        egui::Frame::new()
+            .fill(theme::alpha(tint, if more { 0.08 } else { 0.0 }))
+            .stroke(Stroke::new(
+                1.0,
+                theme::alpha(tint, if more { 0.35 } else { 0.0 }),
+            ))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(egui::Margin::symmetric(
+                num_u8(view.at(10.0)),
+                num_u8(view.at(8.0)),
+            ))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = view.at(6.0);
+                if requests.is_empty() {
+                    permission_line(ui, view, None, s.asks_nothing, p.secondary);
+                }
+                for (class, requests) in &requests {
+                    for request in requests {
+                        permission_line(
+                            ui,
+                            view,
+                            Some(class_icon(*class)),
+                            self.language.permission(request.permission),
+                            p.text,
+                        );
+                        if !request.hosts.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.add_space(view.at(24.0));
+                                ui.label(
+                                    RichText::new(request.hosts.join("  "))
+                                        .font(mono(view.at(12.0)))
+                                        .color(p.secondary),
+                                );
+                            });
+                        }
+                    }
+                }
+            });
+        let already: Vec<Permission> = plugin
+            .manifest
+            .permissions()
+            .iter()
+            .copied()
+            .filter(|permission| !asked.contains(permission))
+            .collect();
+        if more && !already.is_empty() {
+            ui.add_space(view.at(6.0));
+            theme::header(ui, s.already, None, p.secondary, view.k);
+            for permission in already {
                 ui.horizontal(|ui| {
-                    if theme::button(ui, s.retry, Button::Main, true, k.0).clicked() {
-                        host.queue(Action::Enable(id.to_owned()));
-                    }
-                    if theme::button(ui, s.keep_off, Button::Ghost, true, k.0).clicked() {
-                        host.queue(Action::Disable(id.to_owned()));
-                    }
+                    ui.add_space(view.at(10.0));
+                    permission_line(
+                        ui,
+                        view,
+                        Some(class_icon(permission.class())),
+                        &self.permission_text(plugin, permission),
+                        p.secondary,
+                    );
                 });
             }
         }
-        face.turn = flip_link(ui, s.how, true, k);
-        face
     }
 
-    /// What a plugin waiting for approval asks, by class, and the approval.
-    /// Returns whether the player put it off.
-    fn approval(&self, ui: &mut Ui, host: &Host, plugin: &Plugin, k: Scale) -> bool {
-        let s = self.strings();
-        rule(ui, k);
-        let asks = if plugin.approved_before() {
-            s.asks_more
-        } else {
-            s.asks
-        };
-        ui.label(
-            RichText::new(asks)
-                .font(sans(k.at(13.5)))
-                .color(theme::MUTED),
-        );
-        let requests = plugin.requests();
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = k.at(6.0);
-            if requests.is_empty() {
-                ask(ui, s.asks_nothing, theme::ON, k);
-            }
-            for (class, requests) in requests {
-                ui.add_space(k.at(4.0));
-                ui.label(
-                    RichText::new(self.language.class(class))
-                        .font(strong(k.at(12.5)))
-                        .color(class_color(class)),
-                );
-                for request in requests {
-                    ask(
-                        ui,
-                        self.language.permission(request.permission),
-                        class_color(class),
-                        k,
-                    );
-                    if !request.hosts.is_empty() {
-                        ui.horizontal(|ui| {
-                            ui.add_space(k.at(24.0));
-                            ui.label(
-                                RichText::new(request.hosts.join("  "))
-                                    .font(mono(k.at(12.5)))
-                                    .color(theme::BLUEPRINT_PALE),
-                            );
-                        });
-                    }
-                }
-            }
-        });
-        let mut not_now = false;
-        ui.horizontal(|ui| {
-            if theme::button(ui, s.allow, Button::Main, true, k.0).clicked() {
-                host.queue(Action::Approve(plugin.manifest.id().to_owned()));
-            }
-            not_now = theme::button(ui, s.not_now, Button::Quiet, true, k.0).clicked();
-        });
-        not_now
-    }
-
-    /// Open, the switch, and the version of an approved plugin. Returns
-    /// whether the player opened it.
-    fn controls(
-        &self,
-        ui: &mut Ui,
-        host: &Host,
-        plugin: &Plugin,
-        status: &Status,
-        k: Scale,
-    ) -> bool {
-        let s = self.strings();
-        let manifest = &plugin.manifest;
-        let on = *status == Status::Running;
-        let mut opened = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = k.at(16.0);
-            opened = theme::button(ui, s.open, Button::Main, on, k.0).clicked();
-            if theme::switch(ui, on, k.0 * 1.2).clicked() {
-                host.queue(switched(manifest.id(), on));
-            }
-        });
-        let mut facts = LayoutJob::default();
-        append(
-            &mut facts,
-            &format!("{} ", s.version),
-            sans(k.at(14.0)),
-            theme::MUTED,
-        );
-        append(
-            &mut facts,
-            &manifest.plugin.version,
-            strong(k.at(14.0)),
-            theme::TEXT,
-        );
-        let source = match manifest.origin {
-            Origin::Catalog => s.source_catalog,
-            Origin::Author => s.source_author,
-        };
-        append(
-            &mut facts,
-            &format!("   ·   {source}"),
-            sans(k.at(14.0)),
-            theme::MUTED,
-        );
-        ui.label(facts);
-        opened
-    }
-
-    /// The back: the mechanism in the blueprint's mono. Returns whether the
-    /// player turned the card back.
-    fn card_back(&self, ui: &mut Ui, host: &Host, plugin: &Plugin, k: Scale) -> bool {
-        let s = self.strings();
-        let manifest = &plugin.manifest;
-        let signed = match manifest.origin {
-            Origin::Catalog => "Angelica · ed25519".to_owned(),
-            Origin::Author if manifest.plugin.authors.is_empty() => {
-                format!("{} · ed25519", s.source_author)
-            }
-            Origin::Author => format!("{} · ed25519", manifest.plugin.authors.join(", ")),
-        };
-        let rows = [
-            (s.back_does, self.does(plugin), theme::TEXT),
-            (s.back_cannot, self.cannot(plugin), theme::TEXT),
-            (
-                s.back_sandbox,
-                format!("wasm · {} MiB", host.memory_bytes(plugin) / (1024 * 1024)),
-                theme::TEXT,
-            ),
-            (
-                s.back_frame,
-                format!("≤ {} ms", host.frame_time().as_millis()),
-                theme::TEXT,
-            ),
-            (s.back_signed, signed, theme::ON),
-            (s.version, manifest.plugin.version.clone(), theme::TEXT),
-            (s.back_id, manifest.id().to_owned(), theme::MUTED),
-        ];
-        ui.label(
-            RichText::new(&manifest.plugin.name)
-                .font(soft(k.at(40.0)))
-                .color(theme::PEARL),
-        );
-        egui::Grid::new(("angelica-card-back", manifest.id()))
-            .striped(false)
-            .num_columns(2)
-            .spacing(vec2(k.at(24.0), k.at(12.0)))
-            .show(ui, |ui| {
-                for (term, value, color) in rows {
-                    ui.label(
-                        RichText::new(term)
-                            .font(mono(k.at(14.0)))
-                            .color(theme::BLUEPRINT_PALE),
-                    );
-                    ui.add(
-                        egui::Label::new(RichText::new(value).font(mono(k.at(14.0))).color(color))
-                            .wrap(),
-                    );
-                    ui.end_row();
-                }
-            });
-        flip_link(ui, s.front, false, k)
-    }
-
-    /// What the plugin may do, one permission a line.
-    fn does(&self, plugin: &Plugin) -> String {
-        let manifest = &plugin.manifest;
-        let lines: Vec<String> = manifest
-            .permissions()
-            .iter()
-            .map(|&permission| {
-                let text = self.language.permission(permission);
-                if permission == Permission::HttpGet {
-                    let hosts: Vec<String> = manifest.http_hosts().into_iter().collect();
-                    format!("{text}: {}", hosts.join(", "))
-                } else {
-                    text.to_owned()
-                }
-            })
-            .collect();
-        if lines.is_empty() {
-            self.strings().back_own.to_owned()
-        } else {
-            lines.join("\n")
-        }
-    }
-
-    /// What the plugin cannot do, one thing a line.
-    fn cannot(&self, plugin: &Plugin) -> String {
-        let s = self.strings();
-        let permissions = plugin.manifest.permissions();
-        let mut cannot = Vec::new();
-        if !permissions.contains(&Permission::HttpGet) {
-            cannot.push(s.cannot_online);
-        }
-        if !permissions.contains(&Permission::ChatRead) {
-            cannot.push(s.cannot_chat);
-        }
-        if !permissions
-            .iter()
-            .any(|permission| permission.class() == Class::WhatYouSee)
-        {
-            cannot.push(s.cannot_look);
-        }
-        cannot.push(s.cannot_always);
-        cannot.join("\n")
-    }
-
-    /// Settings: language, the key, updates, and the details for
-    /// developers.
+    /// Settings: the sections on the left, the chosen one on the right.
     fn draw_settings(&mut self, ui: &mut Ui, view: &View<'_>) {
-        let (screen, k) = (view.screen, view.k);
-        let s = self.strings();
+        let p = view.p;
+        let height = view.at(300.0);
+        let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let column = Rect::from_min_size(area.min, vec2(view.at(180.0), height));
         let painter = ui.painter().clone();
-        let width = k.at(760.0).min(screen.width() - k.at(128.0));
-        let left =
-            (screen.center().x - width / 2.0 + k.at(80.0)).min(screen.right() - k.at(64.0) - width);
-        feather::blueprint(
-            &painter,
-            Place::with_height(
-                screen.left() + k.at(230.0),
-                screen.top() + k.at(110.0),
-                k.at(720.0),
-            ),
-            0.06,
+        painter.rect_filled(
+            column,
+            CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 6,
+                se: 0,
+            },
+            p.column,
         );
-        let mut top = screen.top() + k.at(140.0);
-        let rows = [
-            (s.setting_language, s.setting_language_note),
-            (s.setting_key, s.setting_key_note),
-            (s.setting_updates, s.setting_updates_note),
-            (s.setting_developers, s.setting_developers_note),
-        ];
-        for (index, (title, note)) in rows.into_iter().enumerate() {
-            let row = Rect::from_min_size(pos2(left, top), vec2(width, k.at(80.0)));
-            painter.text(
-                pos2(row.left(), row.center().y - k.at(2.0)),
-                Align2::LEFT_BOTTOM,
-                title,
-                strong(k.at(17.0)),
-                theme::PEARL,
-            );
-            painter.text(
-                pos2(row.left(), row.center().y + k.at(4.0)),
-                Align2::LEFT_TOP,
-                note,
-                sans(k.at(14.5)),
-                theme::MUTED,
-            );
-            painter.line_segment(
-                [row.left_bottom(), row.right_bottom()],
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 22)),
-            );
-            let value = Rect::from_min_max(pos2(row.center().x, row.top()), row.max);
-            ui.scope_builder(
-                UiBuilder::new()
-                    .max_rect(value)
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                |ui| self.setting_value(ui, view.host, index, k),
-            );
-            top = row.bottom();
-        }
-        if self.developers {
-            let area = Rect::from_min_max(
-                pos2(left, top + k.at(20.0)),
-                pos2(left + width, screen.bottom() - k.at(40.0)),
-            );
-            ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
+        painter.line_segment(
+            [column.right_top(), column.right_bottom()],
+            Stroke::new(1.0, p.line),
+        );
+        let mut column_ui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(column.shrink2(vec2(0.0, view.at(8.0))))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        self.sections(&mut column_ui, view);
+        let right = Rect::from_min_max(
+            pos2(column.right() + view.at(16.0), area.top() + view.at(10.0)),
+            pos2(area.right() - view.at(16.0), area.bottom() - view.at(10.0)),
+        );
+        let mut content = ui.new_child(
+            UiBuilder::new()
+                .max_rect(right)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        match self.section {
+            Section::General => self.general(&mut content, view),
+            Section::Updates => self.updates(&mut content, view),
+            Section::Developers => {
                 egui::ScrollArea::vertical()
                     .id_salt("angelica-developers")
                     .auto_shrink([false, false])
-                    .show(ui, |ui| self.developers(ui, view));
-            });
+                    .show(&mut content, |ui| self.developers(ui, view));
+            }
         }
     }
 
-    /// The value of the settings row `index`.
-    fn setting_value(&mut self, ui: &mut Ui, host: &Host, index: usize, k: Scale) {
+    fn sections(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
-        match index {
-            0 => self.language_switch(ui, host, k),
-            1 => {
-                let key = ui.painter().layout_no_wrap(
-                    "Insert".to_owned(),
-                    mono(k.at(13.0)),
-                    theme::PEARL,
+        let p = view.p;
+        let sections = [
+            (Section::General, Icon::General, s.section_general),
+            (Section::Updates, Icon::Updates, s.section_updates),
+            (Section::Developers, Icon::Developers, s.section_developers),
+        ];
+        for (section, icon, title) in sections {
+            if section == Section::Developers {
+                ui.add_space(view.at(8.0));
+                let (line, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                ui.painter().line_segment(
+                    [
+                        pos2(line.left() + view.at(14.0), line.center().y),
+                        pos2(line.right() - view.at(14.0), line.center().y),
+                    ],
+                    Stroke::new(1.0, p.line),
                 );
-                let (rect, _) = ui
-                    .allocate_exact_size(key.size() + vec2(k.at(24.0), k.at(10.0)), Sense::hover());
-                ui.painter().rect_stroke(
-                    rect,
-                    CornerRadius::same(6),
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+                ui.add_space(view.at(8.0));
+            }
+            let (row, response) =
+                ui.allocate_exact_size(vec2(ui.available_width(), view.at(32.0)), Sense::click());
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let chosen = self.section == section;
+            let plate = row.shrink2(vec2(view.at(6.0), view.at(1.0)));
+            let painter = ui.painter();
+            if chosen {
+                painter.rect_filled(plate, CornerRadius::same(4), p.chosen);
+                painter.rect_stroke(
+                    plate,
+                    CornerRadius::same(4),
+                    Stroke::new(1.0, p.line),
                     egui::StrokeKind::Inside,
                 );
-                ui.painter()
-                    .galley(rect.center() - key.size() / 2.0, key, theme::PEARL);
+            } else if response.hovered() {
+                painter.rect_filled(plate, CornerRadius::same(4), p.hover);
             }
-            2 => {
-                ui.label(
-                    RichText::new(s.setting_updates_value)
-                        .font(sans(k.at(14.5)))
-                        .color(theme::SOFT_TEXT),
-                );
+            let faint = section == Section::Developers && !chosen;
+            theme::icon(
+                painter,
+                icon,
+                Rect::from_center_size(
+                    pos2(plate.left() + view.at(16.0), row.center().y),
+                    vec2(view.at(14.0), view.at(14.0)),
+                ),
+                if chosen { p.action } else { p.secondary },
+            );
+            painter.text(
+                pos2(plate.left() + view.at(32.0), row.center().y),
+                Align2::LEFT_CENTER,
+                title,
+                if chosen {
+                    medium(view.at(13.0))
+                } else {
+                    sans(view.at(13.0))
+                },
+                if faint { p.secondary } else { p.text },
+            );
+            if response.clicked() {
+                self.section = section;
             }
-            _ => {
-                let label = if self.developers { s.hide } else { s.show };
-                if theme::button(ui, label, Button::Ghost, true, k.0 * 0.92).clicked() {
-                    self.developers = !self.developers;
-                }
-            }
+            ui.add_space(view.at(2.0));
         }
     }
 
-    fn language_switch(&mut self, ui: &mut Ui, host: &Host, k: Scale) {
-        let painter = ui.painter().clone();
-        let galleys: Vec<_> = Language::ALL
-            .iter()
-            .map(|language| {
-                painter.layout_no_wrap(language.name().to_owned(), strong(k.at(14.0)), theme::PEARL)
-            })
-            .collect();
-        let pad = vec2(k.at(16.0), k.at(7.0));
-        let width: f32 = galleys
-            .iter()
-            .map(|galley| galley.size().x + 2.0 * pad.x)
-            .sum();
-        let height = galleys[0].size().y + 2.0 * pad.y;
-        let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-        let pill = CornerRadius::same(u8::MAX);
-        painter.rect_stroke(
-            rect,
-            pill,
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 48)),
-            egui::StrokeKind::Inside,
-        );
-        let mut x = rect.left();
-        for (language, galley) in Language::ALL.into_iter().zip(galleys) {
-            let segment = Rect::from_min_size(
-                pos2(x, rect.top()),
-                vec2(galley.size().x + 2.0 * pad.x, height),
-            );
-            let response = ui
-                .interact(
-                    segment,
-                    Id::new(("angelica-language", language.name())),
-                    Sense::click(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let chosen = language == self.language;
-            if chosen {
-                painter.rect_filled(segment, pill, theme::PEARL);
-            }
-            let color = if chosen {
-                Color32::from_rgb(0x16, 0x20, 0x2f)
-            } else if response.hovered() {
-                theme::PEARL
-            } else {
-                theme::MUTED
-            };
-            painter.galley_with_override_text_color(
-                segment.center() - galley.size() / 2.0,
-                galley,
-                color,
-            );
-            if response.clicked() && !chosen {
-                self.set_language(host, language);
-            }
-            x = segment.right();
+    fn general(&mut self, ui: &mut Ui, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        setting(ui, view, s.setting_key, |ui| {
+            theme::key(ui, "Insert", view.k);
+        });
+        let mut language = None;
+        setting(ui, view, s.setting_language, |ui| {
+            let response = theme::value(ui, self.language.name(), view.k);
+            egui::Popup::menu(&response).show(|ui| {
+                for option in Language::ALL {
+                    if menu_item(ui, view, None, option.name(), p.text) {
+                        language = Some(option);
+                    }
+                }
+            });
+        });
+        if let Some(language) = language.filter(|language| *language != self.language) {
+            self.set_language(view.host, language);
         }
+        let mut theme = None;
+        setting(ui, view, s.setting_theme, |ui| {
+            let chosen = Theme::ALL
+                .iter()
+                .position(|theme| *theme == self.theme)
+                .unwrap_or(0);
+            theme = theme::choice(ui, &[s.theme_light, s.theme_dark], chosen, view.k)
+                .map(|index| Theme::ALL[index]);
+        });
+        if let Some(theme) = theme {
+            self.set_theme(view.host, theme);
+        }
+    }
+
+    fn updates(&self, ui: &mut Ui, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        setting(ui, view, s.setting_updates, |ui| {
+            ui.label(
+                RichText::new(s.updates_auto)
+                    .font(strong(view.at(13.5)))
+                    .color(p.text),
+            );
+        });
+        ui.add(
+            egui::Label::new(
+                RichText::new(s.updates_note)
+                    .font(sans(view.at(12.0)))
+                    .color(p.secondary),
+            )
+            .wrap(),
+        );
     }
 
     /// The details for developers: the game map, each plugin with its id,
     /// state, folder, and log, the installer's reports, and diagnostics.
     fn developers(&self, ui: &mut Ui, view: &View<'_>) {
-        let (host, k) = (view.host, view.k);
+        let host = view.host;
         let s = self.strings();
-        ui.spacing_mut().item_spacing.y = k.at(6.0);
-        section(ui, s.dev_map, k);
+        let p = view.p;
+        ui.spacing_mut().item_spacing.y = view.at(4.0);
+        theme::header(ui, s.dev_map, None, p.secondary, view.k);
         for line in view.map_status {
-            mono_line(ui, line, theme::SOFT_TEXT, k);
+            mono_line(ui, view, line, p.text);
         }
-        section(ui, s.dev_plugins, k);
+        theme::header(
+            ui,
+            s.dev_plugins,
+            Some(view.plugins.len()),
+            p.secondary,
+            view.k,
+        );
         if view.plugins.is_empty() {
-            mono_line(ui, s.dev_nothing, theme::FAINT, k);
+            mono_line(ui, view, s.dev_nothing, p.muted);
         }
         for plugin in view.plugins {
-            developer_plugin(ui, s, host, plugin, k);
+            developer_plugin(ui, view, s, plugin);
         }
-        section(ui, s.dev_installer, k);
+        theme::header(ui, s.dev_installer, None, p.secondary, view.k);
         let reports = host
             .plugin_installer()
             .map(|installer| installer.messages())
             .unwrap_or_default();
         if reports.is_empty() {
-            mono_line(ui, s.dev_nothing, theme::FAINT, k);
+            mono_line(ui, view, s.dev_nothing, p.muted);
         }
         for (_, report) in reports.iter().rev() {
             let color = if matches!(report, Report::Failed(..)) {
-                theme::EMBER
+                p.danger
             } else {
-                theme::SOFT_TEXT
+                p.text
             };
-            mono_line(ui, &report.to_string(), color, k);
+            mono_line(ui, view, &report.to_string(), color);
         }
-        section(ui, s.dev_diagnostics, k);
+        theme::header(ui, s.dev_diagnostics, None, p.secondary, view.k);
         let diagnostics = host.diagnostics();
         if diagnostics.is_empty() {
-            mono_line(ui, s.dev_nothing, theme::FAINT, k);
+            mono_line(ui, view, s.dev_nothing, p.muted);
         }
         for line in diagnostics.iter().rev() {
-            mono_line(ui, line, theme::SOFT_TEXT, k);
-        }
-    }
-
-    /// The sign in the corner while the menu is closed: a tiny living
-    /// feather, and for a while or when something needs the player, how to
-    /// open Angelica. It takes no input.
-    fn draw_sign(&self, context: &egui::Context, view: &View<'_>) {
-        let painter = context.layer_painter(egui::LayerId::background());
-        let center = pos2(view.screen.right() - 52.0, view.screen.bottom() - 54.0);
-        theme::glow(
-            &painter,
-            center,
-            44.0,
-            Color32::from_rgba_unmultiplied(14, 20, 32, 150),
-        );
-        feather::living(
-            &painter,
-            Place::with_height(center.x, center.y - 33.0, 66.0),
-            view.time,
-            view.mood,
-            0.6,
-        );
-        let fade = if matches!(view.mood, Mood::NeedsYou | Mood::Wrong) {
-            1.0
-        } else {
-            num_traits::cast::<f64, f32>(((HINT_TIME - view.time) / 2.0).clamp(0.0, 1.0))
-                .unwrap_or(0.0)
-        };
-        if fade > 0.0 {
-            let galley = painter.layout_no_wrap(
-                self.strings().hint.to_owned(),
-                sans(13.0),
-                theme::SOFT_TEXT,
-            );
-            let rect = Rect::from_min_size(
-                pos2(center.x - 48.0 - galley.size().x - 24.0, center.y + 6.0),
-                galley.size() + vec2(24.0, 12.0),
-            );
-            pill(&painter, rect, fade);
-            painter.galley_with_override_text_color(
-                rect.center() - galley.size() / 2.0,
-                galley,
-                alpha(theme::SOFT_TEXT, fade),
-            );
+            mono_line(ui, view, line, p.text);
         }
     }
 
@@ -1537,8 +1322,8 @@ impl Menu {
         self.notes.drain(..extra);
     }
 
-    /// What a note says, and the color of its light.
-    fn note_text(&self, host: &Host, report: &Report) -> (String, Color32) {
+    /// What a note says, and its tone.
+    fn note_text(&self, host: &Host, report: &Report) -> (String, Tone) {
         let s = self.strings();
         let name = |id: &str| {
             host.plugin(id).map_or_else(
@@ -1549,7 +1334,7 @@ impl Menu {
         match report {
             Report::Installed { plugin, .. } => (
                 fill(s.note_installed, &[("name", &name(plugin))]),
-                theme::LIGHT,
+                Tone::Attention,
             ),
             Report::Updated { plugin, .. } => {
                 let asks = host
@@ -1562,192 +1347,383 @@ impl Menu {
                 };
                 (
                     fill(template, &[("name", &name(plugin))]),
-                    if asks { theme::LIGHT } else { theme::ON },
+                    if asks { Tone::Attention } else { Tone::Good },
                 )
             }
-            _ => (s.note_failed.to_owned(), theme::EMBER),
+            _ => (s.note_failed.to_owned(), Tone::Failed),
         }
     }
 
-    /// The installer's news as short pills at the top right.
-    fn draw_notes(&self, context: &egui::Context, view: &View<'_>, open: bool) {
-        let k = view.k;
-        let painter = context.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            Id::new("angelica-notes"),
-        ));
-        let right = view.screen.right() - if open { k.at(64.0) } else { 24.0 };
-        let mut top = view.screen.top() + if open { k.at(92.0) } else { 24.0 };
+    /// The notes at the top right while the menu is closed: how Angelica
+    /// is for the first seconds of the game and while a plugin needs the
+    /// player, then what the plugin installer did. They take no input.
+    fn draw_notes(&self, context: &egui::Context, view: &View<'_>) {
+        let waiting = view
+            .statuses
+            .iter()
+            .filter(|status| Group::of(status) == Group::Attention)
+            .count();
+        let mut notes: Vec<(String, Tone, f32)> = Vec::new();
+        if !view.statuses.is_empty() && (waiting > 0 || view.time < START_TIME) {
+            let fade = if waiting > 0 {
+                1.0
+            } else {
+                fraction((START_TIME - view.time) / 0.5)
+            };
+            let tone = if waiting > 0 {
+                Tone::Attention
+            } else {
+                Tone::Good
+            };
+            notes.push((self.pulse(view.statuses), tone, fade));
+        }
         for note in self.notes.iter().rev() {
-            let (text, color) = self.note_text(view.host, &note.report);
+            let (text, tone) = self.note_text(view.host, &note.report);
             let age = view.time - note.at;
-            let fade =
-                num_traits::cast::<f64, f32>((age / 0.25).min(NOTE_TIME - age).clamp(0.0, 1.0))
-                    .unwrap_or(0.0);
-            let galley = painter.layout_no_wrap(text, sans(13.5), theme::SOFT_TEXT);
-            let size = galley.size() + vec2(44.0, 16.0);
-            let rect = Rect::from_min_size(pos2(right - size.x, top), size);
-            pill(&painter, rect, fade * 1.4);
-            let dot = pos2(rect.left() + 18.0, rect.center().y);
-            theme::glow(&painter, dot, 9.0, alpha(color, 0.5 * fade));
-            painter.circle_filled(dot, 3.5, alpha(color, fade));
-            painter.galley_with_override_text_color(
-                pos2(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0),
-                galley,
-                alpha(theme::TEXT, fade),
-            );
-            top = rect.bottom() + 8.0;
-        }
-    }
-}
-
-/// What the player did on the card's face.
-#[derive(Default)]
-struct Face {
-    opened: bool,
-    turn: bool,
-    not_now: bool,
-}
-
-/// The action that turns a plugin off when `on`, or on.
-fn switched(id: &str, on: bool) -> Action {
-    if on {
-        Action::Disable(id.to_owned())
-    } else {
-        Action::Enable(id.to_owned())
-    }
-}
-
-/// The ids of the plugins in the list, in its order.
-fn plugin_ids<'a>(lines: &[Line], plugins: &'a [Arc<Plugin>]) -> Vec<&'a str> {
-    lines
-        .iter()
-        .filter_map(|line| match line {
-            Line::Plugin(index) => Some(plugins[*index].manifest.id()),
-            Line::Heading(..) => None,
-        })
-        .collect()
-}
-
-/// A plugin's light in its row.
-fn state_dot(painter: &egui::Painter, status: &Status, dot: egui::Pos2, k: Scale) {
-    let radius = k.at(4.5);
-    match status {
-        Status::Running => {
-            painter.circle_filled(dot, radius, theme::ON);
-        }
-        Status::AwaitingApproval => {
-            theme::glow(painter, dot, k.at(13.0), alpha(theme::LIGHT, 0.75));
-            painter.circle_filled(dot, radius, theme::LIGHT);
-        }
-        Status::Faulted(_) => {
-            painter.circle_stroke(dot, radius, Stroke::new(1.2, alpha(theme::EMBER, 0.8)));
-        }
-        Status::Disabled => {
-            painter.circle_stroke(dot, radius, Stroke::new(1.0, theme::OFF));
-        }
-    }
-}
-
-/// The dashed leader from the chosen row's light to its card.
-fn leader(painter: &egui::Painter, row: Rect, layout: &Layout, k: Scale) {
-    let y = row.center().y;
-    let start = layout.list.right();
-    let anchor = pos2(layout.detail.left(), layout.detail.top() + k.at(66.0));
-    let gap = anchor.x - start;
-    painter.extend(egui::Shape::dashed_line(
-        &[
-            pos2(start + k.at(8.0), y),
-            pos2(start + gap * 0.55, y),
-            pos2(start + gap * 0.78, anchor.y),
-            anchor,
-        ],
-        Stroke::new(1.0, alpha(theme::LIGHT_TEXT, 0.55)),
-        k.at(2.0),
-        k.at(5.0),
-    ));
-    painter.circle_filled(anchor, k.at(3.0), alpha(theme::LIGHT_TEXT, 0.9));
-}
-
-/// The card's shadow and side: the face in night glass, the back on the
-/// blueprint grid.
-fn card_background(shown: Rect, back: bool, k: Scale) -> egui::Shape {
-    let corner = CornerRadius::same(12);
-    let shadow = egui::Shadow {
-        offset: [0, 30],
-        blur: 80,
-        spread: 0,
-        color: Color32::from_black_alpha(130),
-    };
-    let mut shapes = vec![shadow.as_shape(shown, corner).into()];
-    if back {
-        shapes.push(egui::Shape::rect_filled(
-            shown,
-            corner,
-            Color32::from_rgba_unmultiplied(13, 21, 37, 246),
-        ));
-        let grid = Stroke::new(0.6, alpha(theme::BLUEPRINT, 0.22));
-        let step = k.at(22.0);
-        let mut x = shown.left() + step;
-        while x < shown.right() {
-            shapes.push(egui::Shape::line_segment(
-                [pos2(x, shown.top()), pos2(x, shown.bottom())],
-                grid,
+            notes.push((
+                text,
+                tone,
+                fraction((age / 0.25).min((NOTE_TIME - age) / 0.5)),
             ));
-            x += step;
         }
-        let mut y = shown.top() + step;
-        while y < shown.bottom() {
-            shapes.push(egui::Shape::line_segment(
-                [pos2(shown.left(), y), pos2(shown.right(), y)],
-                grid,
-            ));
-            y += step;
+        let mut top = view.screen.top() + view.at(24.0);
+        for (index, (text, tone, fade)) in notes.into_iter().enumerate() {
+            let area = egui::Area::new(Id::new(("angelica-note", index)))
+                .order(egui::Order::Foreground)
+                .interactable(false)
+                .pivot(Align2::RIGHT_TOP)
+                .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
+                .show(context, |ui| {
+                    ui.multiply_opacity(fade);
+                    note(ui, view, &text, tone, self.strings().hint);
+                });
+            top = area.response.rect.bottom() + view.at(8.0);
         }
-        shapes.push(egui::Shape::rect_stroke(
-            shown,
-            corner,
-            Stroke::new(1.0, alpha(theme::BLUEPRINT, 0.4)),
-            egui::StrokeKind::Inside,
-        ));
-    } else {
-        shapes.push(egui::Shape::rect_filled(
-            shown,
-            corner,
-            Color32::from_rgba_unmultiplied(20, 27, 42, 238),
-        ));
-        shapes.push(egui::Shape::rect_stroke(
-            shown,
-            corner,
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 31)),
-            egui::StrokeKind::Inside,
-        ));
     }
-    egui::Shape::Vec(shapes)
 }
 
-/// A quiet pill behind a short text over the game.
-fn pill(painter: &egui::Painter, rect: Rect, strength: f32) {
-    let round = CornerRadius::same(u8::MAX);
+/// The frame of Angelica's windows.
+fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
+    egui::Frame::new()
+        .fill(p.window)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(6))
+        .shadow(context.global_style().visuals.window_shadow)
+}
+
+/// The bar at the top of a window: the word `angelica`, an optional title,
+/// and the close button. Returns whether the player closed the window.
+fn title_bar(ui: &mut Ui, view: &View<'_>, title: Option<&str>, close: &str) -> bool {
+    let p = view.p;
+    let (bar, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), view.at(32.0)), Sense::hover());
+    let painter = ui.painter().clone();
     painter.rect_filled(
-        rect,
-        round,
-        Color32::from_rgba_unmultiplied(14, 20, 32, unit(0.62 * strength)),
+        bar,
+        CornerRadius {
+            nw: 6,
+            ne: 6,
+            sw: 0,
+            se: 0,
+        },
+        p.title,
     );
+    painter.line_segment(
+        [bar.left_bottom(), bar.right_bottom()],
+        Stroke::new(1.0, p.line),
+    );
+    let word = painter.text(
+        pos2(bar.left() + view.at(12.0), bar.center().y),
+        Align2::LEFT_CENTER,
+        "angelica",
+        wordmark(view.at(13.0)),
+        p.secondary,
+    );
+    if let Some(title) = title {
+        painter.text(
+            pos2(word.right() + view.at(10.0), bar.center().y),
+            Align2::LEFT_CENTER,
+            title,
+            medium(view.at(13.0)),
+            p.text,
+        );
+    }
+    let button = Rect::from_center_size(
+        pos2(bar.right() - view.at(18.0), bar.center().y),
+        vec2(view.at(24.0), view.at(24.0)),
+    );
+    let response = ui
+        .interact(button, ui.id().with("angelica-close"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(close);
+    if response.hovered() {
+        painter.rect_filled(button, CornerRadius::same(4), p.hover);
+    }
+    theme::icon(
+        &painter,
+        Icon::Close,
+        Rect::from_center_size(button.center(), vec2(view.at(11.0), view.at(11.0))),
+        if response.hovered() {
+            p.text
+        } else {
+            p.secondary
+        },
+    );
+    response.clicked()
+}
+
+/// Where the columns of a row are: the tile's center, where the name and
+/// the permissions begin, where the version ends, and the state's center.
+struct Columns {
+    tile: f32,
+    name: f32,
+    permissions: f32,
+    version: f32,
+    state: f32,
+}
+
+impl Columns {
+    fn of(row: Rect, view: &View<'_>) -> Self {
+        let state = row.right() - view.at(24.0);
+        let version = state - view.at(20.0);
+        Self {
+            tile: row.left() + view.at(24.0),
+            name: row.left() + view.at(46.0),
+            permissions: version - view.at(56.0) - view.at(80.0),
+            version,
+            state,
+        }
+    }
+}
+
+fn columns_header(ui: &mut Ui, view: &View<'_>, s: &Strings) {
+    let p = view.p;
+    let (row, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), view.at(18.0)), Sense::hover());
+    let columns = Columns::of(row, view);
+    let painter = ui.painter();
+    let font = sans(view.at(11.0));
+    painter.text(
+        pos2(columns.name, row.center().y),
+        Align2::LEFT_CENTER,
+        s.column_plugin,
+        font.clone(),
+        p.muted,
+    );
+    painter.text(
+        pos2(columns.permissions, row.center().y),
+        Align2::LEFT_CENTER,
+        s.column_permissions,
+        font.clone(),
+        p.muted,
+    );
+    painter.text(
+        pos2(columns.version, row.center().y),
+        Align2::RIGHT_CENTER,
+        s.column_version,
+        font,
+        p.muted,
+    );
+}
+
+/// The classes a plugin holds, and for one waiting for approval, also
+/// those it asks for.
+fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
+    let mut permissions: Vec<Permission> = plugin.manifest.permissions().iter().copied().collect();
+    if *status == Status::AwaitingApproval {
+        permissions.extend(
+            plugin
+                .requests()
+                .into_iter()
+                .flat_map(|(_, requests)| requests.into_iter().map(|request| request.permission)),
+        );
+    }
+    classes_of(permissions)
+}
+
+/// A search field: a plain field with a thin border and a magnifier.
+fn search_field(ui: &mut Ui, view: &View<'_>, rect: Rect, text: &mut String, hint: &str, id: &str) {
+    text_field(ui, view, rect, text, hint, Id::new(id), Some(Icon::Search));
+}
+
+/// A plain text field with a thin border.
+fn text_field(
+    ui: &mut Ui,
+    view: &View<'_>,
+    rect: Rect,
+    text: &mut String,
+    hint: &str,
+    id: Id,
+    icon: Option<Icon>,
+) -> egui::Response {
+    let p = view.p;
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, CornerRadius::same(4), p.field);
+    let focused = ui.ctx().memory(|memory| memory.has_focus(id));
     painter.rect_stroke(
         rect,
-        round,
+        CornerRadius::same(4),
         Stroke::new(
             1.0,
-            Color32::from_rgba_unmultiplied(255, 255, 255, unit(0.1 * strength)),
+            if focused {
+                theme::alpha(p.action, 0.6)
+            } else {
+                p.border
+            },
         ),
         egui::StrokeKind::Inside,
     );
+    let mut inner = rect.shrink2(vec2(view.at(8.0), 0.0));
+    if let Some(icon) = icon {
+        theme::icon(
+            &painter,
+            icon,
+            Rect::from_center_size(
+                pos2(inner.left() + view.at(6.0), rect.center().y),
+                vec2(view.at(12.0), view.at(12.0)),
+            ),
+            p.muted,
+        );
+        inner.min.x += view.at(18.0);
+    }
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(id)
+                    .font(sans(view.at(13.0)))
+                    .text_color(p.text)
+                    .hint_text(RichText::new(hint).font(sans(view.at(13.0))).color(p.muted))
+                    .frame(egui::Frame::NONE)
+                    .desired_width(inner.width()),
+            )
+        },
+    )
+    .inner
+}
+
+/// A line of a menu: full width, highlighted under the pointer. Returns
+/// whether it was clicked; a click closes the menu.
+fn menu_item(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color: Color32) -> bool {
+    let p = view.p;
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(
+            ui.available_width().clamp(view.at(200.0), view.at(280.0)),
+            view.at(26.0),
+        ),
+        Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let painter = ui.painter();
+    if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(3), p.selection);
+    }
+    let mut x = rect.left() + view.at(8.0);
+    if let Some(icon) = icon {
+        theme::icon(
+            painter,
+            icon,
+            Rect::from_center_size(
+                pos2(x + view.at(6.0), rect.center().y),
+                vec2(view.at(13.0), view.at(13.0)),
+            ),
+            p.secondary,
+        );
+        x += view.at(20.0);
+    }
+    painter.text(
+        pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        sans(view.at(13.0)),
+        color,
+    );
+    if response.clicked() {
+        ui.close();
+        true
+    } else {
+        false
+    }
+}
+
+/// A permission in a tooltip or the dialog: its class's icon and its words.
+fn permission_line(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color: Color32) {
+    let p = view.p;
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(view.at(16.0), view.at(16.0)), Sense::hover());
+        if let Some(icon) = icon {
+            theme::icon(ui.painter(), icon, rect.shrink(view.at(1.0)), p.secondary);
+        }
+        ui.add_space(view.at(4.0));
+        ui.add(egui::Label::new(RichText::new(text).font(sans(view.at(12.5))).color(color)).wrap());
+    });
+}
+
+/// A setting: its name on the left, its value on the right.
+fn setting(ui: &mut Ui, view: &View<'_>, name: &str, value: impl FnOnce(&mut Ui)) {
+    let p = view.p;
+    ui.horizontal(|ui| {
+        ui.set_min_height(view.at(34.0));
+        let (rect, _) = ui.allocate_exact_size(vec2(view.at(180.0), view.at(34.0)), Sense::hover());
+        ui.painter().text(
+            pos2(rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            name,
+            sans(view.at(13.5)),
+            p.text,
+        );
+        value(ui);
+    });
+}
+
+/// A note over the game: the word `angelica`, a mark, one line, and how to
+/// open Angelica.
+fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
+    let p = view.p;
+    egui::Frame::new()
+        .fill(p.window)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(6))
+        .shadow(ui.style().visuals.popup_shadow)
+        .inner_margin(egui::Margin::symmetric(
+            num_u8(view.at(12.0)),
+            num_u8(view.at(10.0)),
+        ))
+        .show(ui, |ui| {
+            ui.set_max_width(view.at(320.0));
+            ui.spacing_mut().item_spacing.y = view.at(5.0);
+            ui.label(
+                RichText::new("angelica")
+                    .font(wordmark(view.at(12.0)))
+                    .color(p.secondary),
+            );
+            ui.horizontal(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(view.at(14.0), view.at(16.0)), Sense::hover());
+                let mark = rect.center();
+                match tone {
+                    Tone::Good => theme::running(ui.painter(), mark, view.k, p),
+                    Tone::Attention => theme::attention(ui.painter(), mark, view.k * 0.85, p),
+                    Tone::Failed => {
+                        ui.painter().circle_filled(mark, view.at(3.0), p.danger);
+                    }
+                }
+                ui.add(
+                    egui::Label::new(RichText::new(text).font(sans(view.at(13.0))).color(p.text))
+                        .wrap(),
+                );
+            });
+            ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
+        });
 }
 
 /// A plugin in the developers' details: name, id, version, state, folder,
 /// and log.
-fn developer_plugin(ui: &mut Ui, s: &Strings, host: &Host, plugin: &Plugin, k: Scale) {
+fn developer_plugin(ui: &mut Ui, view: &View<'_>, s: &Strings, plugin: &Plugin) {
+    let p = view.p;
     let manifest = &plugin.manifest;
     let id = manifest.id();
     let status = plugin.status();
@@ -1757,172 +1733,74 @@ fn developer_plugin(ui: &mut Ui, s: &Strings, host: &Host, plugin: &Plugin, k: S
         Status::AwaitingApproval => s.status_waiting.to_owned(),
         Status::Faulted(reason) => fill(s.status_stopped, &[("reason", reason)]),
     };
-    ui.add_space(k.at(4.0));
+    ui.add_space(view.at(4.0));
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = view.at(8.0);
         ui.label(
             RichText::new(&manifest.plugin.name)
-                .font(soft(k.at(20.0)))
-                .color(theme::PEARL),
+                .font(strong(view.at(13.0)))
+                .color(p.text),
         );
         ui.label(
             RichText::new(format!("{id} {}", manifest.plugin.version))
-                .font(mono(k.at(12.5)))
-                .color(theme::FAINT),
+                .font(mono(view.at(12.0)))
+                .color(p.muted),
         );
         let color = if matches!(status, Status::Faulted(_)) {
-            theme::EMBER
+            p.danger
         } else {
-            theme::SOFT_TEXT
+            p.secondary
         };
-        ui.label(RichText::new(state).font(mono(k.at(12.5))).color(color));
+        ui.label(RichText::new(state).font(mono(view.at(12.0))).color(color));
+        if status != Status::AwaitingApproval
+            && theme::word(ui, s.open_folder, Word::Action, true, view.k * 0.92).clicked()
+        {
+            view.host.queue(Action::OpenFolder(id.to_owned()));
+        }
     });
-    if status != Status::AwaitingApproval
-        && theme::button(ui, s.dev_open_folder, Button::Ghost, true, k.0 * 0.8).clicked()
-    {
-        host.queue(Action::OpenFolder(id.to_owned()));
-    }
     let lines = plugin.log.lines();
     if lines.is_empty() {
         return;
     }
     egui::CollapsingHeader::new(
-        RichText::new(format!("{} · {}", s.dev_log, lines.len()))
-            .font(sans(k.at(13.5)))
-            .color(theme::BLUEPRINT_PALE),
+        RichText::new(format!("{} {}", s.dev_log, lines.len()))
+            .font(sans(view.at(12.5)))
+            .color(p.action),
     )
     .id_salt(("angelica-log", id))
     .show(ui, |ui| {
         egui::ScrollArea::vertical()
             .id_salt(("angelica-log-lines", id))
-            .max_height(k.at(200.0))
+            .max_height(view.at(180.0))
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 for line in lines {
                     let color = match line.level {
-                        Level::Error => theme::EMBER,
-                        Level::Warning => theme::LIGHT_TEXT,
-                        Level::Debug => theme::FAINT,
-                        Level::Info => theme::TEXT,
+                        Level::Error => p.danger,
+                        Level::Warning => p.attention,
+                        Level::Debug => p.muted,
+                        Level::Info => p.text,
                     };
-                    mono_line(ui, &line.text, color, k);
+                    mono_line(ui, view, &line.text, color);
                 }
             });
     });
 }
 
-/// A wrapped line in the mechanism's mono.
-fn mono_line(ui: &mut Ui, text: &str, color: Color32, k: Scale) {
-    ui.add(egui::Label::new(RichText::new(text).font(mono(k.at(12.5))).color(color)).wrap());
-}
-
-/// A line of the face: the class's diamond and what the plugin asks.
-fn ask(ui: &mut Ui, text: &str, color: Color32, k: Scale) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(k.at(14.0), k.at(20.0)), Sense::hover());
-        theme::diamond(ui.painter(), rect.center(), k.at(4.5), color);
-        ui.add(
-            egui::Label::new(
-                RichText::new(text)
-                    .font(sans(k.at(16.0)))
-                    .color(theme::TEXT),
-            )
-            .wrap(),
-        );
-    });
-}
-
-/// A thin rule across the card.
-fn rule(ui: &mut Ui, k: Scale) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), k.at(2.0)), Sense::hover());
-    ui.painter().line_segment(
-        [rect.left_center(), rect.right_center()],
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 24)),
-    );
-}
-
-/// The link that turns the card: "How it works ↻" on the face, "← Front"
-/// on the back. Returns whether it was clicked.
-fn flip_link(ui: &mut Ui, text: &str, face: bool, k: Scale) -> bool {
-    let font = sans(k.at(14.5));
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), font, theme::BLUEPRINT_PALE);
-    let icon = k.at(18.0);
-    let size = galley.size() + vec2(icon, 0.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let color = if response.hovered() {
-        theme::PEARL
-    } else {
-        theme::BLUEPRINT_PALE
-    };
-    let painter = ui.painter();
-    if face {
-        painter.galley_with_override_text_color(rect.min, galley, color);
-        theme::turn(
-            painter,
-            pos2(rect.right() - icon / 2.0 + k.at(2.0), rect.center().y),
-            k.at(5.0),
-            color,
-        );
-    } else {
-        painter.text(
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            "←",
-            sans(k.at(14.5)),
-            color,
-        );
-        painter.galley_with_override_text_color(
-            pos2(rect.left() + icon, rect.top()),
-            galley,
-            color,
-        );
-    }
-    response.clicked()
-}
-
-/// A small title of the developers' details.
-fn section(ui: &mut Ui, title: &str, k: Scale) {
-    ui.add_space(k.at(14.0));
-    let mut job = LayoutJob::default();
-    spaced(
-        &mut job,
-        &title.to_uppercase(),
-        mono(k.at(11.5)),
-        theme::FAINT,
-        k.at(1.6),
-    );
-    ui.label(job);
-}
-
-fn append(job: &mut LayoutJob, text: &str, font: FontId, color: Color32) {
-    job.append(text, 0.0, egui::TextFormat::simple(font, color));
-}
-
-/// Text with space between its letters, as the mechanism's labels have.
-fn spaced(job: &mut LayoutJob, text: &str, font: FontId, color: Color32, spacing: f32) {
-    job.append(
-        text,
-        0.0,
-        egui::TextFormat {
-            font_id: font,
-            color,
-            extra_letter_spacing: spacing,
-            ..Default::default()
-        },
-    );
+/// A wrapped line of ids, paths, or logs.
+fn mono_line(ui: &mut Ui, view: &View<'_>, text: &str, color: Color32) {
+    ui.add(egui::Label::new(RichText::new(text).font(mono(view.at(12.0))).color(color)).wrap());
 }
 
 /// One line of text cut with an ellipsis to `width`.
 fn elided(
     painter: &egui::Painter,
     text: &str,
-    font: FontId,
+    font: egui::FontId,
     color: Color32,
     width: f32,
 ) -> Arc<egui::Galley> {
-    let mut job = LayoutJob::simple_singleline(text.to_owned(), font, color);
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
     job.wrap = egui::text::TextWrapping {
         max_width: width.max(1.0),
         max_rows: 1,
@@ -1932,8 +1810,18 @@ fn elided(
     painter.layout_job(job)
 }
 
-fn unit(value: f32) -> u8 {
-    num_traits::cast(value.clamp(0.0, 1.0) * 255.0).unwrap_or(0)
+/// A fraction clamped to 0..=1.
+fn fraction(value: f64) -> f32 {
+    num_traits::cast::<f64, f32>(value.clamp(0.0, 1.0)).unwrap_or(0.0)
+}
+
+fn f32_of(value: usize) -> f32 {
+    num_traits::cast(value).unwrap_or(0.0)
+}
+
+/// A margin in whole points.
+fn num_u8(value: f32) -> i8 {
+    num_traits::cast(value.round()).unwrap_or(i8::MAX)
 }
 
 #[cfg(test)]
@@ -1945,21 +1833,22 @@ mod tests {
             name,
             description,
             group,
+            classes: Vec::new(),
         }
     }
 
     #[test]
-    fn plugins_are_grouped_waiting_first_and_sorted_by_name() {
+    fn plugins_are_grouped_attention_first_and_sorted_by_name() {
         let entries = [
             entry("Timers", "Hunts, retainers, resets", Group::On),
             entry("tasks", "Dailies", Group::Off),
-            entry("Items", "Where things are", Group::Waiting),
+            entry("Items", "Where things are", Group::Attention),
             entry("Harmonia", "The game in another language", Group::On),
         ];
         assert_eq!(
-            lines(&entries, ""),
+            lines(&entries, "", None),
             vec![
-                Line::Heading(Group::Waiting, 1),
+                Line::Heading(Group::Attention, 1),
                 Line::Plugin(2),
                 Line::Heading(Group::On, 2),
                 Line::Plugin(3),
@@ -1974,53 +1863,58 @@ mod tests {
     fn search_finds_names_and_descriptions_in_any_case() {
         let entries = [
             entry("Таймеры", "Охота, ретейнеры, сбросы", Group::On),
-            entry("Items", "Where things are", Group::Waiting),
+            entry("Items", "Where things are", Group::Attention),
             entry("Market", "Prices and your sales", Group::Off),
         ];
         assert_eq!(
-            lines(&entries, "  ОХОТА "),
+            lines(&entries, "  ОХОТА ", None),
             vec![Line::Heading(Group::On, 1), Line::Plugin(0)]
         );
         assert_eq!(
-            lines(&entries, "items"),
-            vec![Line::Heading(Group::Waiting, 1), Line::Plugin(1)]
+            lines(&entries, "items", None),
+            vec![Line::Heading(Group::Attention, 1), Line::Plugin(1)]
         );
-        assert!(lines(&entries, "nothing like it").is_empty());
+        assert!(lines(&entries, "nothing like it", None).is_empty());
     }
 
     #[test]
-    fn faulted_plugins_wait_for_the_player() {
-        assert_eq!(Group::of(&Status::Faulted("trap".into())), Group::Waiting);
-        assert_eq!(Group::of(&Status::AwaitingApproval), Group::Waiting);
+    fn the_filter_keeps_plugins_with_a_permission_of_the_class() {
+        let mut online = entry("Market", "Prices", Group::On);
+        online.classes = vec![Class::Network, Class::WhatYouSee];
+        let mut local = entry("Timers", "Resets", Group::On);
+        local.classes = vec![Class::YoursOnly];
+        let entries = [online, local];
+        assert_eq!(
+            lines(&entries, "", Some(Class::Network)),
+            vec![Line::Heading(Group::On, 1), Line::Plugin(0)]
+        );
+        assert!(lines(&entries, "", Some(Class::OtherPlayers)).is_empty());
+        assert_eq!(lines(&entries, "", None).len(), 3);
+    }
+
+    #[test]
+    fn faulted_plugins_need_attention() {
+        assert_eq!(Group::of(&Status::Faulted("trap".into())), Group::Attention);
+        assert_eq!(Group::of(&Status::AwaitingApproval), Group::Attention);
         assert_eq!(Group::of(&Status::Running), Group::On);
         assert_eq!(Group::of(&Status::Disabled), Group::Off);
     }
 
     #[test]
-    fn the_mood_puts_trouble_first() {
-        let running = Status::Running;
-        let waiting = Status::AwaitingApproval;
-        let faulted = Status::Faulted("trap".into());
-        assert_eq!(mood([&running], false), Mood::Calm);
-        assert_eq!(mood([&running], true), Mood::Working);
-        assert_eq!(mood([&running, &waiting], true), Mood::NeedsYou);
-        assert_eq!(mood([&waiting, &faulted], true), Mood::Wrong);
-        assert_eq!(mood([], false), Mood::Calm);
-    }
-
-    #[test]
-    fn each_class_has_its_own_color() {
-        let classes = [
-            Class::Network,
-            Class::OtherPlayers,
-            Class::WhatYouSee,
-            Class::YoursOnly,
-        ];
-        for (index, class) in classes.iter().enumerate() {
-            for other in &classes[index + 1..] {
-                assert_ne!(class_color(*class), class_color(*other));
+    fn classes_come_once_in_their_order() {
+        assert_eq!(
+            classes_of([
+                Permission::StateSelf,
+                Permission::ExcelText,
+                Permission::HttpGet,
+                Permission::FilesReplace,
+            ]),
+            vec![Class::Network, Class::WhatYouSee, Class::YoursOnly]
+        );
+        for class in CLASSES {
+            for other in CLASSES.iter().filter(|other| **other != class) {
+                assert_ne!(class_icon(class), class_icon(*other));
             }
         }
-        assert_eq!(class_color(Class::Network), theme::EMBER);
     }
 }
