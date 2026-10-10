@@ -100,6 +100,10 @@ pub struct PluginInstaller {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     /// Whether a job the player started is running or waiting.
     busy: Arc<Mutex<usize>>,
+    /// Whether a check for updates the player asked for has not finished.
+    checking: Mutex<bool>,
+    /// When updates were last checked.
+    checked: Mutex<Option<Instant>>,
     /// The latest reports, each with its number in the session.
     messages: Arc<Mutex<VecDeque<(u64, Report)>>>,
     reported: Mutex<u64>,
@@ -124,6 +128,8 @@ impl PluginInstaller {
             installation,
             jobs: Mutex::new(None),
             busy: Arc::new(Mutex::new(0)),
+            checking: Mutex::new(false),
+            checked: Mutex::new(None),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             reported: Mutex::new(0),
             repaired: Mutex::new(BTreeSet::new()),
@@ -205,6 +211,24 @@ impl PluginInstaller {
         }
     }
 
+    /// Checks the plugins installed from links for updates now.
+    pub fn check_updates(&self) {
+        *self.checking.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.send(Job::Update);
+    }
+
+    /// Whether a check the player asked for has not finished.
+    #[must_use]
+    pub fn checking(&self) -> bool {
+        *self.checking.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// When updates were last checked, if they were.
+    #[must_use]
+    pub fn last_checked(&self) -> Option<Instant> {
+        *self.checked.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Whether an installation the player started has not finished.
     #[must_use]
     pub fn busy(&self) -> bool {
@@ -265,6 +289,12 @@ impl PluginInstaller {
         if matches!(job, Job::Install(_)) {
             let mut busy = self.busy.lock().unwrap_or_else(PoisonError::into_inner);
             *busy = busy.saturating_sub(1);
+        }
+        if *job == Job::Update {
+            *self.checking.lock().unwrap_or_else(PoisonError::into_inner) = false;
+            if result.is_ok() {
+                *self.checked.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+            }
         }
         let report = match result {
             Ok(report) => report,
@@ -389,4 +419,29 @@ fn open_verified(program: &Path, key: Option<&[u8; 32]>) -> Result<std::fs::File
     key.verify_strict(&bytes, &signature)
         .map_err(|_| format!("{} is not signed by Angelica", program.display()))?;
     Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_check_that_cannot_run_ends_and_is_not_counted_as_checked() {
+        let folder = tempfile::tempdir().unwrap();
+        let installer = PluginInstaller::new(
+            folder.path().join("missing.exe"),
+            None,
+            folder.path().to_path_buf(),
+            Arc::new(|_: &str| {}),
+        );
+        installer.check_updates();
+        assert!(!installer.checking());
+        assert_eq!(installer.last_checked(), None);
+        assert!(matches!(
+            installer.messages().last(),
+            Some((_, Report::Failed(Failure::Updates, _)))
+        ));
+        installer.finish(&Job::Update, Ok(serde_json::json!({"updates": {}})));
+        assert!(installer.last_checked().is_some());
+    }
 }

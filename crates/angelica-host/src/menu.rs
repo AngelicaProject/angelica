@@ -156,6 +156,7 @@ enum RowAction {
     TurnOff,
     Review,
     Folder,
+    Remove,
 }
 
 /// What a note means, which picks its mark.
@@ -188,6 +189,8 @@ pub struct Menu {
     selected: Option<String>,
     /// The plugin whose permissions the dialog shows.
     dialog: Option<String>,
+    /// The plugin the removal dialog asks about.
+    removing: Option<String>,
     notes: Vec<Note>,
     seen: u64,
 }
@@ -233,6 +236,7 @@ impl Menu {
             link_invalid: false,
             selected: None,
             dialog: None,
+            removing: None,
             notes: Vec::new(),
             seen: 0,
         }
@@ -297,6 +301,7 @@ impl Menu {
             self.draw_menu(context, &view)
         } else {
             self.dialog = None;
+            self.removing = None;
             self.draw_notes(context, &view);
             false
         }
@@ -334,6 +339,9 @@ impl Menu {
             });
         if self.dialog.is_some() {
             self.draw_dialog(context, view);
+        }
+        if self.removing.is_some() {
+            self.draw_removal(context, view);
         }
         keep
     }
@@ -719,6 +727,7 @@ impl Menu {
                 self.dialog = Some(id.to_owned());
             }
             RowAction::Folder => view.host.queue(Action::OpenFolder(id.to_owned())),
+            RowAction::Remove => self.removing = Some(id.to_owned()),
         }
         false
     }
@@ -784,14 +793,18 @@ impl Menu {
                     .font(sans(view.at(12.0)))
                     .color(p.muted),
                 );
+                self.history(ui, view, plugin);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = view.at(14.0);
                     let mut actions = self.row_actions(status);
                     if *status != Status::AwaitingApproval {
                         actions.push((s.open_folder, RowAction::Folder));
                     }
+                    actions.push((s.remove, RowAction::Remove));
                     for (index, (text, row_action)) in actions.into_iter().enumerate() {
-                        let kind = if index == 0 {
+                        let kind = if row_action == RowAction::Remove {
+                            Word::Danger
+                        } else if index == 0 {
                             Word::Main
                         } else {
                             Word::Secondary
@@ -870,6 +883,10 @@ impl Menu {
             if menu_item(ui, view, None, s.open_folder, p.text) {
                 view.host.queue(Action::OpenFolder(id.to_owned()));
             }
+        }
+        separate(ui);
+        if menu_item(ui, view, None, s.remove, p.danger) {
+            self.removing = Some(id.to_owned());
         }
         if opened {
             view.host.queue_event(id, Event::OpenRequested);
@@ -1377,6 +1394,28 @@ impl Menu {
     fn updates(&self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
+        if let Some(installer) = view.host.plugin_installer() {
+            setting(ui, view, s.setting_check, |ui| {
+                let checking = installer.checking();
+                let label = if checking { s.checking } else { s.check_now };
+                if theme::word(ui, label, Word::Action, !checking, view.k).clicked() {
+                    installer.check_updates();
+                }
+            });
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!(
+                        "{}. {}",
+                        capitalized(&self.checked(installer)),
+                        s.check_note
+                    ))
+                    .font(sans(view.at(12.0)))
+                    .color(p.secondary),
+                )
+                .wrap(),
+            );
+            ui.add_space(view.at(10.0));
+        }
         setting(ui, view, s.setting_updates, |ui| {
             ui.label(
                 RichText::new(s.updates_auto)
@@ -1392,6 +1431,164 @@ impl Menu {
             )
             .wrap(),
         );
+    }
+
+    /// When updates were last checked, in words.
+    fn checked(&self, installer: &PluginInstaller) -> String {
+        let s = self.strings();
+        let Some(at) = installer.last_checked() else {
+            return s.checked_never.to_owned();
+        };
+        let minutes = at.elapsed().as_secs() / 60;
+        if minutes == 0 {
+            s.checked_now.to_owned()
+        } else if minutes < 60 {
+            fill(s.checked_minutes, &[("n", &minutes.to_string())])
+        } else {
+            fill(s.checked_hours, &[("n", &(minutes / 60).to_string())])
+        }
+    }
+
+    /// What the plugin installer did with `plugin` in this session.
+    fn history(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin) {
+        let s = self.strings();
+        let p = view.p;
+        let id = plugin.manifest.id();
+        let reports = view
+            .host
+            .plugin_installer()
+            .map(|installer| installer.messages())
+            .unwrap_or_default();
+        let lines: Vec<(String, Color32)> = reports
+            .iter()
+            .filter_map(|(_, report)| match report {
+                Report::Installed { plugin, version } if plugin == id => Some((
+                    fill(s.history_installed, &[("version", version)]),
+                    p.secondary,
+                )),
+                Report::Updated { plugin, from, to } if plugin == id => Some((
+                    fill(s.history_updated, &[("from", from), ("to", to)]),
+                    p.secondary,
+                )),
+                Report::Compiled(plugin) if plugin == id => {
+                    Some((s.history_compiled.to_owned(), p.secondary))
+                }
+                Report::Failed(Failure::Update(plugin), reason) if plugin == id => Some((
+                    fill(s.history_update_failed, &[("reason", reason)]),
+                    p.danger,
+                )),
+                Report::Failed(Failure::Compile(plugin), reason) if plugin == id => Some((
+                    fill(s.history_compile_failed, &[("reason", reason)]),
+                    p.danger,
+                )),
+                _ => None,
+            })
+            .collect();
+        if lines.is_empty() {
+            return;
+        }
+        ui.label(
+            RichText::new(s.history)
+                .font(sans(view.at(12.0)))
+                .color(p.muted),
+        );
+        for (line, color) in lines {
+            ui.add(
+                egui::Label::new(RichText::new(line).font(sans(view.at(12.5))).color(color)).wrap(),
+            );
+        }
+    }
+
+    /// The dialog that removes a plugin, keeping its data or not.
+    fn draw_removal(&mut self, context: &egui::Context, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        let Some(plugin) = self
+            .removing
+            .as_deref()
+            .and_then(|id| {
+                view.plugins
+                    .iter()
+                    .find(|plugin| plugin.manifest.id() == id)
+            })
+            .cloned()
+        else {
+            self.removing = None;
+            return;
+        };
+        let id = plugin.manifest.id().to_owned();
+        let width = view.at(520.0);
+        let (mut close, mut removed) = (false, false);
+        egui::Window::new("angelica-removal")
+            .id(Id::new(("angelica-removal", &id)))
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .order(egui::Order::Foreground)
+            .frame(window_frame(context, p))
+            .default_pos(pos2(
+                view.screen.center().x - width / 2.0,
+                view.screen.top() + view.screen.height() * 0.25,
+            ))
+            .show(context, |ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                if title_bar(ui, view, Some(s.remove_title), s.close) {
+                    close = true;
+                }
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(
+                        num_u8(view.at(16.0)),
+                        num_u8(view.at(14.0)),
+                    ))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = view.at(10.0);
+                        plugin_heading(
+                            ui,
+                            view,
+                            &plugin.manifest.plugin.name,
+                            &fill(s.version, &[("version", &plugin.manifest.plugin.version)]),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(s.remove_note)
+                                    .font(sans(view.at(12.5)))
+                                    .color(p.secondary),
+                            )
+                            .wrap(),
+                        );
+                    });
+                let (row, _) = ui
+                    .allocate_exact_size(vec2(ui.available_width(), view.at(40.0)), Sense::hover());
+                ui.painter()
+                    .line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(row.shrink2(vec2(view.at(10.0), 0.0)))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = view.at(14.0);
+                        for (text, data) in [(s.remove_all, true), (s.remove_keep, false)] {
+                            if theme::word(ui, text, Word::Danger, true, view.k).clicked() {
+                                view.host.queue(Action::Remove {
+                                    id: id.clone(),
+                                    data,
+                                });
+                                removed = true;
+                            }
+                        }
+                        if theme::word(ui, s.cancel, Word::Secondary, true, view.k).clicked() {
+                            close = true;
+                        }
+                    },
+                );
+            });
+        if close || removed {
+            self.removing = None;
+        }
+        if removed && self.selected.as_deref() == Some(id.as_str()) {
+            self.selected = None;
+        }
     }
 
     /// The details for developers: the game map, each plugin with its id,
@@ -1542,6 +1739,28 @@ impl Menu {
             top = area.response.rect.bottom() + view.at(8.0);
         }
     }
+}
+
+/// A plugin at the top of a dialog: its tile, its name, and one line.
+fn plugin_heading(ui: &mut Ui, view: &View<'_>, name: &str, line: &str) {
+    let p = view.p;
+    ui.horizontal(|ui| {
+        let (tile, _) = ui.allocate_exact_size(vec2(view.at(40.0), view.at(40.0)), Sense::hover());
+        theme::tile(ui.painter(), tile, name, false, p);
+        ui.add_space(view.at(12.0));
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(name)
+                    .font(strong(view.at(14.0)))
+                    .color(p.text),
+            );
+            ui.label(
+                RichText::new(line)
+                    .font(sans(view.at(12.0)))
+                    .color(p.secondary),
+            );
+        });
+    });
 }
 
 /// The frame of Angelica's windows.
@@ -1995,6 +2214,14 @@ fn elided(
         overflow_character: Some('…'),
     };
     painter.layout_job(job)
+}
+
+/// `text` with its first letter capital.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// A fraction clamped to 0..=1.
