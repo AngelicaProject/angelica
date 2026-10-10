@@ -20,27 +20,17 @@ use windows_sys::{
     Win32::{
         Foundation::{FreeLibrary, HINSTANCE},
         System::{
-            Diagnostics::Debug::ReadProcessMemory,
             LibraryLoader::{
-                GetModuleFileNameW, GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32,
-                LoadLibraryExW,
+                GetModuleFileNameW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
             },
-            Memory::{PAGE_READWRITE, VirtualProtect},
             SystemInformation::GetSystemDirectoryW,
-            Threading::GetCurrentProcess,
+            Threading::{GetCurrentThread, QueueUserAPC},
         },
     },
     core::GUID,
 };
 
 static MODULE: AtomicUsize = AtomicUsize::new(0);
-/// The slot of the executable's import table that the startup hook
-/// replaced, and the system function it held.
-static START_SLOT: AtomicUsize = AtomicUsize::new(0);
-static START_IMPORT: AtomicUsize = AtomicUsize::new(0);
-/// The system function the executable calls first: its entry point seeds
-/// the stack cookie with the time before anything else of the game runs.
-const START_IMPORT_NAME: &std::ffi::CStr = c"GetSystemTimeAsFileTime";
 static STARTED: AtomicBool = AtomicBool::new(false);
 static STARTUP_FAILED: AtomicBool = AtomicBool::new(false);
 static SYSTEM: OnceLock<Result<usize, String>> = OnceLock::new();
@@ -136,7 +126,7 @@ fn address(name: &[u8]) -> Result<usize, LoadError> {
 fn forward<T: Copy>(fallback: T, work: impl FnOnce() -> Result<T, LoadError>) -> T {
     boundary(fallback, || {
         if STARTUP_FAILED.swap(false, Ordering::AcqRel) {
-            log("the executable's first import was not found; runtime startup disabled");
+            log("the start of the host could not be queued; runtime startup disabled");
         }
         match work() {
             Ok(value) => value,
@@ -158,120 +148,38 @@ unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, reserved: *mut
             // A non-null reserved pointer identifies static process initialization.
             // A dynamically loaded proxy is too late: the executable already runs.
             if !reserved.is_null() {
-                STARTUP_FAILED.store(true, Ordering::Release);
-                // SAFETY: process initialization precedes execution of the executable's code.
-                if unsafe { install_start() }.is_some() {
-                    STARTUP_FAILED.store(false, Ordering::Release);
-                }
+                // Windows delivers the initial thread's queued calls when
+                // process initialization ends: after every library is
+                // initialized and the loader lock is released, and before
+                // the executable's entry point.
+                // SAFETY: a static function with the documented signature,
+                // queued to the current thread.
+                let queued =
+                    unsafe { QueueUserAPC(Some(after_initialization), GetCurrentThread(), 0) };
+                STARTUP_FAILED.store(queued == 0, Ordering::Release);
             }
         }
         1
     })
 }
 
-fn read_memory<const N: usize>(address: usize) -> Option<[u8; N]> {
-    let mut bytes = [0; N];
-    let mut read = 0;
-    // SAFETY: ReadProcessMemory validates the source; output is a writable fixed array.
-    let ok = unsafe {
-        ReadProcessMemory(
-            GetCurrentProcess(),
-            address as *const _,
-            bytes.as_mut_ptr().cast(),
-            N,
-            &raw mut read,
-        )
-    };
-    (ok != 0 && read == N).then_some(bytes)
-}
-
-/// Stores `value` in a slot of the executable's import table.
-fn write_slot(slot: usize, value: usize) -> Option<()> {
-    let mut previous = 0;
-    // SAFETY: the slot is eight mapped bytes of the executable's import
-    // table; it is made writable for the store and protected again after.
-    unsafe {
-        if VirtualProtect(slot as *const c_void, 8, PAGE_READWRITE, &raw mut previous) == 0 {
-            return None;
+/// Runs on the initial thread when process initialization has ended and the
+/// executable's entry point has not run yet: starts the host once. The
+/// executable's code and its entry point stay as they are, so a tool that
+/// rewrites or checks the entry point is not disturbed.
+unsafe extern "system" fn after_initialization(_: usize) {
+    if STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let completed = boundary(false, || {
+        if let Err(error) = load_host() {
+            log(&error.to_string());
         }
-        std::ptr::write_unaligned(slot as *mut usize, value);
-        VirtualProtect(slot as *const c_void, 8, previous, &raw mut previous);
+        true
+    });
+    if !completed {
+        log("runtime startup panicked; Angelica disabled");
     }
-    Some(())
-}
-
-/// Makes the executable's first call of a system function start the host:
-/// replaces the executable's import of that function. The executable's code
-/// stays as it is, so tools that rewrite or check the entry point are not
-/// disturbed, and the host starts after such a tool has run.
-///
-/// # Safety
-/// Called during static process initialization, before the executable's
-/// code runs.
-unsafe fn install_start() -> Option<()> {
-    // SAFETY: NULL requests the executable's Windows module handle.
-    let base = unsafe { GetModuleHandleW(std::ptr::null()) } as usize;
-    let dos = read_memory::<64>(base)?;
-    if &dos[..2] != b"MZ" {
-        return None;
-    }
-    let offset = u32::from_le_bytes(dos[60..64].try_into().ok()?) as usize;
-    let nt = read_memory::<264>(base.checked_add(offset)?)?;
-    if &nt[..4] != b"PE\0\0"
-        || nt[4..6] != 0x8664u16.to_le_bytes()
-        || nt[24..26] != 0x20bu16.to_le_bytes()
-    {
-        return None;
-    }
-    let size = u32::from_le_bytes(nt[80..84].try_into().ok()?) as usize;
-    // The import address table is the thirteenth data directory.
-    let table = u32::from_le_bytes(nt[232..236].try_into().ok()?) as usize;
-    let table_size = u32::from_le_bytes(nt[236..240].try_into().ok()?) as usize;
-    if table == 0 || table.checked_add(table_size)? > size {
-        return None;
-    }
-    let kernel: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
-    // SAFETY: NUL-terminated names; kernel32 is loaded in every process.
-    let import = unsafe {
-        GetProcAddress(
-            GetModuleHandleW(kernel.as_ptr()),
-            START_IMPORT_NAME.as_ptr().cast(),
-        )
-    }? as usize;
-    let slot = (0..table_size / 8)
-        .map(|index| base + table + index * 8)
-        .find(|slot| read_memory::<8>(*slot).map(usize::from_le_bytes) == Some(import))?;
-    START_IMPORT.store(import, Ordering::Release);
-    START_SLOT.store(slot, Ordering::Release);
-    write_slot(slot, start_from_import as *const () as usize)
-}
-
-/// The executable's first call of the replaced import: starts the host
-/// once, puts the import back, and makes the call.
-unsafe extern "system" fn start_from_import(time: *mut c_void) {
-    if !STARTED.swap(true, Ordering::AcqRel) {
-        boundary((), || {
-            let slot = START_SLOT.load(Ordering::Acquire);
-            if write_slot(slot, START_IMPORT.load(Ordering::Acquire)).is_none() {
-                log("the executable's first import could not be put back");
-            }
-        });
-        let completed = boundary(false, || {
-            if let Err(error) = load_host() {
-                log(&error.to_string());
-            }
-            true
-        });
-        if !completed {
-            log("runtime startup panicked; Angelica disabled");
-        }
-    }
-    // SAFETY: the address is the system function the executable imported,
-    // which has this signature.
-    let import: unsafe extern "system" fn(*mut c_void) =
-        unsafe { std::mem::transmute(START_IMPORT.load(Ordering::Acquire)) };
-    // SAFETY: the caller's argument is passed on unchanged.
-    unsafe { import(time) }
 }
 
 fn load_host() -> Result<(), LoadError> {
