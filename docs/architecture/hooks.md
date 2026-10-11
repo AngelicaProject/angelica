@@ -28,7 +28,7 @@ Relocation decodes whole instructions with `iced-x86` until they cover 5 bytes a
 
 ### Installing and removing
 
-While the bytes change, every other thread of the process is suspended. A suspended thread whose instruction pointer is on an overwritten instruction continues at the same instruction in the trampoline; when a detour is removed, a thread on a moved instruction in the trampoline continues at the original. Nothing allocates memory while threads are suspended, since a suspended thread may hold the heap lock.
+While the bytes change, every other thread of the process is suspended. A suspended thread whose instruction pointer is on an overwritten instruction continues at the same instruction in the trampoline; when a detour is removed, a thread on a moved instruction in the trampoline continues at the original. Nothing allocates memory while threads are suspended, since a suspended thread may hold the heap lock. Only one thread at a time suspends the others: Windows suspends a thread asynchronously, so two threads doing it at once could each suspend the other and both stay suspended.
 
 A detour is enabled only while the target still holds the bytes it was prepared from, and removed only while the target still holds its own jump. Trampolines and relays are never freed, because a thread may still be executing in one after its detour is removed.
 

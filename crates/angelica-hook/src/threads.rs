@@ -1,5 +1,7 @@
 //! Suspending the other threads of the process while code changes.
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext, SetThreadContext,
@@ -12,6 +14,11 @@ use windows_sys::Win32::System::Threading::{
     THREAD_GET_CONTEXT, THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
 };
 
+/// One freeze at a time in the process: two threads that froze the others
+/// at once could each suspend the other before resuming anyone, and both
+/// would stay suspended.
+static FREEZE: Mutex<()> = Mutex::new(());
+
 /// `GetThreadContext` needs a 16-byte aligned `CONTEXT`.
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
@@ -23,10 +30,15 @@ struct AlignedContext(CONTEXT);
 /// hold the heap lock.
 pub(crate) struct Frozen {
     handles: Vec<HANDLE>,
+    /// Released after every thread is resumed: fields drop after `drop`.
+    _freeze: MutexGuard<'static, ()>,
 }
 
 impl Frozen {
     pub(crate) fn others() -> Self {
+        // Taken before any thread is suspended; a thread waiting for it may
+        // be suspended by the holder and goes on once resumed.
+        let freeze = FREEZE.lock().unwrap_or_else(PoisonError::into_inner);
         let ids = other_thread_ids();
         let mut handles = Vec::with_capacity(ids.len());
         for id in ids {
@@ -52,7 +64,10 @@ impl Frozen {
             // The capacity was reserved before any thread was suspended.
             handles.push(handle);
         }
-        Self { handles }
+        Self {
+            handles,
+            _freeze: freeze,
+        }
     }
 
     /// The instruction pointer of every suspended thread.
