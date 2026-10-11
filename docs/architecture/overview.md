@@ -23,7 +23,7 @@
 | --- | --- |
 | `angelica` | All code: loader, host, hook engine, map resolver, plugin API (`wit/`), SDK, installer, the `angelica` command-line tool. All shared contracts: [game map format](../formats/game-map-v1.md), [plugin manifest](../formats/plugin-manifest-v1.md), and the plugin API. |
 | `angelica-gamemap` | Game map data: entries, build records, verification reports, provenance of imported data. It contains no code; its CI runs the `angelica` tool at a pinned version. |
-| `angelica-registry` | The plugin catalog: which plugin source commits are published, the build that produced them, and the signed index. |
+| `angelica-registry` | The plugin catalog ([catalog](./catalog.md)): which tag of which plugin is listed, the plugin files its CI built from that source and signed, and the signed index. |
 | plugin repositories | One per plugin, owned by its author. |
 
 ## Authority

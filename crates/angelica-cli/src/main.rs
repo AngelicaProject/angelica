@@ -1,6 +1,7 @@
 //! The `angelica` command.
 
 mod author;
+mod catalog;
 mod compile;
 mod dev;
 mod excel;

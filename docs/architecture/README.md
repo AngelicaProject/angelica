@@ -13,5 +13,6 @@ Start with [`overview.md`](./overview.md). It defines the components, the reposi
 | Host services | [`services.md`](./services.md) | `angelica-host` |
 | In-game interface | [`ui.md`](./ui.md) | `angelica-host` |
 | Installing Angelica | [`installer.md`](./installer.md) | `angelica-setup` |
+| The plugin catalog | [`catalog.md`](./catalog.md) | `angelica-cli`, `angelica-registry` |
 
 Architecture documents own boundaries and invariants, not coding style. Implementation conventions belong under [`../development/`](../development/README.md), and versioned contracts under [`../formats/`](../formats/README.md).

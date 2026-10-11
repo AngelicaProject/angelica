@@ -1,6 +1,6 @@
 # Plugin file format 1
 
-A plugin file (`<id>-<version>.angelica`) carries a plugin from its author to players outside the official catalog. It holds the plugin's manifest and component, signed with the author's key. It never holds native code: the installer compiles the component on the player's computer.
+A plugin file (`<id>-<version>.angelica`) carries a plugin to players, from its author or from the [catalog](../architecture/catalog.md), whose files are signed with the release key. It holds the plugin's manifest and component, signed with the author's key. It never holds native code: the installer compiles the component on the player's computer.
 
 ## Layout
 
@@ -21,7 +21,7 @@ The signature covers every byte of the file except the signature itself, the aut
 
 The author key is the plugin's identity. `angelica plugin pack` signs with it and creates it on first use, by default in `%APPDATA%/Angelica/author.key` (64 hexadecimal digits of the secret). A lost key cannot sign new versions that installations accept; the author keeps it like a password.
 
-The player is not shown the key. The menu shows that the plugin comes from its author, with the manifest's `authors`, and not from the Angelica catalog.
+The player is not shown the key. The menu shows that the plugin comes from its author, with the manifest's `authors`, or, when the release key signed the file, from the Angelica catalog.
 
 ## Links
 

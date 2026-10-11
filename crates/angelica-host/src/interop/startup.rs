@@ -353,7 +353,7 @@ fn load_package(
     let component =
         unsafe { super::component::load_authenticated(&sandbox.engine, &package.artifact) }
             .inspect_err(|_| {
-                if package.manifest.origin == crate::manifest::Origin::Author {
+                if package.compiled_here {
                     repairs.push(package.manifest.id().to_owned());
                 }
             })?;

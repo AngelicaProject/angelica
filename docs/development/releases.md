@@ -48,7 +48,7 @@ The host updates itself; the player never has to act ([loading](../architecture/
 - **Download.** A newer version's runtime and plugin installer are downloaded, checked against the feed's sizes and hashes and against their release signatures, and written with their signatures into a new version folder `versions/<version>/`; then `current.json` is replaced to name it ([loading](../architecture/loading.md#updates)). A file in use is never replaced, and older version folders are removed once nothing uses them.
 - **Apply.** The proxy loads the new version at the next game start. The menu says **Angelica updates at the next game start** until then.
 - **The proxy** is loaded by the game and changes rarely; only the installer replaces it. A host that needs a newer proxy says so in the menu.
-- **Catalog plugins** carry components compiled for one runtime; a runtime update compiles plugins from their authors again (`plugin-installer.exe` repair). Until the catalog republishes for every runtime, Angelica's own plugins are distributed as plugins from their authors.
+- **Plugins** are compiled on the player's computer, from their author or from the [catalog](../architecture/catalog.md); a runtime update compiles them again (`plugin-installer.exe` repair).
 
 ## Map updates
 

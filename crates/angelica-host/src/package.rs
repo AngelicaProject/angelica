@@ -160,6 +160,9 @@ pub struct PluginPackage {
     pub manifest: crate::manifest::Manifest,
     /// The compiled component, `plugin.cwasm`.
     pub artifact: Vec<u8>,
+    /// The installer compiled the component on this computer from a plugin
+    /// file, so a runtime that cannot load it compiles it again.
+    pub compiled_here: bool,
 }
 
 /// Authenticates the plugin package in `folder`: a package signed with the
@@ -197,7 +200,13 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
                 manifest.id()
             ));
         }
-        (manifest, Origin::Author)
+        // A plugin file the catalog built and signed with the release key.
+        let origin = if trust.release == Some(file.author) {
+            Origin::Catalog
+        } else {
+            Origin::Author
+        };
+        (manifest, origin)
     } else {
         let manifest = std::str::from_utf8(
             files
@@ -226,5 +235,9 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
     let artifact = files
         .remove("plugin.cwasm")
         .ok_or("the package has no compiled component; compile it outside the game first")?;
-    Ok(PluginPackage { manifest, artifact })
+    Ok(PluginPackage {
+        manifest,
+        artifact,
+        compiled_here: from_author,
+    })
 }

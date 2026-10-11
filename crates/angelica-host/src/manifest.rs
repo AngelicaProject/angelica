@@ -201,7 +201,8 @@ pub struct Manifest {
 /// Where a plugin's package came from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Origin {
-    /// The official catalog, signed with the release key.
+    /// The official catalog: a package signed with the release key, or a
+    /// plugin file the catalog built and signed with it.
     #[default]
     Catalog,
     /// Its author, outside the catalog: a plugin file the player installed,

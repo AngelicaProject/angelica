@@ -4,7 +4,7 @@
 
 A plugin is a WebAssembly component of the `plugin` world in [`wit/`](../../wit), the [plugin API](../formats/plugin-api-v1.md). The host runs it with wasmtime. Any language that builds a component can be used; the SDK and documentation target Rust (`wasm32-wasip2`).
 
-The release pipeline compiles each component outside the game with `angelica plugin compile` and signs the source and the compiled artifact together ([installation](../formats/host-installation-v1.md)). A plugin from its author, outside the catalog, comes as a [plugin file](../formats/plugin-file-v1.md) signed with the author's key; the installer compiles it on the player's computer and signs the package with the installation's key. The host loads only authenticated artifacts and never compiles in the game.
+A plugin comes as a [plugin file](../formats/plugin-file-v1.md): from its author, signed with the author's key, or from the [catalog](./catalog.md), which builds it from the author's source and signs it with the release key. The installer compiles it on the player's computer and signs the package with the installation's key. A package signed with the release key that holds a compiled component ([installation](../formats/host-installation-v1.md)) still loads; only development installations make them. The host loads only authenticated artifacts and never compiles in the game.
 
 ## Plugins from their authors
 
