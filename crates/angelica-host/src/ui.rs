@@ -1,7 +1,7 @@
 //! Checks of the windows a plugin describes (the `ui` interface) before the
 //! host draws them.
 #![forbid(unsafe_code)]
-use crate::sandbox::bindings::angelica::plugin::ui::{Number, Widget, Window};
+use crate::sandbox::bindings::angelica::plugin::ui::{Choice, Entry, Number, Widget, Window};
 use std::collections::BTreeSet;
 
 pub const MAX_WINDOWS: usize = 16;
@@ -23,6 +23,14 @@ enum Group {
     Section,
     Table,
 }
+
+/// The most actions in an entry's row, actions under it, and facts.
+pub const MAX_ENTRY_ACTIONS: usize = 4;
+pub const MAX_ENTRY_MORE: usize = 8;
+pub const MAX_ENTRY_FACTS: usize = 16;
+
+/// The most parts a window's path has.
+pub const MAX_PATH: usize = 4;
 
 /// # Errors
 /// Names the first rule a window breaks: too many windows or widgets, text
@@ -68,6 +76,18 @@ fn validate_window(window: &Window) -> Result<usize, String> {
         }
         Ok(())
     };
+    if window.path.len() > MAX_PATH {
+        return Err(format!("a path of more than {MAX_PATH} parts"));
+    }
+    for part in &window.path {
+        if part.trim().is_empty() {
+            return Err("an empty part of the path".into());
+        }
+        label(part, "a part of the path")?;
+    }
+    if let Some(status) = &window.status {
+        label(&status.text, "the status")?;
+    }
     label(&window.title, "the title")?;
     let mut ids = BTreeSet::new();
     let mut open: Vec<Group> = Vec::new();
@@ -101,10 +121,19 @@ fn validate_window(window: &Window) -> Result<usize, String> {
         if open.len() > MAX_DEPTH {
             return Err(format!("rows and sections nest deeper than {MAX_DEPTH}"));
         }
-        if let Some(id) = id
-            && (id.is_empty() || id.len() > MAX_ID || !ids.insert(id))
-        {
-            return Err(format!("widget id {id:?} is empty, too long, or repeated"));
+        let actions = match widget {
+            Widget::Entry(entry) => Some(entry.actions.iter().chain(&entry.more)),
+            _ => None,
+        };
+        for id in id.into_iter().chain(
+            actions
+                .into_iter()
+                .flatten()
+                .map(|action| action.id.as_str()),
+        ) {
+            if id.is_empty() || id.len() > MAX_ID || !ids.insert(id) {
+                return Err(format!("widget id {id:?} is empty, too long, or repeated"));
+            }
         }
     }
     if !open.is_empty() {
@@ -126,6 +155,60 @@ fn shows_something(widget: &Widget) -> bool {
             | Widget::Tooltip(_)
             | Widget::Separator
     )
+}
+
+/// Checks an entry's texts and how many actions and facts it has.
+fn validate_entry(
+    value: &Entry,
+    label: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    label(&value.title, "an entry's title")?;
+    label(&value.note, "an entry's note")?;
+    label(&value.value, "an entry's value")?;
+    if value.actions.len() > MAX_ENTRY_ACTIONS
+        || value.more.len() > MAX_ENTRY_MORE
+        || value.facts.len() > MAX_ENTRY_FACTS
+    {
+        return Err(format!(
+            "entry {} has more than {MAX_ENTRY_ACTIONS} actions in its row, {MAX_ENTRY_MORE} under it, or {MAX_ENTRY_FACTS} facts",
+            value.id
+        ));
+    }
+    if value.progress.is_some_and(|fraction| !fraction.is_finite()) {
+        return Err(format!(
+            "entry {} has a progress that is not a number",
+            value.id
+        ));
+    }
+    for fact in &value.facts {
+        label(&fact.name, "a fact's name")?;
+        label(&fact.value, "a fact's value")?;
+    }
+    for action in value.actions.iter().chain(&value.more) {
+        label(&action.label, "a label")?;
+    }
+    Ok(())
+}
+
+/// Checks a choice's texts, its options, and the one it selects.
+fn validate_choice(
+    value: &Choice,
+    label: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    label(&value.label, "a label")?;
+    if value.options.len() > MAX_OPTIONS {
+        return Err(format!("a choice has more than {MAX_OPTIONS} options"));
+    }
+    for option in &value.options {
+        label(option, "an option")?;
+    }
+    if value
+        .selected
+        .is_some_and(|index| index as usize >= value.options.len())
+    {
+        return Err(format!("choice {} selects a missing option", value.id));
+    }
+    Ok(())
 }
 
 /// Checks a widget's text and returns its id, if it has one.
@@ -157,19 +240,7 @@ fn validate_widget<'a>(
             Some(&value.id)
         }
         Widget::Choice(value) => {
-            label(&value.label, "a label")?;
-            if value.options.len() > MAX_OPTIONS {
-                return Err(format!("a choice has more than {MAX_OPTIONS} options"));
-            }
-            for option in &value.options {
-                label(option, "an option")?;
-            }
-            if value
-                .selected
-                .is_some_and(|index| index as usize >= value.options.len())
-            {
-                return Err(format!("choice {} selects a missing option", value.id));
-            }
+            validate_choice(value, label)?;
             Some(&value.id)
         }
         Widget::Progress(value) => {
@@ -209,6 +280,15 @@ fn validate_widget<'a>(
         Widget::Tooltip(value) => {
             label(value, "a tooltip")?;
             None
+        }
+        Widget::Fact(value) => {
+            label(&value.name, "a fact's name")?;
+            label(&value.value, "a fact's value")?;
+            None
+        }
+        Widget::Entry(value) => {
+            validate_entry(value, label)?;
+            Some(&value.id)
         }
         Widget::Icon(value) => {
             if value.size == 0 || value.size > MAX_ICON_SIZE {
@@ -255,6 +335,8 @@ mod tests {
         vec![Window {
             id: "main".into(),
             title: "Main".into(),
+            path: Vec::new(),
+            status: None,
             widgets,
         }]
     }
@@ -284,6 +366,18 @@ mod tests {
             id: "items".into(),
             columns: columns.iter().map(|&c| c.into()).collect(),
         })
+    }
+
+    #[test]
+    fn a_path_has_at_most_four_parts_and_no_blank_one() {
+        let with = |path: &[&str]| {
+            let mut windows = window(vec![text("x")]);
+            windows[0].path = path.iter().map(|part| (*part).to_owned()).collect();
+            validate(&windows)
+        };
+        assert!(with(&["a", "b", "c", "d"]).is_ok());
+        assert!(with(&["a", "b", "c", "d", "e"]).is_err());
+        assert!(with(&["a", " "]).is_err());
     }
 
     #[test]

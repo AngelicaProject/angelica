@@ -2,17 +2,19 @@
 //! back to the host as queued actions and events; nothing here calls a
 //! plugin. The menu itself is in [`crate::menu`].
 #![forbid(unsafe_code)]
+use crate::theme::{self, Word};
 use crate::{
-    host::{Event, Host, Plugin, Status},
-    language::Language,
-    menu::Menu,
+    host::{Action, Event, Host, Plugin, Status},
+    language::{Language, Strings},
+    menu::{self, Bar, Look, Mark, Menu},
     sandbox::bindings::angelica::plugin::ui::{
-        Choice, Chosen, Edited, Icon, Number, NumberSet, Table, Tabs, TextInput, Toggled, Tone,
-        Widget, WidgetRef,
+        Action as EntryAction, ActionKind, Choice, Chosen, Edited, Entry, Fact, Icon,
+        Mark as EntryMark, Navigated, Number, NumberSet, Progress, Table, Tabs, TextInput, Toggled,
+        Tone, Widget, WidgetRef,
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -26,6 +28,9 @@ const ICON_BUDGET: Duration = Duration::from_millis(2);
 pub struct Panel {
     menu: Menu,
     inputs: HashMap<(String, String, String), String>,
+    /// The plugin windows collapsed to their title bars, by plugin and
+    /// window id.
+    collapsed: HashSet<(String, String)>,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -100,6 +105,7 @@ impl Panel {
         Self {
             menu: Menu::new(host, system),
             inputs: HashMap::new(),
+            collapsed: HashSet::new(),
             icons: Icons::default(),
             map_status,
         }
@@ -130,8 +136,9 @@ impl Panel {
             if plugin.status() != Status::Running {
                 continue;
             }
+            let (look, strings) = self.menu.look(context);
             for window in plugin.windows() {
-                self.draw_window(host, plugin, &window, context);
+                self.draw_window(host, plugin, &window, context, look, strings);
             }
         }
         keep
@@ -143,30 +150,108 @@ impl Panel {
         plugin: &Plugin,
         window: &crate::host::Window,
         context: &egui::Context,
+        look: Look,
+        strings: &'static Strings,
     ) {
         let id = plugin.manifest.id();
-        let mut open = true;
-        egui::Window::new(format!(
+        let key = (id.to_owned(), window.id.clone());
+        let collapsed = self.collapsed.contains(&key);
+        let status = window.status.as_ref().map(|status| {
+            let mark = match status.tone {
+                Tone::Good => Mark::Running,
+                Tone::Warning | Tone::Bad => Mark::Attention,
+                Tone::Normal | Tone::Muted => Mark::None,
+            };
+            (status.text.as_str(), mark)
+        });
+        let bar = Bar {
+            wordmark: false,
+            title: &window.title,
+            path: &window.path,
+            status,
+            collapsed: Some(collapsed),
+            menu: true,
+            strings,
+        };
+        let mut pressed = menu::Pressed::default();
+        // A collapsed window is its own small window with its own place.
+        let frame = egui::Window::new(format!(
             "{} — {}",
             window.title, plugin.manifest.plugin.name
         ))
-        .id(egui::Id::new(("angelica-plugin", id, &window.id)))
-        .open(&mut open)
-        .vscroll(true)
-        .default_width(480.0)
-        .show(context, |ui| {
-            let mut drawer = Drawer {
-                host,
-                plugin: id,
-                window: &window.id,
-                inputs: &mut self.inputs,
-                icons: &mut self.icons,
-                last: None,
-            };
-            let mut position = 0;
-            drawer.widgets(ui, &window.widgets, &mut position);
-        });
-        if !open {
+        .id(egui::Id::new((
+            "angelica-plugin",
+            id,
+            &window.id,
+            collapsed,
+        )))
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(!collapsed)
+        .frame(menu::window_frame(context, look.p));
+        if collapsed {
+            frame.show(context, |ui| {
+                ui.set_width(look.at(330.0));
+                pressed = menu::bar(ui, &look, &bar);
+            });
+        } else {
+            frame.default_width(look.at(480.0)).show(context, |ui| {
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                pressed = menu::bar(ui, &look, &bar);
+                if let Some(button) = &pressed.menu {
+                    egui::Popup::menu(button).show(|ui| {
+                        if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
+                            host.queue(Action::OpenFolder(id.to_owned()));
+                        }
+                        if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
+                            host.queue(Action::Disable(id.to_owned()));
+                        }
+                    });
+                }
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(
+                        menu::num_u8(look.at(12.0)),
+                        menu::num_u8(look.at(8.0)),
+                    ))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing =
+                                    egui::vec2(look.at(12.0), look.at(4.0));
+                                let mut drawer = Drawer {
+                                    host,
+                                    plugin: id,
+                                    window: &window.id,
+                                    inputs: &mut self.inputs,
+                                    icons: &mut self.icons,
+                                    last: None,
+                                    look,
+                                    strings,
+                                };
+                                let mut position = 0;
+                                drawer.widgets(ui, &window.widgets, &mut position);
+                            });
+                    });
+            });
+        }
+        if pressed.toggle {
+            if collapsed {
+                self.collapsed.remove(&key);
+            } else {
+                self.collapsed.insert(key);
+            }
+        }
+        if let Some(depth) = pressed.navigate {
+            host.queue_event(
+                id,
+                Event::Navigated(Navigated {
+                    window: window.id.clone(),
+                    depth,
+                }),
+            );
+        }
+        if pressed.close {
             host.queue_event(id, Event::Closed(window.id.clone()));
         }
     }
@@ -180,6 +265,8 @@ struct Drawer<'a> {
     icons: &'a mut Icons,
     /// The widget a following tooltip points at.
     last: Option<egui::Response>,
+    look: Look,
+    strings: &'static Strings,
 }
 
 impl Drawer<'_> {
@@ -208,7 +295,10 @@ impl Drawer<'_> {
     ) {
         match widget {
             Widget::BeginRow => {
-                ui.horizontal_wrapped(|ui| self.widgets(ui, widgets, position));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    self.widgets(ui, widgets, position);
+                });
                 self.last = None;
             }
             Widget::BeginSection(section) => {
@@ -281,21 +371,26 @@ impl Drawer<'_> {
     /// Draws a widget and returns what the player sees of it, for a tooltip.
     fn widget(&mut self, ui: &mut egui::Ui, widget: &Widget) -> Option<egui::Response> {
         Some(match widget {
-            Widget::Heading(text) => ui.heading(text),
+            Widget::Heading(text) => self.heading(ui, text),
             Widget::Text(text) => {
-                let rich = egui::RichText::new(&text.text);
-                match text.tone {
-                    Tone::Normal => ui.label(rich),
-                    Tone::Muted => ui.label(rich.weak()),
-                    Tone::Good => {
-                        ui.colored_label(crate::theme::current(ui.ctx()).palette().on, rich)
-                    }
-                    Tone::Warning => ui.colored_label(ui.visuals().warn_fg_color, rich),
-                    Tone::Bad => ui.colored_label(ui.visuals().error_fg_color, rich),
-                }
+                let p = self.look.p;
+                let color = match text.tone {
+                    Tone::Normal => p.text,
+                    Tone::Muted => p.secondary,
+                    Tone::Good => p.on,
+                    Tone::Warning => p.attention,
+                    Tone::Bad => p.danger,
+                };
+                ui.label(self.rich(&text.text, color))
             }
             Widget::Button(button) => {
-                let response = ui.add_enabled(button.enabled, egui::Button::new(&button.label));
+                let response = theme::word(
+                    ui,
+                    &button.label,
+                    word_of(button.kind),
+                    button.enabled,
+                    self.look.k,
+                );
                 if response.clicked() {
                     self.host
                         .queue_event(self.plugin, Event::Clicked(self.reference(&button.id)));
@@ -303,35 +398,36 @@ impl Drawer<'_> {
                 response
             }
             Widget::Checkbox(checkbox) => {
-                let mut checked = checkbox.checked;
-                let response = ui.checkbox(&mut checked, &checkbox.label);
-                if response.changed() {
+                let words = [self.strings.word_on, self.strings.word_off];
+                let chosen = usize::from(!checkbox.checked);
+                let row = ui.horizontal(|ui| {
+                    ui.label(self.rich(&checkbox.label, self.look.p.text));
+                    theme::choice(ui, &words, chosen, self.look.k)
+                });
+                if let Some(picked) = row.inner {
                     self.host.queue_event(
                         self.plugin,
                         Event::Toggled(Toggled {
                             window: self.window.into(),
                             id: checkbox.id.clone(),
-                            checked,
+                            checked: picked == 0,
                         }),
                     );
                 }
-                response
+                row.response
             }
             Widget::TextInput(input) => self.text_input(ui, input),
             Widget::Choice(choice) => self.choice(ui, choice),
             Widget::Number(number) => self.number(ui, number),
             Widget::Tabs(tabs) => self.tabs(ui, tabs),
-            Widget::Progress(progress) => {
-                let bar = egui::ProgressBar::new(progress.fraction.clamp(0.0, 1.0));
-                ui.add(if progress.label.is_empty() {
-                    bar
-                } else {
-                    bar.text(&progress.label)
-                })
-            }
+            Widget::Progress(progress) => self.progress(ui, progress),
+            Widget::Fact(fact) => self.fact(ui, fact),
+            Widget::Entry(entry) => self.entry(ui, entry),
             Widget::Icon(icon) => self.icon(ui, *icon),
             Widget::Separator => {
-                ui.separator();
+                ui.add_space(self.look.at(4.0));
+                theme::rule(ui);
+                ui.add_space(self.look.at(4.0));
                 return None;
             }
             Widget::BeginRow
@@ -342,6 +438,304 @@ impl Drawer<'_> {
             | Widget::EndTable
             | Widget::Tooltip(_) => return None,
         })
+    }
+
+    fn rich(&self, text: &str, color: egui::Color32) -> egui::RichText {
+        egui::RichText::new(text)
+            .font(theme::sans(self.look.at(13.5)))
+            .color(color)
+    }
+
+    /// A small heading over a part of the window, with a thin rule to the
+    /// right edge.
+    fn heading(&self, ui: &mut egui::Ui, text: &str) -> egui::Response {
+        let look = self.look;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), look.at(26.0)),
+            egui::Sense::hover(),
+        );
+        let painter = ui.painter();
+        let title = painter.text(
+            egui::pos2(rect.left(), rect.bottom() - look.at(5.0)),
+            egui::Align2::LEFT_BOTTOM,
+            text,
+            theme::sans(look.at(12.0)),
+            look.p.secondary,
+        );
+        let y = title.center().y + 1.0;
+        painter.line_segment(
+            [
+                egui::pos2(title.right() + look.at(8.0), y),
+                egui::pos2(rect.right(), y),
+            ],
+            egui::Stroke::new(1.0, look.p.line),
+        );
+        response
+    }
+
+    /// A name in the secondary color and its value.
+    fn fact(&self, ui: &mut egui::Ui, fact: &Fact) -> egui::Response {
+        let look = self.look;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = look.at(8.0);
+            let (name, _) = ui.allocate_exact_size(
+                egui::vec2(look.at(120.0), look.at(20.0)),
+                egui::Sense::hover(),
+            );
+            let galley = ui.painter().layout(
+                fact.name.clone(),
+                theme::sans(look.at(13.0)),
+                look.p.secondary,
+                name.width(),
+            );
+            ui.painter().galley(
+                egui::pos2(name.left(), name.center().y - look.at(8.5)),
+                galley,
+                look.p.secondary,
+            );
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&fact.value)
+                        .font(theme::sans(look.at(13.0)))
+                        .color(look.p.text),
+                )
+                .wrap(),
+            )
+        })
+        .inner
+    }
+
+    fn act(&self, action: &EntryAction) {
+        self.host
+            .queue_event(self.plugin, Event::Clicked(self.reference(&action.id)));
+    }
+
+    /// What follows an entry's title: its actions under the pointer,
+    /// otherwise its value and its progress or note. Returns whether an
+    /// action was pressed.
+    fn entry_side(
+        &mut self,
+        ui: &mut egui::Ui,
+        entry: &Entry,
+        row: egui::Rect,
+        left: f32,
+        mut right: f32,
+        hovered: bool,
+    ) -> bool {
+        let look = self.look;
+        let p = look.p;
+        let painter = ui.painter().clone();
+        let y = row.center().y;
+        let mut acted = false;
+        if hovered && !entry.actions.is_empty() && entry.progress.is_none() {
+            let room = egui::Rect::from_min_max(
+                egui::pos2(left, row.top()),
+                egui::pos2(right, row.bottom()),
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(room)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = look.at(8.0);
+                    for action in entry.actions.iter().rev() {
+                        let word = theme::word(
+                            ui,
+                            &action.label,
+                            word_of(action.kind),
+                            action.enabled,
+                            look.k,
+                        );
+                        if word.clicked() {
+                            self.act(action);
+                            acted = true;
+                        }
+                    }
+                },
+            );
+        } else {
+            if !entry.value.is_empty() {
+                let value = painter.text(
+                    egui::pos2(right, y),
+                    egui::Align2::RIGHT_CENTER,
+                    &entry.value,
+                    theme::sans(look.at(12.5)),
+                    p.muted,
+                );
+                right = value.left() - look.at(10.0);
+            }
+            if let Some(fraction) = entry.progress {
+                let line = egui::Rect::from_min_max(
+                    egui::pos2(left, y - 1.0),
+                    egui::pos2(right.max(left), y + 1.0),
+                );
+                painter.rect_filled(line, 1.0, p.line);
+                painter.rect_filled(
+                    line.with_max_x(line.left() + line.width() * fraction.clamp(0.0, 1.0)),
+                    1.0,
+                    p.action,
+                );
+            } else if !entry.note.is_empty() && right - left > look.at(24.0) {
+                let mut job = egui::text::LayoutJob::simple_singleline(
+                    entry.note.clone(),
+                    theme::sans(look.at(13.0)),
+                    p.secondary,
+                );
+                job.wrap = egui::text::TextWrapping::truncate_at_width(right - left);
+                let galley = painter.layout_job(job);
+                painter.galley(
+                    egui::pos2(left, y - galley.size().y / 2.0),
+                    galley,
+                    p.secondary,
+                );
+            }
+        }
+        acted
+    }
+
+    /// The chosen entry's facts and actions under its row.
+    fn entry_details(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        let look = self.look;
+        let p = look.p;
+        egui::Frame::new()
+            .fill(p.selection)
+            .corner_radius(egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 4,
+                se: 4,
+            })
+            .inner_margin(egui::Margin {
+                left: menu::num_u8(look.at(42.0)),
+                right: menu::num_u8(look.at(10.0)),
+                top: 0,
+                bottom: menu::num_u8(look.at(8.0)),
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(2.0));
+                for fact in &entry.facts {
+                    self.fact(ui, fact);
+                }
+                if !entry.more.is_empty() {
+                    ui.add_space(look.at(4.0));
+                    ui.horizontal_wrapped(|ui| {
+                        for action in &entry.more {
+                            let word = theme::word(
+                                ui,
+                                &action.label,
+                                word_of(action.kind),
+                                action.enabled,
+                                look.k,
+                            );
+                            if word.clicked() {
+                                self.act(action);
+                            }
+                        }
+                    });
+                }
+            });
+    }
+
+    /// A row of a list and, when it is chosen, its facts and actions under
+    /// it.
+    fn entry(&mut self, ui: &mut egui::Ui, entry: &Entry) -> egui::Response {
+        let look = self.look;
+        let p = look.p;
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            let (row, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), look.at(36.0)),
+                egui::Sense::click(),
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let hovered = ui.rect_contains_pointer(row);
+            let details = entry.chosen && !(entry.facts.is_empty() && entry.more.is_empty());
+            let painter = ui.painter().clone();
+            if entry.chosen || hovered {
+                let below = if details { 0 } else { 4 };
+                painter.rect_filled(
+                    row,
+                    egui::CornerRadius {
+                        nw: 4,
+                        ne: 4,
+                        sw: below,
+                        se: below,
+                    },
+                    if entry.chosen { p.selection } else { p.hover },
+                );
+            }
+            let faded = entry.mark == EntryMark::Off;
+            let y = row.center().y;
+            let tile = egui::Rect::from_center_size(
+                egui::pos2(row.left() + look.at(20.0), y),
+                egui::Vec2::splat(look.at(24.0)),
+            );
+            theme::tile(&painter, tile, &entry.title, faded, false, p);
+            let name = painter.text(
+                egui::pos2(row.left() + look.at(42.0), y),
+                egui::Align2::LEFT_CENTER,
+                &entry.title,
+                if entry.chosen {
+                    theme::medium(look.at(13.5))
+                } else {
+                    theme::sans(look.at(13.5))
+                },
+                if faded { p.secondary } else { p.text },
+            );
+            let left = name.right() + look.at(10.0);
+            let mut right = row.right() - look.at(10.0);
+            let center = egui::pos2(right - look.at(4.0), y);
+            match entry.mark {
+                EntryMark::None => {}
+                EntryMark::On => theme::running(&painter, center, look.k, p),
+                EntryMark::Off => theme::off(&painter, center, look.k, p),
+                EntryMark::Attention => theme::attention(&painter, center, look.k * 0.8, p),
+            }
+            if entry.mark != EntryMark::None {
+                right -= look.at(22.0);
+            }
+            let acted = self.entry_side(ui, entry, row, left, right, hovered);
+            if response.clicked() && !acted {
+                self.host
+                    .queue_event(self.plugin, Event::Clicked(self.reference(&entry.id)));
+            }
+            if details {
+                self.entry_details(ui, entry);
+            }
+            response
+        })
+        .inner
+    }
+
+    /// A thin line that fills with the action color, and its label.
+    fn progress(&self, ui: &mut egui::Ui, progress: &Progress) -> egui::Response {
+        let look = self.look;
+        let fraction = progress.fraction.clamp(0.0, 1.0);
+        ui.horizontal(|ui| {
+            let width = if progress.label.is_empty() {
+                ui.available_width()
+            } else {
+                (ui.available_width() * 0.5).max(look.at(120.0))
+            };
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(width, look.at(20.0)), egui::Sense::hover());
+            let line = egui::Rect::from_center_size(
+                rect.center(),
+                egui::vec2(rect.width(), look.at(2.0).max(2.0)),
+            );
+            ui.painter().rect_filled(line, 1.0, look.p.line);
+            ui.painter().rect_filled(
+                line.with_max_x(line.left() + line.width() * fraction),
+                1.0,
+                look.p.action,
+            );
+            if !progress.label.is_empty() {
+                ui.label(self.rich(&progress.label, look.p.secondary));
+            }
+            response
+        })
+        .inner
     }
 
     /// Draws an icon, or an empty frame while the game has none for it.
@@ -408,27 +802,78 @@ impl Drawer<'_> {
         response
     }
 
+    /// Tabs like the menu's: the chosen one is a light plate on the line
+    /// under the row.
     fn tabs(&mut self, ui: &mut egui::Ui, tabs: &Tabs) -> egui::Response {
-        let response = ui
-            .horizontal(|ui| {
-                for (index, label) in tabs.labels.iter().enumerate() {
-                    let index = u32::try_from(index).unwrap_or(u32::MAX);
-                    if ui.selectable_label(tabs.selected == index, label).clicked()
-                        && tabs.selected != index
-                    {
-                        self.host.queue_event(
-                            self.plugin,
-                            Event::Chosen(Chosen {
-                                window: self.window.into(),
-                                id: tabs.id.clone(),
-                                index,
-                            }),
-                        );
-                    }
-                }
-            })
-            .response;
-        ui.separator();
+        let look = self.look;
+        let p = look.p;
+        let (row, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), look.at(32.0)),
+            egui::Sense::hover(),
+        );
+        let painter = ui.painter().clone();
+        painter.line_segment(
+            [row.left_bottom(), row.right_bottom()],
+            egui::Stroke::new(1.0, p.line),
+        );
+        let mut x = row.left();
+        for (index, label) in tabs.labels.iter().enumerate() {
+            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            let active = tabs.selected == index;
+            let galley = painter.layout_no_wrap(label.clone(), theme::sans(look.at(13.0)), p.text);
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(x, row.bottom() - look.at(26.0)),
+                egui::vec2(galley.size().x + look.at(28.0), look.at(26.0)),
+            );
+            let tab = ui
+                .interact(
+                    rect,
+                    egui::Id::new(("angelica-tabs", self.plugin, self.window, &tabs.id, index)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if active {
+                let plate = rect.with_max_y(rect.bottom() + 1.0);
+                let corner = egui::CornerRadius {
+                    nw: 4,
+                    ne: 4,
+                    sw: 0,
+                    se: 0,
+                };
+                painter.rect_filled(plate, corner, p.window);
+                painter.rect_filled(plate, corner, p.chosen);
+                painter.add(egui::Shape::line(
+                    vec![
+                        plate.left_bottom(),
+                        plate.left_top(),
+                        plate.right_top(),
+                        plate.right_bottom(),
+                    ],
+                    egui::Stroke::new(1.0, p.border),
+                ));
+            }
+            let color = if active || tab.hovered() {
+                p.text
+            } else {
+                p.secondary
+            };
+            painter.galley_with_override_text_color(
+                rect.center() - galley.size() / 2.0,
+                galley,
+                color,
+            );
+            if tab.clicked() && !active {
+                self.host.queue_event(
+                    self.plugin,
+                    Event::Chosen(Chosen {
+                        window: self.window.into(),
+                        id: tabs.id.clone(),
+                        index,
+                    }),
+                );
+            }
+            x = rect.right() + look.at(4.0);
+        }
         response
     }
 
@@ -448,15 +893,24 @@ impl Drawer<'_> {
         if !focused && *text != input.value {
             text.clone_from(&input.value);
         }
+        let look = self.look;
+        let label = (!input.label.is_empty()).then(|| {
+            egui::RichText::new(&input.label)
+                .font(theme::sans(look.at(13.5)))
+                .color(look.p.text)
+        });
         ui.horizontal(|ui| {
-            if !input.label.is_empty() {
-                ui.label(&input.label);
+            if let Some(label) = label {
+                ui.label(label);
             }
-            let response = ui.add(
-                egui::TextEdit::singleline(text)
-                    .id(editor_id)
-                    .hint_text(&input.hint),
+            let (field, _) = ui.allocate_exact_size(
+                egui::vec2(
+                    ui.available_width().clamp(look.at(120.0), look.at(320.0)),
+                    look.at(26.0),
+                ),
+                egui::Sense::hover(),
             );
+            let response = menu::text_field(ui, &look, field, text, &input.hint, editor_id, None);
             if response.changed() {
                 self.host.queue_event(
                     self.plugin,
@@ -476,33 +930,47 @@ impl Drawer<'_> {
         let selected = choice
             .selected
             .and_then(|index| choice.options.get(index as usize));
-        ui.horizontal(|ui| {
-            if !choice.label.is_empty() {
-                ui.label(&choice.label);
-            }
-            egui::ComboBox::from_id_salt(("angelica-choice", self.plugin, self.window, &choice.id))
-                .selected_text(selected.map_or("", String::as_str))
-                .show_ui(ui, |ui| {
+        let look = self.look;
+        let mut picked = None;
+        let response = ui
+            .horizontal(|ui| {
+                if !choice.label.is_empty() {
+                    ui.label(self.rich(&choice.label, look.p.text));
+                }
+                let response = theme::value(ui, selected.map_or("—", String::as_str), look.k);
+                egui::Popup::menu(&response).show(|ui| {
                     for (index, option) in choice.options.iter().enumerate() {
-                        let index = u32::try_from(index).unwrap_or(u32::MAX);
-                        if ui
-                            .selectable_label(choice.selected == Some(index), option)
-                            .clicked()
-                        {
-                            self.host.queue_event(
-                                self.plugin,
-                                Event::Chosen(Chosen {
-                                    window: self.window.into(),
-                                    id: choice.id.clone(),
-                                    index,
-                                }),
-                            );
+                        if menu::popup_item(ui, &look, None, option, look.p.text) {
+                            picked = u32::try_from(index).ok();
                         }
                     }
-                })
-                .response
-        })
-        .inner
+                });
+                response
+            })
+            .inner;
+        if let Some(index) = picked
+            && choice.selected != Some(index)
+        {
+            self.host.queue_event(
+                self.plugin,
+                Event::Chosen(Chosen {
+                    window: self.window.into(),
+                    id: choice.id.clone(),
+                    index,
+                }),
+            );
+        }
+        response
+    }
+}
+
+/// The look of an action of `kind`.
+fn word_of(kind: ActionKind) -> Word {
+    match kind {
+        ActionKind::Normal => Word::Action,
+        ActionKind::Main => Word::Main,
+        ActionKind::Quiet => Word::Secondary,
+        ActionKind::Danger => Word::Danger,
     }
 }
 

@@ -162,6 +162,15 @@ impl Input {
                 });
             }
             WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP => {
+                // Keys reach Angelica's windows only while the player types
+                // in a text field, and `Esc` while the menu is open: a key
+                // meant for the game must not move the focus between
+                // Angelica's controls.
+                let typing = self.keyboard.load(Ordering::Acquire);
+                let closing = wparam == 27 && self.menu.load(Ordering::Acquire);
+                if !typing && !closing {
+                    return false;
+                }
                 if message == WM_KEYDOWN
                     && modifiers.ctrl
                     && !modifiers.alt
@@ -180,6 +189,9 @@ impl Input {
                 }
             }
             WM_CHAR => {
+                if !self.keyboard.load(Ordering::Acquire) {
+                    return wparam == 27 && self.menu.load(Ordering::Acquire);
+                }
                 if let Some(character) = u32::try_from(wparam)
                     .ok()
                     .and_then(char::from_u32)
@@ -204,16 +216,27 @@ impl Input {
             input.events.clear();
             self.release();
         }
+        self.consumes(message, wparam)
+    }
+
+    /// Whether the game does not receive a message Angelica took.
+    fn consumes(&self, message: u32, wparam: usize) -> bool {
         match message {
             WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
             | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
                 self.mouse.load(Ordering::Acquire)
             }
-            WM_KEYDOWN | WM_KEYUP | WM_CHAR => self.keyboard.load(Ordering::Acquire),
+            // `Esc` closes the open menu, so the game does not receive it.
+            WM_KEYDOWN | WM_CHAR => {
+                self.keyboard.load(Ordering::Acquire)
+                    || (wparam == 27 && self.menu.load(Ordering::Acquire))
+            }
             // The open menu leaves system keys such as Alt+F4 to the game.
             WM_SYSKEYDOWN | WM_SYSKEYUP => {
                 self.keyboard.load(Ordering::Acquire) && !self.menu.load(Ordering::Acquire)
             }
+            // The game always learns that a key was released, so a key it
+            // saw go down never stays down for it.
             _ => false,
         }
     }

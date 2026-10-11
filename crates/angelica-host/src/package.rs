@@ -205,9 +205,14 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
                 .ok_or("the package has no angelica.toml")?,
         )
         .map_err(|e| e.to_string())?;
+        let origin = if files.contains_key("development") {
+            Origin::Development
+        } else {
+            Origin::Catalog
+        };
         (
             Manifest::parse(manifest).map_err(|e| e.to_string())?,
-            Origin::Catalog,
+            origin,
         )
     };
     let mut manifest = manifest;

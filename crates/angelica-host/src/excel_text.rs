@@ -219,6 +219,42 @@ impl ExcelText {
             .clone()
     }
 
+    /// The text the active tables put in place of `original` in a cell: of
+    /// the first table, by priority, that lists the sheet in this language,
+    /// has the cell, and whose guard matches the game's text. `column` is
+    /// the column's index among all of the sheet's columns.
+    #[must_use]
+    pub fn shown(
+        &self,
+        sheet: &str,
+        language: u8,
+        row: u32,
+        subrow: u16,
+        column: u16,
+        original: &[u8],
+    ) -> Option<Vec<u8>> {
+        let snapshot = self.current();
+        for entry in &snapshot.entries {
+            let table = entry.table.table();
+            if table.language() != ANY_LANGUAGE && language != 0 && table.language() != language {
+                continue;
+            }
+            let Some(listed) = table
+                .sheet_index(sheet)
+                .and_then(|index| table.sheet_by_index(index))
+            else {
+                continue;
+            };
+            let cells = listed.row(row, subrow);
+            if let Some(cell) = cells.iter().find(|cell| cell.column == column)
+                && angelica_text::guard(table.domain(), original) == cell.guard
+            {
+                return Some(cell.text.to_vec());
+            }
+        }
+        None
+    }
+
     /// The tables that apply to a sheet. Tables that list the sheet but do
     /// not match it record why.
     #[must_use]
@@ -539,6 +575,29 @@ mod tests {
                 .unwrap();
         }
         writer.finish().unwrap()
+    }
+
+    #[test]
+    fn the_shown_text_of_a_cell_is_the_first_matching_tables() {
+        let text = ExcelText::default();
+        text.activate("a", "high", 5, table("A", &[(7, 4, b"Other")]))
+            .unwrap();
+        text.activate("b", "low", 0, table("Зелье", &[(7, 4, b"Potion")]))
+            .unwrap();
+        // The table of higher priority guards another text: the next one has it.
+        assert_eq!(
+            text.shown("Item", 2, 7, 0, 4, b"Potion"),
+            Some("Зелье".as_bytes().to_vec())
+        );
+        assert_eq!(text.shown("Item", 2, 7, 0, 4, b"Changed"), None);
+        assert_eq!(text.shown("Item", 2, 7, 0, 1, b"Potion"), None);
+        assert_eq!(text.shown("Item", 2, 8, 0, 4, b"Potion"), None);
+        assert_eq!(
+            text.shown("Item", 3, 7, 0, 4, b"Potion"),
+            None,
+            "another language"
+        );
+        assert_eq!(text.shown("Action", 2, 7, 0, 4, b"Potion"), None);
     }
 
     #[test]

@@ -43,6 +43,13 @@ strings! {
     tab_installed: "Installed", "Установленные";
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
+    word_on: "On", "Вкл";
+    bar_back: "Back", "Назад";
+    bar_collapse: "Collapse", "Свернуть";
+    bar_expand: "Expand", "Развернуть";
+    bar_menu: "Menu", "Меню";
+    menu_check_updates: "Check for updates", "Проверить обновления";
+    word_off: "Off", "Выкл";
     esc_closes: "Esc closes", "Esc — закрыть";
     hint: "{key} opens Angelica", "{key} — открыть Angelica";
     nothing_yet: "No plugins yet", "Плагинов пока нет";
@@ -71,6 +78,7 @@ strings! {
     add: "+ Add", "+ Добавить";
     adding: "Adding…", "Добавляю…";
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
+    source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
     version: "version {version}", "версия {version}";
@@ -89,6 +97,8 @@ strings! {
     retry: "Try again", "Попробовать снова";
     keep_off: "Keep it off", "Оставить выключенным";
     open_folder: "Open folder", "Открыть папку";
+    copy_report: "Copy report", "Скопировать отчёт";
+    report_copied: "Report copied", "Отчёт скопирован";
     remove: "Remove…", "Удалить…";
     remove_title: "Removing", "Удаление";
     remove_keep: "Remove, keep its data", "Удалить, данные оставить";

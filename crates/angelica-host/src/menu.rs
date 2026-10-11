@@ -7,13 +7,14 @@ use crate::{
     host::{Action, Event, Host, Plugin, Status},
     key::MenuKey,
     language::{Language, Settings, Strings, fill},
-    manifest::{Class, Origin, Permission},
+    manifest::{Class, Manifest, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
-    sandbox::bindings::angelica::plugin::runtime::Level,
+    sandbox::{LogLine, bindings::angelica::plugin::runtime::Level},
     theme::{self, Icon, Palette, Size, Theme, Word, medium, mono, sans, strong, wordmark},
 };
 use egui::{
-    Align2, Color32, CornerRadius, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
+    Align2, Color32, CornerRadius, Id, Pos2, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2,
+    vec2,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -157,6 +158,7 @@ enum RowAction {
     TurnOff,
     Review,
     Folder,
+    Report,
     Remove,
 }
 
@@ -194,6 +196,10 @@ pub struct Menu {
     dialog: Option<String>,
     /// The plugin the removal dialog asks about.
     removing: Option<String>,
+    /// A report waiting to go to the clipboard, and the plugin whose report
+    /// was copied last.
+    report: Option<String>,
+    copied: Option<String>,
     notes: Vec<Note>,
     seen: u64,
 }
@@ -216,6 +222,28 @@ impl View<'_> {
     fn at(&self, value: f32) -> f32 {
         value * self.k
     }
+
+    fn look(&self) -> Look {
+        Look {
+            k: self.k,
+            p: self.p,
+        }
+    }
+}
+
+/// The size and colors Angelica's windows are drawn with, also the windows
+/// of plugins.
+#[derive(Clone, Copy)]
+pub(crate) struct Look {
+    /// How many times their normal size the windows are drawn.
+    pub k: f32,
+    pub p: &'static Palette,
+}
+
+impl Look {
+    pub(crate) fn at(&self, value: f32) -> f32 {
+        value * self.k
+    }
 }
 
 impl Menu {
@@ -225,8 +253,10 @@ impl Menu {
     pub fn new(host: &Host, system: Language) -> Self {
         let settings_path = Settings::path(host.state_directory());
         let settings = Settings::load(&settings_path);
+        let language = settings.language.unwrap_or(system);
+        Self::tell_plugins(host, language);
         Self {
-            language: settings.language.unwrap_or(system),
+            language,
             theme: settings.theme.unwrap_or_default(),
             applied: None,
             settings,
@@ -241,9 +271,24 @@ impl Menu {
             selected: None,
             dialog: None,
             removing: None,
+            report: None,
+            copied: None,
             notes: Vec::new(),
             seen: 0,
         }
+    }
+
+    /// The look of this frame's windows and the interface strings.
+    pub(crate) fn look(&self, context: &egui::Context) -> (Look, &'static Strings) {
+        let look = Look {
+            k: self
+                .settings
+                .size
+                .unwrap_or_default()
+                .scale(context.content_rect().height()),
+            p: self.theme.palette(),
+        };
+        (look, self.strings())
     }
 
     fn strings(&self) -> &'static Strings {
@@ -256,7 +301,16 @@ impl Menu {
         }
     }
 
+    /// Plugins read the interface language from the host.
+    fn tell_plugins(host: &Host, language: Language) {
+        host.services().russian.store(
+            language == Language::Russian,
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+
     fn set_language(&mut self, host: &Host, language: Language) {
+        Self::tell_plugins(host, language);
         self.language = language;
         self.settings.language = Some(language);
         self.save(host);
@@ -361,7 +415,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, None, self.strings().close) {
+                if self.menu_bar(ui, view) {
                     keep = false;
                 }
                 self.draw_tabs(ui, view);
@@ -384,6 +438,58 @@ impl Menu {
             self.draw_removal(context, view);
         }
         keep
+    }
+
+    /// The menu's title bar: the word `angelica`, how many plugins wait and
+    /// run, and a menu of what applies to all of them. Returns whether the
+    /// player closed the menu.
+    fn menu_bar(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
+        let s = self.strings();
+        let waiting = view
+            .statuses
+            .iter()
+            .any(|status| Group::of(status) == Group::Attention);
+        let pulse = self.pulse(view.statuses);
+        let mark = if waiting {
+            Mark::Attention
+        } else if view.statuses.contains(&Status::Running) {
+            Mark::Running
+        } else {
+            Mark::None
+        };
+        let pressed = bar(
+            ui,
+            &view.look(),
+            &Bar {
+                wordmark: true,
+                title: "",
+                path: &[],
+                status: Some((&pulse, mark)),
+                collapsed: None,
+                menu: true,
+                strings: s,
+            },
+        );
+        if let Some(button) = &pressed.menu {
+            let installer = view.host.plugin_installer();
+            egui::Popup::menu(button).show(|ui| {
+                if let Some(installer) = installer
+                    && !installer.checking()
+                    && menu_item(ui, view, None, s.menu_check_updates, view.p.text)
+                {
+                    installer.check_updates();
+                }
+                if menu_item(ui, view, None, s.tab_settings, view.p.text) {
+                    self.tab = Tab::Settings;
+                    self.section = Section::General;
+                }
+                if menu_item(ui, view, None, s.section_developers, view.p.text) {
+                    self.tab = Tab::Settings;
+                    self.section = Section::Developers;
+                }
+            });
+        }
+        pressed.close
     }
 
     fn draw_tabs(&mut self, ui: &mut Ui, view: &View<'_>) {
@@ -619,19 +725,32 @@ impl Menu {
             pos2(columns.tile, rect.center().y),
             vec2(view.at(24.0), view.at(24.0)),
         );
-        theme::tile(&painter, tile, &plugin.manifest.plugin.name, off, p);
+        let development = plugin.manifest.origin == Origin::Development;
+        plugin_tile(&painter, tile, plugin, off, p);
+        let token = if development { view.at(40.0) } else { 0.0 };
         let name = elided(
             &painter,
             &plugin.manifest.plugin.name,
             sans(view.at(13.5)),
             if off { p.muted } else { p.text },
-            columns.permissions - view.at(12.0) - columns.name,
+            columns.permissions - view.at(12.0) - columns.name - token,
         );
+        let name_width = name.size().x;
         painter.galley(
             pos2(columns.name, rect.center().y - name.size().y / 2.0),
             name,
             p.text,
         );
+        if development {
+            theme::development_token(
+                &painter,
+                columns.name + name_width + view.at(8.0),
+                rect.center().y,
+                view.k,
+                off,
+                p,
+            );
+        }
         let (mut acted, mut opened) = (false, false);
         if pointed && !chosen {
             (acted, opened) = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
@@ -767,9 +886,20 @@ impl Menu {
                 self.dialog = Some(id.to_owned());
             }
             RowAction::Folder => view.host.queue(Action::OpenFolder(id.to_owned())),
+            RowAction::Report => {
+                self.report = Some(report(view, plugin));
+                self.copied = Some(id.to_owned());
+            }
             RowAction::Remove => self.removing = Some(id.to_owned()),
         }
         false
+    }
+
+    /// Puts a report the player asked for on the clipboard.
+    fn copy_report(&mut self, ui: &Ui) {
+        if let Some(report) = self.report.take() {
+            ui.ctx().copy_text(report);
+        }
     }
 
     /// The chosen plugin's details under its row: what it does, what it may
@@ -840,6 +970,15 @@ impl Menu {
                     if *status != Status::AwaitingApproval {
                         actions.push((s.open_folder, RowAction::Folder));
                     }
+                    let copied = self.copied.as_deref() == Some(manifest.id());
+                    actions.push((
+                        if copied {
+                            s.report_copied
+                        } else {
+                            s.copy_report
+                        },
+                        RowAction::Report,
+                    ));
                     actions.push((s.remove, RowAction::Remove));
                     for (index, (text, row_action)) in actions.into_iter().enumerate() {
                         let kind = if row_action == RowAction::Remove {
@@ -855,7 +994,9 @@ impl Menu {
                     }
                 });
             });
-        action.is_some_and(|action| self.act(view, plugin, action))
+        let opened = action.is_some_and(|action| self.act(view, plugin, action));
+        self.copy_report(ui);
+        opened
     }
 
     /// The menu of a row's right click. Returns true when the player opened
@@ -870,7 +1011,7 @@ impl Menu {
             ui.add_space(view.at(6.0));
             let (tile, _) =
                 ui.allocate_exact_size(vec2(view.at(30.0), view.at(30.0)), Sense::hover());
-            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+            plugin_tile(ui.painter(), tile, plugin, false, p);
             ui.add_space(view.at(4.0));
             ui.vertical(|ui| {
                 ui.label(
@@ -924,6 +1065,10 @@ impl Menu {
                 view.host.queue(Action::OpenFolder(id.to_owned()));
             }
         }
+        if menu_item(ui, view, None, s.copy_report, p.text) {
+            self.act(view, plugin, RowAction::Report);
+            self.copy_report(ui);
+        }
         separate(ui);
         if menu_item(ui, view, None, s.remove, p.danger) {
             self.removing = Some(id.to_owned());
@@ -951,6 +1096,7 @@ impl Menu {
         let manifest = &plugin.manifest;
         match manifest.origin {
             Origin::Catalog => s.source_catalog.to_owned(),
+            Origin::Development => s.source_development.to_owned(),
             Origin::Author if manifest.plugin.authors.is_empty() => s.source_author.to_owned(),
             Origin::Author => fill(
                 s.source_authors,
@@ -994,7 +1140,15 @@ impl Menu {
                 row.bottom() - view.at(9.0),
             ),
         );
-        let response = text_field(ui, view, field, &mut self.link, s.link_hint, field_id, None);
+        let response = text_field(
+            ui,
+            &view.look(),
+            field,
+            &mut self.link,
+            s.link_hint,
+            field_id,
+            None,
+        );
         if response.changed() {
             self.link_invalid = false;
         }
@@ -1038,20 +1192,13 @@ impl Menu {
         }
     }
 
-    /// How many plugins wait and run, and how to close the menu.
+    /// How to close the menu.
     fn footer(&self, ui: &mut Ui, view: &View<'_>) {
         let p = view.p;
         let (row, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), view.at(28.0)), Sense::hover());
         let painter = ui.painter();
         painter.line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
-        painter.text(
-            pos2(row.left() + view.at(12.0), row.center().y),
-            Align2::LEFT_CENTER,
-            self.pulse(view.statuses),
-            sans(view.at(12.0)),
-            p.muted,
-        );
         painter.text(
             pos2(row.right() - view.at(12.0), row.center().y),
             Align2::RIGHT_CENTER,
@@ -1115,7 +1262,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, Some(heading), s.close) {
+                if title_bar(ui, &view.look(), heading, s) {
                     close = true;
                 }
                 egui::Frame::new()
@@ -1130,7 +1277,7 @@ impl Menu {
                                 vec2(view.at(40.0), view.at(40.0)),
                                 Sense::hover(),
                             );
-                            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+                            plugin_tile(ui.painter(), tile, plugin, false, p);
                             ui.add_space(view.at(12.0));
                             ui.vertical(|ui| {
                                 ui.label(
@@ -1588,7 +1735,7 @@ impl Menu {
             .show(context, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, view, Some(s.remove_title), s.close) {
+                if title_bar(ui, &view.look(), s.remove_title, s) {
                     close = true;
                 }
                 egui::Frame::new()
@@ -1601,7 +1748,7 @@ impl Menu {
                         plugin_heading(
                             ui,
                             view,
-                            &plugin.manifest.plugin.name,
+                            &plugin,
                             &fill(s.version, &[("version", &plugin.manifest.plugin.version)]),
                         );
                         ui.add(
@@ -1797,12 +1944,119 @@ impl Menu {
     }
 }
 
+/// What a player sends a plugin's author when something goes wrong: the
+/// plugin as Angelica sees it — the game, the map, its state, permissions,
+/// what the installer did, and the lines it logged last, which is how a
+/// plugin tells about its work. In English, for the author.
+fn report(view: &View<'_>, plugin: &Plugin) -> String {
+    let installer = view
+        .host
+        .plugin_installer()
+        .map(|installer| installer.messages())
+        .unwrap_or_default();
+    report_text(
+        &view.host.services().game.version(),
+        view.map_status,
+        &plugin.manifest,
+        &plugin.status(),
+        installer.iter().map(|(_, report)| report),
+        &plugin.log.lines(),
+    )
+}
+
+/// The text of [`report`].
+fn report_text<'a>(
+    game: &str,
+    map_status: &[String],
+    manifest: &Manifest,
+    status: &Status,
+    installer: impl Iterator<Item = &'a Report>,
+    lines: &[LogLine],
+) -> String {
+    use std::fmt::Write as _;
+    let id = manifest.id();
+    let mut out = String::new();
+    let _ = writeln!(out, "Angelica {}, game {game}", env!("CARGO_PKG_VERSION"));
+    for line in map_status {
+        let _ = writeln!(out, "{line}");
+    }
+    let origin = match manifest.origin {
+        Origin::Catalog => "from the Angelica catalog",
+        Origin::Author => "from its author",
+        Origin::Development => "in development",
+    };
+    let _ = writeln!(
+        out,
+        "\n{} ({id}) {}, {origin}",
+        manifest.plugin.name, manifest.plugin.version
+    );
+    let state = match status {
+        Status::Running => "running".to_owned(),
+        Status::Disabled => "off".to_owned(),
+        Status::AwaitingApproval => "awaiting approval".to_owned(),
+        Status::Faulted(reason) => format!("stopped: {reason}"),
+    };
+    let _ = writeln!(out, "State: {state}");
+    let permissions: Vec<&str> = manifest.permissions().iter().map(|p| p.name()).collect();
+    let _ = writeln!(
+        out,
+        "Permissions: {}",
+        if permissions.is_empty() {
+            "none".to_owned()
+        } else {
+            permissions.join(", ")
+        }
+    );
+    for report in installer {
+        let line = match report {
+            Report::Installed { plugin, version } if plugin == id => format!("installed {version}"),
+            Report::Updated { plugin, from, to } if plugin == id => {
+                format!("updated {from} to {to}")
+            }
+            Report::Compiled(plugin) if plugin == id => "compiled again".to_owned(),
+            Report::Failed(Failure::Update(plugin), reason) if plugin == id => {
+                format!("update failed: {reason}")
+            }
+            Report::Failed(Failure::Compile(plugin), reason) if plugin == id => {
+                format!("compiling failed: {reason}")
+            }
+            _ => continue,
+        };
+        let _ = writeln!(out, "Installer in this session: {line}");
+    }
+    let _ = writeln!(out, "\nLog, the last {} lines:", lines.len());
+    for line in lines {
+        let level = match line.level {
+            Level::Debug => "debug",
+            Level::Info => "info",
+            Level::Warning => "warning",
+            Level::Error => "error",
+        };
+        let _ = writeln!(out, "[{level}] {}", line.text);
+    }
+    out
+}
+
+/// A plugin's tile, striped while the plugin is in development.
+fn plugin_tile(painter: &egui::Painter, rect: Rect, plugin: &Plugin, faded: bool, p: &Palette) {
+    let development = plugin.manifest.origin == Origin::Development;
+    theme::tile(
+        painter,
+        rect,
+        &plugin.manifest.plugin.name,
+        faded,
+        development,
+        p,
+    );
+}
+
 /// A plugin at the top of a dialog: its tile, its name, and one line.
-fn plugin_heading(ui: &mut Ui, view: &View<'_>, name: &str, line: &str) {
+fn plugin_heading(ui: &mut Ui, view: &View<'_>, plugin: &Plugin, line: &str) {
     let p = view.p;
+    let name = &plugin.manifest.plugin.name;
     ui.horizontal(|ui| {
         let (tile, _) = ui.allocate_exact_size(vec2(view.at(40.0), view.at(40.0)), Sense::hover());
-        theme::tile(ui.painter(), tile, name, false, p);
+        plugin_tile(ui.painter(), tile, plugin, false, p);
         ui.add_space(view.at(12.0));
         ui.vertical(|ui| {
             ui.label(
@@ -1820,7 +2074,7 @@ fn plugin_heading(ui: &mut Ui, view: &View<'_>, name: &str, line: &str) {
 }
 
 /// The frame of Angelica's windows.
-fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
+pub(crate) fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(p.window)
         .stroke(Stroke::new(1.0, p.border))
@@ -1828,57 +2082,70 @@ fn window_frame(context: &egui::Context, p: &Palette) -> egui::Frame {
         .shadow(context.global_style().visuals.window_shadow)
 }
 
-/// The bar at the top of a window: the word `angelica`, an optional title,
-/// and the close button. Returns whether the player closed the window.
-fn title_bar(ui: &mut Ui, view: &View<'_>, title: Option<&str>, close: &str) -> bool {
-    let p = view.p;
-    let (bar, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), view.at(32.0)), Sense::hover());
-    let painter = ui.painter().clone();
-    painter.rect_filled(
-        bar,
-        CornerRadius {
-            nw: 6,
-            ne: 6,
-            sw: 0,
-            se: 0,
-        },
-        p.title,
-    );
-    painter.line_segment(
-        [bar.left_bottom(), bar.right_bottom()],
-        Stroke::new(1.0, p.line),
-    );
-    let word = painter.text(
-        pos2(bar.left() + view.at(12.0), bar.center().y),
-        Align2::LEFT_CENTER,
-        "angelica",
-        wordmark(view.at(13.0)),
-        p.secondary,
-    );
-    if let Some(title) = title {
-        painter.text(
-            pos2(word.right() + view.at(10.0), bar.center().y),
-            Align2::LEFT_CENTER,
+/// The mark before a title bar's status.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mark {
+    None,
+    Running,
+    Attention,
+}
+
+/// What a window's title bar shows. From the left: where the player is (the
+/// word `angelica` in the menu, the title elsewhere, and the path with a way
+/// back), what goes on (the status), and the window's controls.
+pub(crate) struct Bar<'a> {
+    /// The word `angelica` in place of a title: the menu only.
+    pub wordmark: bool,
+    pub title: &'a str,
+    pub path: &'a [String],
+    pub status: Option<(&'a str, Mark)>,
+    /// Whether the window can be collapsed to its bar, and is.
+    pub collapsed: Option<bool>,
+    pub menu: bool,
+    pub strings: &'a Strings,
+}
+
+impl<'a> Bar<'a> {
+    pub(crate) fn titled(title: &'a str, strings: &'a Strings) -> Self {
+        Self {
+            wordmark: false,
             title,
-            medium(view.at(13.0)),
-            p.text,
-        );
+            path: &[],
+            status: None,
+            collapsed: None,
+            menu: false,
+            strings,
+        }
     }
-    let button = Rect::from_center_size(
-        pos2(bar.right() - view.at(18.0), bar.center().y),
-        vec2(view.at(24.0), view.at(24.0)),
-    );
+}
+
+/// What the player pressed in a title bar.
+#[derive(Default)]
+pub(crate) struct Pressed {
+    pub close: bool,
+    /// Collapse or expand.
+    pub toggle: bool,
+    /// Go back to this many parts of the path.
+    pub navigate: Option<u32>,
+    /// The menu button, to open a menu under.
+    pub menu: Option<egui::Response>,
+}
+
+/// A small square button of a title bar.
+fn bar_button(ui: &mut Ui, view: &Look, center: Pos2, icon: Icon, hint: &str) -> egui::Response {
+    let p = view.p;
+    let button = Rect::from_center_size(center, vec2(view.at(24.0), view.at(24.0)));
     let response = ui
-        .interact(button, ui.id().with("angelica-close"), Sense::click())
+        .interact(button, ui.id().with(("angelica-bar", hint)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(close);
+        .on_hover_text(hint);
     if response.hovered() {
-        painter.rect_filled(button, CornerRadius::same(4), p.hover);
+        ui.painter()
+            .rect_filled(button, CornerRadius::same(4), p.hover);
     }
     theme::icon(
-        &painter,
-        Icon::Close,
+        ui.painter(),
+        icon,
         Rect::from_center_size(button.center(), vec2(view.at(11.0), view.at(11.0))),
         if response.hovered() {
             p.text
@@ -1886,7 +2153,185 @@ fn title_bar(ui: &mut Ui, view: &View<'_>, title: Option<&str>, close: &str) -> 
             p.secondary
         },
     );
-    response.clicked()
+    response
+}
+
+/// The title and the path with a way back, from `x`. Returns where they end.
+fn bar_path(
+    ui: &mut Ui,
+    view: &Look,
+    bar: &Bar<'_>,
+    mut x: f32,
+    controls: f32,
+    y: f32,
+    pressed: &mut Pressed,
+) -> f32 {
+    let p = view.p;
+    let s = bar.strings;
+    let painter = ui.painter().clone();
+    let collapsed = bar.collapsed == Some(true);
+    let deep = !bar.path.is_empty() && !collapsed;
+    if deep {
+        let back = bar_button(ui, view, pos2(x + view.at(4.0), y), Icon::Back, s.bar_back);
+        if back.clicked() {
+            pressed.navigate = u32::try_from(bar.path.len() - 1).ok();
+        }
+        x += view.at(20.0);
+    }
+    let parts = std::iter::once(bar.title)
+        .chain(bar.path.iter().map(String::as_str).filter(|_| !collapsed));
+    let last = if collapsed { 0 } else { bar.path.len() };
+    // The path gives way to the status: it keeps at most this much.
+    let limit = (controls - x) * if bar.status.is_some() { 0.6 } else { 1.0 };
+    let end = x + limit - view.at(8.0);
+    for (index, part) in parts.enumerate() {
+        if index > 0 {
+            let mark = painter.text(
+                pos2(x + view.at(6.0), y),
+                Align2::LEFT_CENTER,
+                "›",
+                sans(view.at(13.0)),
+                p.muted,
+            );
+            x = mark.right() + view.at(6.0);
+        }
+        let current = index == last;
+        let font = if current {
+            medium(view.at(13.0))
+        } else {
+            sans(view.at(13.0))
+        };
+        let galley = elided(&painter, part, font, p.text, (end - x).max(view.at(24.0)));
+        let size = galley.size();
+        let at = pos2(x, y - size.y / 2.0);
+        let part_rect = Rect::from_min_size(at, size);
+        let mut color = if current { p.text } else { p.secondary };
+        if !current {
+            let response = ui
+                .interact(
+                    part_rect.expand(view.at(3.0)),
+                    ui.id().with(("angelica-bar-part", index)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.hovered() {
+                color = p.text;
+            }
+            if response.clicked() {
+                pressed.navigate = u32::try_from(index).ok();
+            }
+        }
+        painter.galley_with_override_text_color(at, galley, color);
+        x += size.x;
+        if x >= end {
+            break;
+        }
+    }
+    x
+}
+
+/// The status and its mark, right before the controls.
+fn bar_status(ui: &mut Ui, view: &Look, text: &str, mark: Mark, x: f32, controls: f32, y: f32) {
+    let p = view.p;
+    let painter = ui.painter().clone();
+    let room = controls - view.at(10.0) - x - view.at(34.0);
+    if room > view.at(24.0) {
+        let color = if mark == Mark::Attention {
+            p.attention
+        } else {
+            p.secondary
+        };
+        let galley = elided(&painter, text, sans(view.at(12.5)), color, room);
+        let size = galley.size();
+        let at = pos2(controls - view.at(10.0) - size.x, y - size.y / 2.0);
+        let shown = Rect::from_min_size(at, size);
+        painter.galley_with_override_text_color(at, galley, color);
+        let center = pos2(at.x - view.at(12.0), y);
+        match mark {
+            Mark::Running => theme::running(&painter, center, view.k, p),
+            Mark::Attention => theme::attention(&painter, center, view.k * 0.8, p),
+            Mark::None => {}
+        }
+        ui.interact(shown, ui.id().with("angelica-bar-status"), Sense::hover())
+            .on_hover_text(text);
+    }
+}
+
+/// Draws a window's title bar and returns what the player pressed in it.
+pub(crate) fn bar(ui: &mut Ui, view: &Look, bar: &Bar<'_>) -> Pressed {
+    let p = view.p;
+    let s = bar.strings;
+    let mut pressed = Pressed::default();
+    let collapsed = bar.collapsed == Some(true);
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), view.at(32.0)), Sense::hover());
+    let painter = ui.painter().clone();
+    let below = if collapsed { 6 } else { 0 };
+    painter.rect_filled(
+        rect,
+        CornerRadius {
+            nw: 6,
+            ne: 6,
+            sw: below,
+            se: below,
+        },
+        p.title,
+    );
+    if !collapsed {
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            Stroke::new(1.0, p.line),
+        );
+    }
+    let y = rect.center().y;
+
+    // The controls, from the right edge.
+    let step = view.at(26.0);
+    let mut right = rect.right() - view.at(18.0);
+    if collapsed {
+        pressed.toggle = bar_button(ui, view, pos2(right, y), Icon::Expand, s.bar_expand).clicked();
+        right -= step;
+    } else {
+        pressed.close = bar_button(ui, view, pos2(right, y), Icon::Close, s.close).clicked();
+        right -= step;
+        if bar.menu {
+            pressed.menu = Some(bar_button(ui, view, pos2(right, y), Icon::More, s.bar_menu));
+            right -= step;
+        }
+        if bar.collapsed.is_some() {
+            pressed.toggle =
+                bar_button(ui, view, pos2(right, y), Icon::Collapse, s.bar_collapse).clicked();
+            right -= step;
+        }
+    }
+    let controls = right + step / 2.0;
+
+    // Where the player is, from the left edge.
+    let mut x = rect.left() + view.at(12.0);
+    if bar.wordmark {
+        let word = painter.text(
+            pos2(x, y),
+            Align2::LEFT_CENTER,
+            "angelica",
+            wordmark(view.at(13.0)),
+            p.secondary,
+        );
+        x = word.right();
+    } else {
+        x = bar_path(ui, view, bar, x, controls, y, &mut pressed);
+    }
+
+    // What goes on, before the controls.
+    if let Some((text, mark)) = bar.status {
+        bar_status(ui, view, text, mark, x, controls, y);
+    }
+    pressed
+}
+
+/// The bar of a dialog: its title and the close button. Returns whether
+/// the player closed the window.
+pub(crate) fn title_bar(ui: &mut Ui, view: &Look, title: &str, strings: &Strings) -> bool {
+    bar(ui, view, &Bar::titled(title, strings)).close
 }
 
 /// Where the columns of a row are: the tile's center, where the name and
@@ -2005,13 +2450,21 @@ fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
 
 /// A search field: a plain field with a thin border and a magnifier.
 fn search_field(ui: &mut Ui, view: &View<'_>, rect: Rect, text: &mut String, hint: &str, id: &str) {
-    text_field(ui, view, rect, text, hint, Id::new(id), Some(Icon::Search));
+    text_field(
+        ui,
+        &view.look(),
+        rect,
+        text,
+        hint,
+        Id::new(id),
+        Some(Icon::Search),
+    );
 }
 
 /// A plain text field with a thin border.
-fn text_field(
+pub(crate) fn text_field(
     ui: &mut Ui,
-    view: &View<'_>,
+    view: &Look,
     rect: Rect,
     text: &mut String,
     hint: &str,
@@ -2070,6 +2523,17 @@ fn text_field(
 /// A line of a menu: full width, highlighted under the pointer. Returns
 /// whether it was clicked; a click closes the menu.
 fn menu_item(ui: &mut Ui, view: &View<'_>, icon: Option<Icon>, text: &str, color: Color32) -> bool {
+    popup_item(ui, &view.look(), icon, text, color)
+}
+
+/// A line of a popup menu, also in a plugin's window.
+pub(crate) fn popup_item(
+    ui: &mut Ui,
+    view: &Look,
+    icon: Option<Icon>,
+    text: &str,
+    color: Color32,
+) -> bool {
     let p = view.p;
     let (rect, response) = ui.allocate_exact_size(
         vec2(
@@ -2290,7 +2754,7 @@ fn f32_of(value: usize) -> f32 {
 }
 
 /// A margin in whole points.
-fn num_u8(value: f32) -> i8 {
+pub(crate) fn num_u8(value: f32) -> i8 {
     num_traits::cast(value.round()).unwrap_or(i8::MAX)
 }
 
@@ -2360,6 +2824,46 @@ mod tests {
         );
         assert!(lines(&entries, "", Some(Class::OtherPlayers)).is_empty());
         assert_eq!(lines(&entries, "", None).len(), 3);
+    }
+
+    #[test]
+    fn a_report_tells_the_author_what_angelica_sees() {
+        let manifest = Manifest::parse(
+            "manifest = 1\n[plugin]\nid = \"timers\"\nname = \"Timers\"\nversion = \"1.2.0\"\napi = \"1.0\"\ndescription = \"Resets\"\n[permissions]\n\"chat.print\" = true\n",
+        )
+        .unwrap();
+        let installer = [
+            Report::Updated {
+                plugin: "timers".into(),
+                from: "1.1.0".into(),
+                to: "1.2.0".into(),
+            },
+            Report::Compiled("other".into()),
+        ];
+        let text = report_text(
+            "2026.09.15.0000.0000",
+            &["Game map: verified for this build".into()],
+            &manifest,
+            &Status::Faulted("a trap in tick".into()),
+            installer.iter(),
+            &[LogLine {
+                level: Level::Warning,
+                text: "the feed could not be read".into(),
+            }],
+        );
+        for expected in [
+            "game 2026.09.15.0000.0000",
+            "Game map: verified for this build",
+            "Timers (timers) 1.2.0, from the Angelica catalog",
+            "State: stopped: a trap in tick",
+            "Permissions: chat.print",
+            "Installer in this session: updated 1.1.0 to 1.2.0",
+            "Log, the last 1 lines:",
+            "[warning] the feed could not be read",
+        ] {
+            assert!(text.contains(expected), "{expected:?} in {text}");
+        }
+        assert!(!text.contains("compiled again"), "another plugin's report");
     }
 
     #[test]

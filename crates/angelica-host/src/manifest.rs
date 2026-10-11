@@ -207,6 +207,10 @@ pub enum Origin {
     /// Its author, outside the catalog: a plugin file the player installed,
     /// compiled and signed on the player's computer.
     Author,
+    /// In development: signed with the release key like the catalog, by
+    /// `angelica dev install`, which adds a `development` file to the
+    /// package. The menu marks it so a developer tells it from the rest.
+    Development,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -29,10 +29,74 @@ interface ui {
         tone: tone,
     }
 
+    /// How an action looks. Actions are words, not boxes.
+    enum action-kind {
+        /// The action color.
+        normal,
+        /// The main action of a window or a dialog: bold, with an arrow.
+        main,
+        /// A side action, in the secondary text color.
+        quiet,
+        /// What cannot be undone, in the danger color.
+        danger,
+    }
+
     record button {
         id: string,
         label: string,
         enabled: bool,
+        kind: action-kind,
+    }
+
+    /// A name and its value on one line, such as `Version` and `1.2`.
+    record fact {
+        name: string,
+        value: string,
+    }
+
+    /// The mark at the end of an entry.
+    enum mark {
+        none,
+        /// In use or running: a dot in the "on" color.
+        on,
+        /// Not in use: a hollow ring; the entry is drawn muted.
+        off,
+        /// Needs the player.
+        attention,
+    }
+
+    /// An action of an entry; pressing it arrives as `clicked` with its id.
+    record action {
+        id: string,
+        label: string,
+        kind: action-kind,
+        enabled: bool,
+    }
+
+    /// A row of a list: a tile with the first letter of its title, the
+    /// title, a note after it, a value at the right, and a mark. A click on
+    /// the row arrives as `clicked` with the entry's id; the plugin decides
+    /// what is chosen.
+    record entry {
+        id: string,
+        title: string,
+        /// A few words after the title.
+        note: string,
+        /// A short value before the mark, such as a version.
+        value: string,
+        mark: mark,
+        /// The chosen entry is highlighted and shows its `facts` and `more`
+        /// under the row.
+        chosen: bool,
+        /// From 0 to 1: a thin line in place of the note.
+        progress: option<f32>,
+        /// Up to 4 actions shown in the row under the pointer, in place
+        /// of the note and the value.
+        actions: list<action>,
+        /// Up to 16 facts under the chosen row.
+        facts: list<fact>,
+        /// Up to 8 actions under the facts.
+        more: list<action>,
     }
 
     record checkbox {
@@ -125,11 +189,28 @@ interface ui {
         end-table,
         tooltip(string),
         icon(icon),
+        fact(fact),
+        entry(entry),
+    }
+
+    /// One short line in a window's title bar about what the window is
+    /// for, such as what is in use or what waits for the player.
+    record status {
+        text: string,
+        /// `good` shows the mark of something running, `warning` and `bad`
+        /// the mark of something that needs the player.
+        tone: tone,
     }
 
     record window {
         id: string,
+        /// The window's name in its title bar; usually the plugin's name.
         title: string,
+        /// Where the player is below the window's top level, outermost
+        /// first, at most 4 parts. The title bar shows it after the title
+        /// with a way back; see `navigated`.
+        path: list<string>,
+        status: option<status>,
         widgets: list<widget>,
     }
 
@@ -146,8 +227,16 @@ interface ui {
         set(number-set),
         /// The player closed the window with its close button.
         closed(string),
+        /// The player went back in a window's path.
+        navigated(navigated),
         /// The player asked to open the plugin from the Angelica menu.
         open-requested,
+    }
+
+    record navigated {
+        window: string,
+        /// How many parts of the path stay; 0 is the window's top level.
+        depth: u32,
     }
 
     record widget-ref {

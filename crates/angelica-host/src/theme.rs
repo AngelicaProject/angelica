@@ -68,6 +68,9 @@ pub struct Palette {
     pub field: Color32,
     /// The tile behind a plugin's letter.
     pub tile: Color32,
+    /// The `dev` token of a plugin in development, and its text.
+    pub development: Color32,
+    pub on_development: Color32,
     pub text: Color32,
     pub secondary: Color32,
     pub muted: Color32,
@@ -99,6 +102,8 @@ pub const LIGHT: Palette = Palette {
     hover: rgba(0x78, 0x5a, 0x28, 15),
     field: rgba(255, 255, 255, 255),
     tile: rgba(0x78, 0x5a, 0x28, 36),
+    development: rgba(0xe4, 0xdf, 0xf3, 255),
+    on_development: rgba(0x4a, 0x3f, 0x7a, 255),
     text: rgba(0x24, 0x21, 0x1c, 255),
     secondary: rgba(0x24, 0x21, 0x1c, 153),
     muted: rgba(0x24, 0x21, 0x1c, 107),
@@ -123,6 +128,8 @@ pub const DARK: Palette = Palette {
     hover: rgba(255, 255, 255, 10),
     field: rgba(0, 0, 0, 51),
     tile: rgba(0xb4, 0xab, 0xd6, 41),
+    development: rgba(0xb4, 0xab, 0xd6, 51),
+    on_development: rgba(0xd6, 0xd0, 0xee, 255),
     text: rgba(0xdc, 0xdd, 0xe0, 255),
     secondary: rgba(0xa3, 0xa6, 0xad, 255),
     muted: rgba(0x80, 0x83, 0x8b, 255),
@@ -497,6 +504,11 @@ pub enum Icon {
     Search,
     Close,
     Chevron,
+    /// The controls of a title bar.
+    Back,
+    Collapse,
+    Expand,
+    More,
     /// The classes of permissions.
     Network,
     OtherPlayers,
@@ -523,6 +535,24 @@ pub fn icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
         Icon::Close => {
             painter.line_segment([at(-6.0, -6.0), at(6.0, 6.0)], stroke);
             painter.line_segment([at(6.0, -6.0), at(-6.0, 6.0)], stroke);
+        }
+        Icon::Back => {
+            painter.add(egui::Shape::line(
+                vec![at(3.0, -6.0), at(-3.0, 0.0), at(3.0, 6.0)],
+                stroke,
+            ));
+        }
+        Icon::Collapse => {
+            painter.line_segment([at(-6.0, 0.0), at(6.0, 0.0)], stroke);
+        }
+        Icon::Expand => {
+            painter.line_segment([at(-6.0, 0.0), at(6.0, 0.0)], stroke);
+            painter.line_segment([at(0.0, -6.0), at(0.0, 6.0)], stroke);
+        }
+        Icon::More => {
+            for x in [-7.0, 0.0, 7.0] {
+                painter.circle_filled(at(x, 0.0), 1.4 * r, color);
+            }
         }
         Icon::Chevron => {
             painter.add(egui::Shape::line(
@@ -629,10 +659,34 @@ pub fn off(painter: &egui::Painter, center: Pos2, k: f32, p: &Palette) {
     painter.circle_stroke(center, 3.0 * k, Stroke::new(1.0, p.muted));
 }
 
-/// A plugin's tile: a rounded square with the first letter of its name.
-pub fn tile(painter: &egui::Painter, rect: Rect, name: &str, faded: bool, p: &Palette) {
+/// A plugin's tile: a rounded square with the first letter of its name,
+/// with diagonal stripes for a plugin in development.
+pub fn tile(
+    painter: &egui::Painter,
+    rect: Rect,
+    name: &str,
+    faded: bool,
+    striped: bool,
+    p: &Palette,
+) {
     let opacity = if faded { 0.45 } else { 1.0 };
     painter.rect_filled(rect, CornerRadius::same(5), alpha(p.tile, opacity));
+    if striped {
+        let inside = painter.with_clip_rect(rect.shrink(1.0));
+        let step = rect.width() / 5.0;
+        let stroke = Stroke::new(step / 2.0, alpha(p.action, 0.13 * opacity));
+        let mut x = rect.left() - rect.height();
+        while x < rect.right() {
+            inside.line_segment(
+                [
+                    egui::pos2(x, rect.bottom()),
+                    egui::pos2(x + rect.height(), rect.top()),
+                ],
+                stroke,
+            );
+            x += step;
+        }
+    }
     painter.rect_stroke(
         rect,
         CornerRadius::same(5),
@@ -652,6 +706,28 @@ pub fn tile(painter: &egui::Painter, rect: Rect, name: &str, faded: bool, p: &Pa
         strong(rect.height() * 0.5),
         alpha(p.action, opacity),
     );
+}
+
+/// The `dev` token after the name of a plugin in development, its left
+/// edge at `left` and centered on `y`.
+pub fn development_token(
+    painter: &egui::Painter,
+    left: f32,
+    y: f32,
+    k: f32,
+    faded: bool,
+    p: &Palette,
+) {
+    let opacity = if faded { 0.45 } else { 1.0 };
+    let text = painter.layout_no_wrap(
+        "dev".to_owned(),
+        sans(11.0 * k),
+        alpha(p.on_development, opacity),
+    );
+    let size = egui::vec2(text.size().x + 12.0 * k, 17.0 * k);
+    let rect = Rect::from_min_size(egui::pos2(left, y - size.y / 2.0), size);
+    painter.rect_filled(rect, CornerRadius::same(4), alpha(p.development, opacity));
+    painter.galley(rect.center() - text.size() / 2.0, text, p.on_development);
 }
 
 #[cfg(test)]

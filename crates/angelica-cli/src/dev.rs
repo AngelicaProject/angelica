@@ -181,6 +181,8 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
             ("angelica.toml".to_owned(), manifest_text),
             ("plugin.wasm".to_owned(), wasm),
             ("plugin.cwasm".to_owned(), compiled),
+            // Marks the plugin as in development in the menu.
+            ("development".to_owned(), b"angelica dev install\n".to_vec()),
         ]);
         package(
             &args.installation.join("plugins").join(manifest.id()),

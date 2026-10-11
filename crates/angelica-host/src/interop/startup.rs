@@ -225,6 +225,7 @@ fn services(
         ui,
         game,
         starting: AtomicBool::new(false),
+        russian: AtomicBool::new(false),
     }))
 }
 
