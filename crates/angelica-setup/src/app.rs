@@ -1,21 +1,27 @@
-//! The installer's one window: it keeps its size from the first screen to
-//! the last, in Angelica's light look (`docs/architecture/ui.md`).
-use crate::{exit, games, install, payload, system, words::Words};
-use egui::{Color32, CornerRadius, FontFamily, FontId, RichText, Sense, Stroke, vec2};
+//! The installer's one window: the same tall shape on every screen, with
+//! Angelica's own title bar, in its light look (`docs/architecture/ui.md`).
+use crate::{exit, games, install, neighbors::Neighbors, payload, system, words::Words};
+use egui::{Color32, CornerRadius, FontFamily, FontId, Rect, RichText, Sense, Stroke, pos2, vec2};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex, PoisonError},
 };
 
-const SIZE: [f32; 2] = [480.0, 300.0];
+const SIZE: [f32; 2] = [380.0, 500.0];
+const BAR: f32 = 34.0;
+const CORNER: u8 = 10;
+const PADDING: f32 = 24.0;
 
 const WINDOW: Color32 = Color32::from_rgb(0xf6, 0xf3, 0xed);
+const BORDER: Color32 = Color32::from_rgb(0xdc, 0xd3, 0xc3);
 const TEXT: Color32 = Color32::from_rgb(0x24, 0x21, 0x1c);
 const SECONDARY: Color32 = Color32::from_rgb(0x6e, 0x67, 0x5c);
 const MUTED: Color32 = Color32::from_rgb(0x9b, 0x94, 0x88);
-const LINE: Color32 = Color32::from_rgb(0xe6, 0xdf, 0xd2);
+const LINE: Color32 = Color32::from_rgb(0xec, 0xe6, 0xdb);
 const TRACK: Color32 = Color32::from_rgb(0xe7, 0xdf, 0xd1);
 const ACTION: Color32 = Color32::from_rgb(0x7a, 0x5c, 0x2e);
+const GOOD: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x46);
+const ATTENTION: Color32 = Color32::from_rgb(0xb7, 0x6e, 0x00);
 const DANGER: Color32 = Color32::from_rgb(0xb2, 0x3a, 0x3a);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,8 +63,10 @@ pub fn run(mode: Mode) {
             .with_min_inner_size(SIZE)
             .with_max_inner_size(SIZE)
             .with_resizable(false)
-            .with_maximize_button(false)
+            .with_decorations(false)
+            .with_transparent(true)
             .with_icon(egui::IconData::default()),
+        centered: true,
         ..Default::default()
     };
     let games = if mode == Mode::Install {
@@ -134,14 +142,16 @@ fn medium(size: f32) -> FontId {
 
 /// A word that acts when clicked, like the menu's actions.
 fn word(ui: &mut egui::Ui, text: &str, color: Color32, strong: bool, enabled: bool) -> bool {
-    let font = if strong { medium(14.0) } else { sans(13.5) };
+    let font = if strong { medium(14.0) } else { sans(13.0) };
     let color = if enabled { color } else { MUTED };
     let response = ui.add(
-        egui::Label::new(RichText::new(text).font(font).color(color)).sense(if enabled {
-            Sense::click()
-        } else {
-            Sense::hover()
-        }),
+        egui::Label::new(RichText::new(text).font(font).color(color))
+            .selectable(false)
+            .sense(if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            }),
     );
     if enabled && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -149,25 +159,25 @@ fn word(ui: &mut egui::Ui, text: &str, color: Color32, strong: bool, enabled: bo
     enabled && response.clicked()
 }
 
-fn paragraph(ui: &mut egui::Ui, text: &str, color: Color32) {
-    ui.add(egui::Label::new(RichText::new(text).font(sans(13.0)).color(color)).wrap());
+fn text(ui: &mut egui::Ui, text: &str, color: Color32) {
+    ui.add(
+        egui::Label::new(RichText::new(text).font(sans(13.0)).color(color))
+            .selectable(false)
+            .wrap(),
+    );
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).font(medium(18.0)).color(TEXT));
-    ui.add_space(6.0);
+    ui.add(egui::Label::new(RichText::new(text).font(medium(19.0)).color(TEXT)).selectable(false));
+    ui.add_space(18.0);
 }
 
-/// A label and its value on one line, between thin rules.
-fn row(ui: &mut egui::Ui, label: &str, value: impl FnOnce(&mut egui::Ui)) {
-    let (rule, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(rule, CornerRadius::ZERO, LINE);
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(label).font(sans(13.0)).color(MUTED));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), value);
-    });
-    ui.add_space(8.0);
+/// A small label above its value, as in the menu's details.
+fn field(ui: &mut egui::Ui, label: &str, value: impl FnOnce(&mut egui::Ui)) {
+    ui.add(egui::Label::new(RichText::new(label).font(sans(11.5)).color(MUTED)).selectable(false));
+    ui.add_space(3.0);
+    value(ui);
+    ui.add_space(14.0);
 }
 
 fn progress(ui: &mut egui::Ui, fraction: f32) {
@@ -183,7 +193,7 @@ fn progress(ui: &mut egui::Ui, fraction: f32) {
 /// A key as a small token, like the menu's key.
 fn key(ui: &mut egui::Ui, text: &str) {
     let galley = ui.painter().layout_no_wrap(text.into(), sans(12.0), ACTION);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(10.0, 4.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(12.0, 6.0), Sense::hover());
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(4),
@@ -194,7 +204,8 @@ fn key(ui: &mut egui::Ui, text: &str) {
         .galley(rect.center() - galley.size() / 2.0, galley, ACTION);
 }
 
-/// The game folder in a few words: its launcher and the end of its path.
+/// The game folder in a few words: its launcher and the installation's
+/// folder name.
 fn short(game: &std::path::Path) -> String {
     let text = game.display().to_string();
     let launcher = if text.to_ascii_lowercase().contains("steam") {
@@ -206,10 +217,14 @@ fn short(game: &std::path::Path) -> String {
         .parent()
         .and_then(|parent| parent.file_name())
         .map_or_else(|| text.clone(), |name| name.to_string_lossy().into_owned());
-    format!("{launcher}…\\{parent}")
+    format!("{launcher}{parent}")
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let work = self
             .work
@@ -220,35 +235,38 @@ impl eframe::App for App {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        egui::Frame::new()
-            .fill(WINDOW)
-            .inner_margin(egui::Margin::symmetric(22, 18))
-            .show(ui, |ui| {
-                ui.set_min_size(ui.available_size());
-                ui.label(
-                    RichText::new("angelica")
-                        .font(FontId::new(13.0, FontFamily::Name("wordmark".into())))
-                        .color(MUTED),
-                );
-                ui.add_space(12.0);
-                match (self.mode, &work) {
-                    (
-                        _,
-                        Work::Busy {
-                            step,
-                            progress: fraction,
-                        },
-                    ) => self.busy(ui, step, *fraction),
-                    (_, Work::Failed(reason)) => {
-                        let reason = reason.clone();
-                        self.failed(ui, &reason);
-                    }
-                    (Mode::Install, Work::Done) => self.done(ui),
-                    (Mode::Uninstall, Work::Done) => self.removed(ui),
-                    (Mode::Install, Work::Idle) => self.start(ui),
-                    (Mode::Uninstall, Work::Idle) => self.ask_remove(ui),
-                }
-            });
+        let whole = ui.max_rect();
+        ui.painter()
+            .rect_filled(whole, CornerRadius::same(CORNER), WINDOW);
+        ui.painter().rect_stroke(
+            whole,
+            CornerRadius::same(CORNER),
+            Stroke::new(1.0, BORDER),
+            egui::StrokeKind::Inside,
+        );
+        self.title_bar(ui, whole);
+        let content = Rect::from_min_max(
+            pos2(whole.left() + PADDING, whole.top() + BAR + 20.0),
+            pos2(whole.right() - PADDING, whole.bottom() - PADDING + 4.0),
+        );
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(content));
+        match (self.mode, &work) {
+            (
+                _,
+                Work::Busy {
+                    step,
+                    progress: fraction,
+                },
+            ) => self.busy(&mut ui, step, *fraction),
+            (_, Work::Failed(reason)) => {
+                let reason = reason.clone();
+                self.failed(&mut ui, &reason);
+            }
+            (Mode::Install, Work::Done) => self.done(&mut ui),
+            (Mode::Uninstall, Work::Done) => self.removed(&mut ui),
+            (Mode::Install, Work::Idle) => self.start(&mut ui),
+            (Mode::Uninstall, Work::Idle) => self.ask_remove(&mut ui),
+        }
     }
 }
 
@@ -257,16 +275,82 @@ impl App {
         *self.work.lock().unwrap_or_else(PoisonError::into_inner) = work;
     }
 
-    /// The bottom of the window, with actions at the right.
-    fn bottom(ui: &mut egui::Ui, actions: impl FnOnce(&mut egui::Ui)) {
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+    /// Angelica's title bar: the word `angelica`, and minimize and close at
+    /// the right; dragging it moves the window.
+    fn title_bar(&self, ui: &mut egui::Ui, whole: Rect) {
+        let bar = Rect::from_min_size(whole.min, vec2(whole.width(), BAR));
+        let drag = ui.interact(bar, egui::Id::new("title-bar"), Sense::click_and_drag());
+        if drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        ui.painter().text(
+            pos2(bar.left() + 14.0, bar.center().y),
+            egui::Align2::LEFT_CENTER,
+            "angelica",
+            FontId::new(13.0, FontFamily::Name("wordmark".into())),
+            MUTED,
+        );
+        ui.painter().line_segment(
+            [
+                pos2(bar.left() + 1.0, bar.bottom()),
+                pos2(bar.right() - 1.0, bar.bottom()),
+            ],
+            Stroke::new(1.0, LINE),
+        );
+        let close =
+            Rect::from_center_size(pos2(bar.right() - 20.0, bar.center().y), vec2(28.0, 24.0));
+        let minimize = close.translate(vec2(-30.0, 0.0));
+        let minimize_hit = ui
+            .interact(minimize, egui::Id::new("minimize"), Sense::click())
+            .on_hover_text(self.words.minimize);
+        let close_hit = ui
+            .interact(close, egui::Id::new("close"), Sense::click())
+            .on_hover_text(self.words.close_window);
+        let pen = |hovered: bool| Stroke::new(1.3, if hovered { TEXT } else { MUTED });
+        let c = minimize.center();
+        ui.painter().line_segment(
+            [pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)],
+            pen(minimize_hit.hovered()),
+        );
+        let c = close.center();
+        for (from, to) in [((-4.5, -4.5), (4.5, 4.5)), ((-4.5, 4.5), (4.5, -4.5))] {
+            ui.painter().line_segment(
+                [
+                    pos2(c.x + from.0, c.y + from.1),
+                    pos2(c.x + to.0, c.y + to.1),
+                ],
+                pen(close_hit.hovered()),
+            );
+        }
+        if minimize_hit.clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        if close_hit.clicked() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// The bottom line: a muted note at the left and actions at the right.
+    fn bottom(ui: &mut egui::Ui, note: &str, actions: impl FnOnce(&mut egui::Ui)) {
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.horizontal(|ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(note).font(sans(11.5)).color(MUTED))
+                        .selectable(false),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 18.0;
                     actions(ui);
                 });
             });
         });
+    }
+
+    fn version() -> String {
+        payload::PAYLOAD.map_or_else(String::new, |payload| {
+            format!("Angelica {}", payload.version)
+        })
     }
 
     fn game(&self) -> Option<PathBuf> {
@@ -281,30 +365,29 @@ impl App {
         let w = self.words;
         if payload::PAYLOAD.is_none() || payload::release_key().is_none() {
             heading(ui, w.development);
-            paragraph(ui, w.development_text, SECONDARY);
-            Self::bottom(ui, |ui| {
-                if word(ui, w.close, ACTION, false, true) {
+            text(ui, w.development_text, SECONDARY);
+            Self::bottom(ui, "", |ui| {
+                if word(ui, w.close, ACTION, true, true) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
             return;
         }
-        heading(ui, w.install_heading);
-        paragraph(ui, w.install_text, SECONDARY);
-        ui.add_space(14.0);
+        heading(ui, w.installation);
         let (games, chosen, typing) = (self.games.clone(), self.chosen, self.typing);
         let mut pick = None;
         let mut switch = false;
-        row(ui, w.game, |ui| {
+        field(ui, w.game, |ui| {
             if typing {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.typed)
                         .hint_text(w.game_hint)
-                        .desired_width(260.0)
+                        .desired_width(f32::INFINITY)
                         .font(sans(12.5)),
                 );
             } else if games.len() > 1 {
                 egui::ComboBox::from_id_salt("game")
+                    .width(ui.available_width())
                     .selected_text(RichText::new(short(&games[chosen])).color(ACTION))
                     .show_ui(ui, |ui| {
                         for (index, game) in games.iter().enumerate() {
@@ -317,30 +400,63 @@ impl App {
                         }
                     });
             } else {
-                ui.label(
-                    RichText::new(short(&games[chosen]))
-                        .font(sans(13.0))
-                        .color(TEXT),
-                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(short(&games[chosen]))
+                            .font(sans(13.5))
+                            .color(TEXT),
+                    )
+                    .selectable(false),
+                )
+                .on_hover_text(games[chosen].display().to_string());
+            }
+            if !typing {
+                ui.add_space(2.0);
+                switch = word(ui, w.game_other, ACTION, false, true);
             }
         });
-        if !typing {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                switch = word(ui, w.game_other, SECONDARY, false, true);
-            });
-        }
         if let Some(index) = pick {
             self.chosen = index;
         }
         if switch {
             self.typing = true;
         }
-        if self.typing && !self.typed.is_empty() && self.game().is_none() {
-            ui.label(RichText::new(w.game_none).font(sans(12.0)).color(MUTED));
-        }
         let game = self.game();
-        Self::bottom(ui, |ui| {
-            if word(ui, w.install, ACTION, true, game.is_some())
+        if self.typing && !self.typed.is_empty() && game.is_none() {
+            text(ui, w.game_none, ATTENTION);
+            ui.add_space(10.0);
+        }
+        let neighbors = game.as_deref().map(|game| {
+            Neighbors::find(
+                game,
+                std::env::var_os("APPDATA")
+                    .as_deref()
+                    .map(std::path::Path::new),
+            )
+        });
+        let compatible = neighbors
+            .as_ref()
+            .map(Neighbors::compatible)
+            .unwrap_or_default();
+        if !compatible.is_empty() {
+            field(ui, w.beside, |ui| {
+                text(
+                    ui,
+                    &w.beside_value.replace("{names}", &compatible.join(", ")),
+                    GOOD,
+                );
+            });
+        }
+        field(ui, w.menu_key, |ui| key(ui, "Insert"));
+        let conflict = neighbors.as_ref().is_some_and(|found| found.other_proxy);
+        if conflict {
+            text(ui, w.conflict, DANGER);
+        } else if game.as_deref().is_some_and(|game| !install::writable(game)) {
+            text(ui, w.admin_note, SECONDARY);
+        }
+        let ready = game.is_some() && !conflict;
+        Self::bottom(ui, &Self::version(), |ui| {
+            if word(ui, w.install, ACTION, true, ready)
                 && let Some(game) = game
             {
                 self.begin_install(game);
@@ -353,39 +469,30 @@ impl App {
         heading(
             ui,
             if self.mode == Mode::Install {
-                w.installing
+                w.installation
             } else {
-                w.removing
+                w.removal
             },
         );
-        ui.add_space(6.0);
         progress(ui, fraction);
-        ui.add_space(10.0);
-        paragraph(ui, step, SECONDARY);
+        ui.add_space(12.0);
+        text(ui, step, SECONDARY);
+        Self::bottom(ui, &Self::version(), |_| {});
     }
 
     fn done(&self, ui: &mut egui::Ui) {
         let w = self.words;
         heading(ui, w.done);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            ui.label(
-                RichText::new(w.done_text_before)
-                    .font(sans(13.0))
-                    .color(SECONDARY),
-            );
-            key(ui, "Insert");
-            ui.label(
-                RichText::new(w.done_text_after)
-                    .font(sans(13.0))
-                    .color(SECONDARY),
-            );
+        field(ui, w.menu_key, |ui| key(ui, "Insert"));
+        field(ui, w.updates, |ui| text(ui, w.updates_value, TEXT));
+        field(ui, w.folder, |ui| {
+            if word(ui, w.open, ACTION, false, true) {
+                let _ = std::process::Command::new("explorer")
+                    .arg(install::installation_dir())
+                    .spawn();
+            }
         });
-        ui.add_space(14.0);
-        row(ui, w.updates, |ui| {
-            ui.label(RichText::new(w.updates_value).font(sans(13.0)).color(TEXT));
-        });
-        Self::bottom(ui, |ui| {
+        Self::bottom(ui, &Self::version(), |ui| {
             if word(ui, w.close, ACTION, true, true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -394,9 +501,16 @@ impl App {
 
     fn failed(&mut self, ui: &mut egui::Ui, reason: &str) {
         let w = self.words;
-        heading(ui, w.failed);
-        paragraph(ui, reason, TEXT);
-        Self::bottom(ui, |ui| {
+        heading(
+            ui,
+            if self.mode == Mode::Install {
+                w.failed
+            } else {
+                w.removal
+            },
+        );
+        text(ui, reason, TEXT);
+        Self::bottom(ui, &Self::version(), |ui| {
             if word(ui, w.retry, ACTION, true, true) {
                 self.set(Work::Idle);
             }
@@ -408,36 +522,37 @@ impl App {
 
     fn ask_remove(&mut self, ui: &mut egui::Ui) {
         let w = self.words;
-        heading(ui, w.remove_heading);
-        paragraph(ui, w.remove_text, SECONDARY);
-        ui.add_space(14.0);
+        heading(ui, w.removal);
+        field(ui, w.game_file, |ui| text(ui, w.game_file_value, TEXT));
         let keep = self.keep;
         let mut chosen = None;
-        row(ui, w.player_data, |ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
-            // Right to left: the second word first.
-            for (value, text) in [(false, w.delete), (true, w.keep)] {
-                let font = if keep == value {
-                    medium(13.5)
-                } else {
-                    sans(13.5)
-                };
-                let color = if keep == value { TEXT } else { MUTED };
-                if ui
-                    .add(
-                        egui::Label::new(RichText::new(text).font(font).color(color))
-                            .sense(Sense::click()),
-                    )
-                    .clicked()
-                {
-                    chosen = Some(value);
+        field(ui, w.player_data, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                for (value, label) in [(true, w.keep), (false, w.delete)] {
+                    let font = if keep == value {
+                        medium(13.5)
+                    } else {
+                        sans(13.5)
+                    };
+                    let color = if keep == value { TEXT } else { MUTED };
+                    if ui
+                        .add(
+                            egui::Label::new(RichText::new(label).font(font).color(color))
+                                .selectable(false)
+                                .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some(value);
+                    }
                 }
-            }
+            });
         });
         if let Some(value) = chosen {
             self.keep = value;
         }
-        Self::bottom(ui, |ui| {
+        Self::bottom(ui, "", |ui| {
             if word(ui, w.remove, DANGER, true, true) {
                 self.begin_uninstall();
             }
@@ -450,8 +565,8 @@ impl App {
     fn removed(&self, ui: &mut egui::Ui) {
         let w = self.words;
         heading(ui, w.removed);
-        paragraph(ui, w.removed_text, SECONDARY);
-        Self::bottom(ui, |ui| {
+        field(ui, w.game, |ui| text(ui, w.removed_value, TEXT));
+        Self::bottom(ui, "", |ui| {
             if word(ui, w.close, ACTION, true, true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -483,8 +598,8 @@ impl App {
         let words = self.words;
         let keep = self.keep;
         self.set(Work::Busy {
-            step: words.step_game,
-            progress: 0.3,
+            step: words.step_remove,
+            progress: 0.4,
         });
         std::thread::spawn(move || {
             let result = uninstall_all(keep, words);

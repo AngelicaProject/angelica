@@ -7,6 +7,7 @@
 mod app;
 mod games;
 mod install;
+mod neighbors;
 mod payload;
 #[allow(unsafe_code)]
 mod system;
