@@ -234,6 +234,89 @@ pub fn hex(bytes: &[u8]) -> String {
     })
 }
 
+/// The start of a pack: several files in one release asset (`map.pack`).
+const PACK_MAGIC: &[u8] = b"angelica-pack 1
+";
+/// The most files a pack holds.
+const PACK_FILES: usize = 8192;
+
+/// Puts `files` (relative paths with `/`) into one pack: the magic, then
+/// for each file its path length (`u32`, little-endian), path, size (`u64`),
+/// and bytes.
+///
+/// # Errors
+/// A path [`pack_path`] refuses.
+pub fn pack(files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, Error> {
+    let mut out = PACK_MAGIC.to_vec();
+    for (path, bytes) in files {
+        if !pack_path(path) {
+            return Err(Error::Malformed(format!("pack path {path}")));
+        }
+        let length = u32::try_from(path.len()).map_err(|_| Error::Malformed(path.clone()))?;
+        out.extend_from_slice(&length.to_le_bytes());
+        out.extend_from_slice(path.as_bytes());
+        out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
+    Ok(out)
+}
+
+/// The files of a pack, every path checked before a caller writes it.
+///
+/// # Errors
+/// A pack that is truncated, has another magic, a refused or repeated path,
+/// or more than 8192 files or [`MAX_FILE`] bytes.
+pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, Error> {
+    let fail = |what: &str| Error::Malformed(format!("pack: {what}"));
+    let mut rest = bytes
+        .strip_prefix(PACK_MAGIC)
+        .ok_or_else(|| fail("not a pack"))?;
+    let mut take = |count: usize| -> Result<&[u8], Error> {
+        if rest.len() < count {
+            return Err(fail("truncated"));
+        }
+        let (head, tail) = rest.split_at(count);
+        rest = tail;
+        Ok(head)
+    };
+    let mut files = BTreeMap::new();
+    let mut total = 0u64;
+    while let Ok(length) = take(4) {
+        let length = u32::from_le_bytes(length.try_into().map_err(|_| fail("length"))?) as usize;
+        if length > 512 {
+            return Err(fail("path too long"));
+        }
+        let path = std::str::from_utf8(take(length)?)
+            .map_err(|_| fail("path is not UTF-8"))?
+            .to_owned();
+        if !pack_path(&path) {
+            return Err(Error::Malformed(format!("pack path {path}")));
+        }
+        let size = u64::from_le_bytes(take(8)?.try_into().map_err(|_| fail("size"))?);
+        total = total.saturating_add(size);
+        if total > MAX_FILE {
+            return Err(fail("larger than 256 MiB"));
+        }
+        let content = take(usize::try_from(size).map_err(|_| fail("size"))?)?.to_vec();
+        if files.insert(path.clone(), content).is_some() {
+            return Err(Error::Malformed(format!("pack path {path} twice")));
+        }
+        if files.len() > PACK_FILES {
+            return Err(fail("more than 8192 files"));
+        }
+    }
+    if !rest.is_empty() {
+        return Err(fail("truncated"));
+    }
+    Ok(files)
+}
+
+/// A relative path of plain names joined by `/`.
+#[must_use]
+pub fn pack_path(path: &str) -> bool {
+    !path.is_empty() && path.split('/').all(plain_name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,5 +450,28 @@ mod tests {
             ),
             "https://github.com/AngelicaProject/angelica/releases/download/nightly/channel.json"
         );
+    }
+
+    #[test]
+    fn a_pack_keeps_its_files_and_refuses_paths_that_leave_the_folder() {
+        let files = BTreeMap::from([
+            ("map.toml".to_owned(), b"format = 1".to_vec()),
+            ("entries/ui.toml".to_owned(), b"[x]".to_vec()),
+            ("files.json.sig".to_owned(), vec![0; 64]),
+        ]);
+        let packed = pack(&files).unwrap();
+        assert_eq!(unpack(&packed).unwrap(), files);
+        assert!(unpack(&packed[..packed.len() - 1]).is_err(), "truncated");
+        assert!(unpack(b"zip").is_err());
+        for bad in ["../x", "a//b", "/a", "a/../b", "C:x", ".git/config"] {
+            let files = BTreeMap::from([(bad.to_owned(), b"x".to_vec())]);
+            assert!(pack(&files).is_err(), "{bad}");
+            let mut forged = PACK_MAGIC.to_vec();
+            forged.extend_from_slice(&u32::try_from(bad.len()).unwrap().to_le_bytes());
+            forged.extend_from_slice(bad.as_bytes());
+            forged.extend_from_slice(&1u64.to_le_bytes());
+            forged.push(b'x');
+            assert!(unpack(&forged).is_err(), "{bad}");
+        }
     }
 }

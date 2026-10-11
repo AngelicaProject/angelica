@@ -148,30 +148,7 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
         return Err("--installer goes beside a --runtime".into());
     }
     if let Some(map) = &args.map {
-        let mut files = BTreeMap::new();
-        files.insert(
-            "map.toml".to_owned(),
-            std::fs::read(map.join("map.toml")).map_err(|e| e.to_string())?,
-        );
-        for folder in ["entries", "builds"] {
-            let mut names: Vec<_> = std::fs::read_dir(map.join(folder))
-                .map_err(|e| format!("{folder}: {e}"))?
-                .filter_map(Result::ok)
-                .map(|item| item.file_name().to_string_lossy().into_owned())
-                // The map reader takes exactly these names.
-                .filter(|name| Path::new(name).extension().is_some_and(|e| e == "toml"))
-                .collect();
-            names.sort();
-            for name in names {
-                files.insert(
-                    format!("{folder}/{name}"),
-                    std::fs::read(map.join(folder).join(&name)).map_err(|e| e.to_string())?,
-                );
-            }
-        }
-        for folder in ["sheets", "state", "windows"] {
-            add_folder(&map.join(folder), folder, &mut files)?;
-        }
+        let files = map_files(map)?;
         package(&args.installation.join("map"), &files, &key)?;
         report.insert("map_files".into(), files.len().into());
     }
@@ -207,6 +184,39 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
     }
     report.insert("plugins".into(), plugins.into());
     Ok(serde_json::Value::Object(report))
+}
+
+/// The files of the map in `map` that a map package holds, by their paths
+/// relative to the map.
+///
+/// # Errors
+/// A missing `map.toml`, `entries`, or `builds`, or an unreadable file.
+pub fn map_files(map: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    let mut files = BTreeMap::new();
+    files.insert(
+        "map.toml".to_owned(),
+        std::fs::read(map.join("map.toml")).map_err(|e| e.to_string())?,
+    );
+    for folder in ["entries", "builds"] {
+        let mut names: Vec<_> = std::fs::read_dir(map.join(folder))
+            .map_err(|e| format!("{folder}: {e}"))?
+            .filter_map(Result::ok)
+            .map(|item| item.file_name().to_string_lossy().into_owned())
+            // The map reader takes exactly these names.
+            .filter(|name| Path::new(name).extension().is_some_and(|e| e == "toml"))
+            .collect();
+        names.sort();
+        for name in names {
+            files.insert(
+                format!("{folder}/{name}"),
+                std::fs::read(map.join(folder).join(&name)).map_err(|e| e.to_string())?,
+            );
+        }
+    }
+    for folder in ["sheets", "state", "windows"] {
+        add_folder(&map.join(folder), folder, &mut files)?;
+    }
+    Ok(files)
 }
 
 /// Adds every `.toml` file under `folder`, by its path relative to the map,

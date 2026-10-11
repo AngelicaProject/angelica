@@ -15,6 +15,10 @@ use std::{
 
 /// Where Angelica's releases are published.
 pub const REPOSITORY: &str = "AngelicaProject/angelica";
+/// Where the game map's releases are published.
+pub const MAP_REPOSITORY: &str = "AngelicaProject/angelica-gamemap";
+/// How often the map is checked after the first check.
+pub const MAP_EVERY: Duration = Duration::from_hours(1);
 /// The files a release installs into its version folder; each comes with its
 /// release signature.
 pub const FILES: [&str; 2] = ["runtime.dll", "plugin-installer.exe"];
@@ -68,6 +72,7 @@ pub fn build_channel() -> Option<Channel> {
 #[derive(Default)]
 pub struct SelfUpdate {
     status: Mutex<Option<Status>>,
+    map: Mutex<Option<Status>>,
     requested: AtomicBool,
 }
 
@@ -83,6 +88,21 @@ impl SelfUpdate {
 
     pub fn set(&self, status: Status) {
         *self.status.lock().unwrap_or_else(PoisonError::into_inner) = Some(status);
+    }
+
+    /// What the last check of the game map found; `Ready` is a map installed
+    /// in this session.
+    #[must_use]
+    pub fn map_status(&self) -> Status {
+        self.map
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .unwrap_or(Status::NotChecked)
+    }
+
+    pub fn set_map(&self, status: Status) {
+        *self.map.lock().unwrap_or_else(PoisonError::into_inner) = Some(status);
     }
 
     /// Checks now instead of at the next interval.
@@ -245,6 +265,102 @@ fn remove_old(versions: &Path, keep: &str) {
             let _ = std::fs::remove_dir_all(item.path());
         }
     }
+}
+
+/// The release of the map in `map`, from its `release.json`.
+#[must_use]
+pub fn map_version(map: &Path) -> Option<semver::Version> {
+    #[derive(serde::Deserialize)]
+    struct Release {
+        format: u32,
+        version: semver::Version,
+    }
+    let bytes = std::fs::read(map.join("release.json")).ok()?;
+    let release: Release = serde_json::from_slice(&bytes).ok()?;
+    (release.format == 1).then_some(release.version)
+}
+
+/// Installs a newer game map into `map`
+/// (`docs/development/releases.md#map-updates`): the pack is checked against
+/// the feed, unpacked beside the map, checked as a signed file set, and then
+/// takes the map's place. The host reloads the map when its file list
+/// changes.
+///
+/// # Errors
+/// What failed, in words.
+pub fn update_map(
+    map: &Path,
+    repository: &str,
+    key: &[u8; 32],
+    fetch: &dyn Fetch,
+) -> Result<Status, String> {
+    let url = angelica_update::feed_url(repository, Product::Map, Channel::Stable);
+    let json = fetch.get(&url, angelica_update::MAX_FEED as u64)?;
+    let signature = fetch.get(&format!("{url}.sig"), 64)?;
+    let feed = Feed::verify(&json, &signature, key, Product::Map, Channel::Stable)
+        .map_err(|e| e.to_string())?;
+    if map_version(map).is_some_and(|installed| installed >= feed.version) {
+        return Ok(Status::UpToDate);
+    }
+    let file = feed
+        .files
+        .get("map.pack")
+        .ok_or("the map release has no map.pack")?;
+    let bytes = fetch.get(
+        &angelica_update::asset_url(repository, &feed, file),
+        file.size,
+    )?;
+    file.check(&bytes).map_err(|e| e.to_string())?;
+    let files = angelica_update::unpack(&bytes).map_err(|e| e.to_string())?;
+    let parent = map.parent().ok_or("the map folder has no parent")?;
+    let partial = parent.join(".map.partial");
+    let old = parent.join(".map.old");
+    let _ = std::fs::remove_dir_all(&partial);
+    for (name, bytes) in &files {
+        let path = partial.join(name);
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        }
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    crate::package::FileSet::load(&partial, Some(key)).map_err(|e| e.to_string())?;
+    std::fs::write(
+        partial.join("release.json"),
+        serde_json::json!({"format": 1, "version": feed.version.to_string()}).to_string(),
+    )
+    .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&old);
+    if map.exists() {
+        std::fs::rename(map, &old).map_err(|e| format!("{}: {e}", map.display()))?;
+    }
+    if let Err(error) = std::fs::rename(&partial, map) {
+        let _ = std::fs::rename(&old, map);
+        return Err(format!("{}: {error}", map.display()));
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(Status::Ready(feed.version.to_string()))
+}
+
+/// Checks the game map on a thread of its own: the first check after
+/// [`FIRST_CHECK`], then every [`MAP_EVERY`]. A map installed in this
+/// session stays shown as such.
+pub fn spawn_map(map: PathBuf, key: [u8; 32], updates: Arc<SelfUpdate>, fetch: Arc<dyn Fetch>) {
+    let _ = std::thread::Builder::new()
+        .name("angelica-map-updates".into())
+        .spawn(move || {
+            std::thread::sleep(FIRST_CHECK);
+            loop {
+                let status = match update_map(&map, MAP_REPOSITORY, &key, fetch.as_ref()) {
+                    Ok(Status::UpToDate) if matches!(updates.map_status(), Status::Ready(_)) => {
+                        updates.map_status()
+                    }
+                    Ok(status) => status,
+                    Err(error) => Status::Failed(error),
+                };
+                updates.set_map(status);
+                std::thread::sleep(MAP_EVERY);
+            }
+        });
 }
 
 /// Runs the checks on a thread of its own: the first after
@@ -419,6 +535,63 @@ mod tests {
             "a failed download changes nothing"
         );
         assert!(!folder.path().join("versions/0.2.0").exists());
+    }
+
+    #[test]
+    fn a_newer_map_takes_the_place_of_the_old_one_and_an_unsigned_one_does_not() {
+        let folder = tempfile::tempdir().unwrap();
+        let map = folder.path().join("map");
+        std::fs::create_dir_all(&map).unwrap();
+        std::fs::write(map.join("map.toml"), b"old").unwrap();
+        let key = SigningKey::from_bytes(&KEY);
+        let releases = Releases(Mutex::default());
+        let publish_map = |version: &str, signer: &SigningKey| {
+            let staging = folder.path().join("staging");
+            let files = BTreeMap::from([("map.toml".to_owned(), b"format = 1\n".to_vec())]);
+            crate::installer::write_package(&staging, &files, signer).unwrap();
+            let mut packed = files.clone();
+            for name in ["files.json", "files.json.sig"] {
+                packed.insert(name.to_owned(), std::fs::read(staging.join(name)).unwrap());
+            }
+            let pack = angelica_update::pack(&packed).unwrap();
+            let feed = Feed {
+                format: 1,
+                product: Product::Map,
+                channel: Channel::Stable,
+                version: version.parse().unwrap(),
+                published: String::new(),
+                files: BTreeMap::from([("map.pack".into(), File::of("map.pack", &pack))]),
+            };
+            let (json, signature) = feed.sign(&key);
+            let url = angelica_update::feed_url(MAP_REPOSITORY, Product::Map, Channel::Stable);
+            let mut all = releases.0.lock().unwrap();
+            all.insert(url.clone(), json);
+            all.insert(format!("{url}.sig"), signature.to_vec());
+            all.insert(
+                angelica_update::asset_url(MAP_REPOSITORY, &feed, &feed.files["map.pack"]),
+                pack,
+            );
+        };
+        let public = key.verifying_key().to_bytes();
+
+        publish_map("2026.10.20", &key);
+        let status = update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap();
+        assert_eq!(status, Status::Ready("2026.10.20".into()));
+        assert_eq!(
+            std::fs::read(map.join("map.toml")).unwrap(),
+            b"format = 1\n"
+        );
+        assert_eq!(map_version(&map).unwrap().to_string(), "2026.10.20");
+        assert_eq!(
+            update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap(),
+            Status::UpToDate
+        );
+
+        // A file list signed by another key never replaces the map.
+        publish_map("2026.10.21", &SigningKey::from_bytes(&[6; 32]));
+        let error = update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap_err();
+        assert!(error.contains("signature"), "{error}");
+        assert_eq!(map_version(&map).unwrap().to_string(), "2026.10.20");
     }
 
     #[test]

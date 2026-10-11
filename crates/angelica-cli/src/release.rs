@@ -21,6 +21,20 @@ pub enum ReleaseCommand {
     Sign(SignArgs),
     /// Write a signed update feed for files of a release.
     Feed(FeedArgs),
+    /// Sign a game map into one release file, `map.pack`.
+    Map(MapArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MapArgs {
+    /// The game map folder, with `map.toml`.
+    #[arg(long)]
+    map: PathBuf,
+    /// Where to write the pack.
+    #[arg(long)]
+    output: PathBuf,
+    #[command(flatten)]
+    reporting: Output,
 }
 
 #[derive(Debug, Args)]
@@ -70,6 +84,7 @@ pub fn run(command: &ReleaseCommand) -> ExitCode {
         ReleaseCommand::Key(args) => (key(args), &args.reporting),
         ReleaseCommand::Sign(args) => (sign(args), &args.reporting),
         ReleaseCommand::Feed(args) => (feed(args), &args.reporting),
+        ReleaseCommand::Map(args) => (map(args), &args.reporting),
     };
     match result {
         Ok(report) => {
@@ -199,4 +214,24 @@ fn feed(args: &FeedArgs) -> Result<serde_json::Value, String> {
     sig.push(".sig");
     std::fs::write(&sig, signature).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "feed": args.output, "version": feed.version.to_string() }))
+}
+
+/// The map's files with their signed file list, packed: the host unpacks it
+/// into its map folder and loads it as any map package.
+fn map(args: &MapArgs) -> Result<serde_json::Value, String> {
+    let key = release_key()?;
+    let files = crate::dev::map_files(&args.map)?;
+    let staging = std::env::temp_dir().join(format!("angelica-map-{}", std::process::id()));
+    runtime::installer::write_package(&staging, &files, &key)?;
+    let mut packed = files.clone();
+    for name in ["files.json", "files.json.sig"] {
+        packed.insert(
+            name.to_owned(),
+            std::fs::read(staging.join(name)).map_err(|e| format!("{name}: {e}"))?,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    let bytes = angelica_update::pack(&packed).map_err(|e| e.to_string())?;
+    std::fs::write(&args.output, &bytes).map_err(|e| format!("{}: {e}", args.output.display()))?;
+    Ok(serde_json::json!({ "pack": args.output, "files": packed.len() }))
 }

@@ -1678,6 +1678,28 @@ impl Menu {
             .wrap(),
         );
         ui.add_space(view.at(10.0));
+        let map = updates.map_status();
+        if map != Status::Development {
+            let state = match &map {
+                Status::Development | Status::NotChecked => s.angelica_not_checked.to_owned(),
+                Status::Checking => s.angelica_checking.to_owned(),
+                Status::UpToDate => s.angelica_up_to_date.to_owned(),
+                Status::Ready(version) => fill(s.map_ready, &[("version", version)]),
+                Status::Failed(reason) => fill(s.angelica_failed, &[("reason", reason)]),
+            };
+            setting(ui, view, s.setting_map, |ui| {
+                ui.label(
+                    RichText::new(capitalized(&state))
+                        .font(sans(view.at(12.5)))
+                        .color(if matches!(map, Status::Failed(_)) {
+                            p.attention
+                        } else {
+                            p.secondary
+                        }),
+                );
+            });
+            ui.add_space(view.at(10.0));
+        }
         let Some(built) = crate::self_update::build_channel() else {
             return;
         };

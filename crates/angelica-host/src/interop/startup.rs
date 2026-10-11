@@ -76,7 +76,7 @@ extern "system" fn angelica_start_v1() -> i32 {
 /// Angelica's own updates: checked on a thread of their own when this is a
 /// release build with a release key; a development build only says so.
 fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpdate> {
-    use crate::self_update::{Http, SelfUpdate, Setup, Status, build_channel, spawn};
+    use crate::self_update::{Http, SelfUpdate, Setup, Status, build_channel, spawn, spawn_map};
     let updates = Arc::new(SelfUpdate::default());
     let (Some(channel), Some(key), Ok(running)) = (
         build_channel(),
@@ -84,8 +84,15 @@ fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpda
         env!("CARGO_PKG_VERSION").parse::<semver::Version>(),
     ) else {
         updates.set(Status::Development);
+        updates.set_map(Status::Development);
         return updates;
     };
+    spawn_map(
+        config.map_directory.clone(),
+        key,
+        updates.clone(),
+        Arc::new(Http::new()),
+    );
     let settings = crate::language::Settings::path(&directories(config, root).state);
     spawn(
         Setup {

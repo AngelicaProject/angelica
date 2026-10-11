@@ -131,6 +131,8 @@ strings! {
     size_large: "large", "крупный";
     setting_angelica: "Angelica", "Angelica";
     setting_channel: "Channel", "Канал";
+    setting_map: "Game map", "Карта игры";
+    map_ready: "updated to {version} in this session", "обновлена до {version} в этой игре";
     channel_stable: "stable", "стабильный";
     channel_nightly: "nightly", "ночной";
     channel_note: "Nightly builds come after every change, for testers; they may stop the game.", "Ночные сборки выходят после каждого изменения, для тестеров; они могут остановить игру.";
