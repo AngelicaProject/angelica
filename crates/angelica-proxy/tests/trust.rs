@@ -37,7 +37,7 @@ fn verification_rejects_changes_wrong_keys_and_malformed_signatures() {
 }
 
 #[test]
-fn configuration_is_strict_and_staged_versions_do_not_hide_errors() {
+fn configuration_is_strict_and_a_broken_current_version_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("angelica.json");
     assert!(matches!(
@@ -63,11 +63,29 @@ fn configuration_is_strict_and_staged_versions_do_not_hide_errors() {
         config.runtime_path().unwrap(),
         directory.path().join("runtime.dll")
     );
-    std::fs::create_dir(directory.path().join("staged")).unwrap();
+    let current = directory.path().join("current.json");
+    std::fs::write(&current, r#"{"format":1,"version":"0.2.0-nightly.4"}"#).unwrap();
     assert_eq!(
         config.runtime_path().unwrap(),
-        directory.path().join("staged/runtime.dll")
+        directory
+            .path()
+            .join("versions/0.2.0-nightly.4/runtime.dll")
     );
-    // Selection must not silently load the old host when a staged update is broken.
+    // Selection must not silently load the old host when the update is broken.
     assert!(!config.runtime_path().unwrap().exists());
+    for broken in [
+        "",
+        "{}",
+        r#"{"format":2,"version":"0.2.0"}"#,
+        r#"{"format":1,"version":"../0.2.0"}"#,
+        r#"{"format":1,"version":"a\\b"}"#,
+        r#"{"format":1,"version":""}"#,
+        r#"{"format":1,"version":"0.2.0","extra":1}"#,
+    ] {
+        std::fs::write(&current, broken).unwrap();
+        assert!(
+            matches!(config.runtime_path(), Err(LoadError::Current(_))),
+            "{broken}"
+        );
+    }
 }

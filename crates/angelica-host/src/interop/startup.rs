@@ -76,11 +76,12 @@ extern "system" fn angelica_start_v1() -> i32 {
 fn initialize() -> Result<(), String> {
     let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
-    let root = if root.file_name().is_some_and(|name| name == "staged") {
-        root.parent()
-            .ok_or("staged host has no installation directory")?
-    } else {
-        root
+    // `versions/<version>/runtime.dll` is a version `current.json` named.
+    let root = match root.parent() {
+        Some(versions) if versions.file_name().is_some_and(|name| name == "versions") => versions
+            .parent()
+            .ok_or("versions has no installation directory")?,
+        _ => root,
     };
     let initial_logs = root.join("logs");
     std::fs::create_dir_all(&initial_logs).map_err(|e| e.to_string())?;

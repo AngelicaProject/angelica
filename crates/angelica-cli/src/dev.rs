@@ -111,27 +111,41 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
         runtime::package::hex(key.verifying_key().as_bytes()).into(),
     );
     if let Some(path) = &args.runtime {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        // A running game holds the installed runtime open; the proxy loads a
-        // staged one at the next start.
-        let folder = args.installation.join("staged");
-        write(&folder.join("runtime.dll"), &bytes)?;
+        // A running game holds its runtime open: each development install
+        // is a new version folder, which `current.json` names for the next
+        // start. The plugin installer goes beside the runtime.
+        let version = format!(
+            "dev-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_secs()
+        );
+        let folder = args.installation.join("versions").join(&version);
+        let mut programs = vec![("runtime.dll", path)];
+        if let Some(installer) = &args.installer {
+            programs.push(("plugin-installer.exe", installer));
+        }
+        for (name, path) in programs {
+            let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            write(&folder.join(name), &bytes)?;
+            write(
+                &folder.join(format!("{name}.sig")),
+                &key.sign(&bytes).to_bytes(),
+            )?;
+        }
+        let current = args.installation.join("current.json");
+        let next = args.installation.join("current.json.new");
         write(
-            &folder.join("runtime.dll.sig"),
-            &key.sign(&bytes).to_bytes(),
+            &next,
+            serde_json::json!({"format": 1, "version": version})
+                .to_string()
+                .as_bytes(),
         )?;
+        std::fs::rename(&next, &current).map_err(|e| format!("{}: {e}", current.display()))?;
         report.insert("runtime".into(), folder.display().to_string().into());
-    }
-    if let Some(path) = &args.installer {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        // Beside the runtime the proxy loads at the next start.
-        let folder = args.installation.join("staged");
-        write(&folder.join("plugin-installer.exe"), &bytes)?;
-        write(
-            &folder.join("plugin-installer.exe.sig"),
-            &key.sign(&bytes).to_bytes(),
-        )?;
-        report.insert("installer".into(), folder.display().to_string().into());
+    } else if args.installer.is_some() {
+        return Err("--installer goes beside a --runtime".into());
     }
     if let Some(map) = &args.map {
         let mut files = BTreeMap::new();

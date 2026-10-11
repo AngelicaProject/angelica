@@ -95,10 +95,17 @@ fn signed_host_starts_before_game_and_failures_leave_game_running() {
     std::fs::write(dir.join("runtime.dll"), tampered).unwrap();
     assert_eq!(game(dir, 0), "game\n");
     std::fs::write(dir.join("runtime.dll"), bytes).unwrap();
-    std::fs::create_dir(dir.join("staged")).unwrap();
+    // An update: a version folder that current.json names.
+    std::fs::write(
+        dir.join("current.json"),
+        r#"{"format":1,"version":"0.2.0"}"#,
+    )
+    .unwrap();
     assert_eq!(game(dir, 0), "game\n");
-    std::fs::copy(dir.join("runtime.dll"), dir.join("staged/runtime.dll")).unwrap();
-    std::fs::write(dir.join("staged/runtime.dll.sig"), signature).unwrap();
+    let staged = dir.join("versions/0.2.0");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::copy(dir.join("runtime.dll"), staged.join("runtime.dll")).unwrap();
+    std::fs::write(staged.join("runtime.dll.sig"), signature).unwrap();
     assert_eq!(game(dir, 0), "load\nhost\ngame\n");
     run(Command::new("rustc")
         .arg(root.join("tests/fixtures/runtime.rs"))
@@ -109,10 +116,10 @@ fn signed_host_starts_before_game_and_failures_leave_game_running() {
             "no_start",
             "-o",
         ])
-        .arg(dir.join("staged/runtime.dll")));
-    let incompatible = std::fs::read(dir.join("staged/runtime.dll")).unwrap();
+        .arg(staged.join("runtime.dll")));
+    let incompatible = std::fs::read(staged.join("runtime.dll")).unwrap();
     std::fs::write(
-        dir.join("staged/runtime.dll.sig"),
+        staged.join("runtime.dll.sig"),
         key.sign(&incompatible).to_bytes(),
     )
     .unwrap();

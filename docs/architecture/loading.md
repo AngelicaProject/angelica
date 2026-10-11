@@ -14,7 +14,7 @@ The proxy changes rarely. It contains no game knowledge, so a game patch never r
 
 ## Finding and trusting the host
 
-The proxy reads `angelica.json` next to itself for the installation folder, loads `runtime.dll` from there, and checks its Ed25519 signature (`runtime.dll.sig`) against the release key compiled into the proxy before loading it. A missing or invalid host means the game starts without Angelica, and the reason is written to the log next to the proxy.
+The proxy reads `angelica.json` next to itself for the installation folder, loads `runtime.dll` of the current version from there (below), and checks its Ed25519 signature (`runtime.dll.sig`) against the release key compiled into the proxy before loading it. A missing or invalid host means the game starts without Angelica, and the reason is written to the log next to the proxy.
 
 `angelica-proxy` builds `dinput8.dll` for `x86_64-pc-windows-msvc`. It forwards the six system exports by name and ordinal (1–6): `DirectInput8Create`, `DllCanUnloadNow`, `DllGetClassObject`, `DllRegisterServer`, `DllUnregisterServer`, and `GetdfDIJoystick`. The system module is loaded lazily by its absolute system-directory path and retained until process exit.
 
@@ -44,9 +44,9 @@ The host's unhandled-exception filter attempts a normal Windows minidump and a J
 
 ## Updates
 
-The host downloads updates while the game runs and stages them. The proxy loads the staged version at the next start. A file in use is never replaced.
+The host downloads updates of its [channel](../development/releases.md#host-updates) while the game runs into a new version folder. The proxy loads it at the next start. A file in use is never replaced.
 
-The staging location is `<installation_dir>/staged/`, containing `runtime.dll` and `runtime.dll.sig`. The updater publishes the complete directory atomically. Its presence selects that version; missing files or an invalid signature disable Angelica for that launch rather than falling back to an older host. The proxy neither writes nor promotes updates. The updater removes or replaces a staging directory only when its files are no longer in use.
+Each version of the host lives in its own folder, `<installation_dir>/versions/<version>/`, with `runtime.dll`, `plugin-installer.exe`, and their signatures. `<installation_dir>/current.json`, strict JSON `{"format": 1, "version": "0.2.0"}`, names the version the proxy loads; without it, the proxy loads `runtime.dll` from the installation folder itself. The updater writes a complete new version folder first and then replaces `current.json` by renaming a new file over it, so the running version's files are never touched. A present but malformed `current.json`, a version name that is a path, missing files, or an invalid signature disable Angelica for that launch rather than falling back to an older host. The proxy neither writes nor promotes updates. The updater removes a version folder only when it is neither current nor in use.
 
 ## Coexistence
 
