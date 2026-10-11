@@ -41,6 +41,13 @@ macro_rules! strings {
 
 strings! {
     tab_installed: "Installed", "Установленные";
+    tab_catalog: "Catalog", "Каталог";
+    catalog_loading: "Loading the catalog…", "Загрузка каталога…";
+    catalog_failed: "The catalog did not load: {reason}", "Каталог не загрузился: {reason}";
+    catalog_empty: "The catalog has no plugins yet.", "В каталоге пока нет плагинов.";
+    catalog_install: "Install", "Установить";
+    catalog_installed: "Installed", "Установлен";
+    catalog_withdrawn: "{name} is turned off: the catalog withdrew it. {reason}", "{name} выключен: каталог отозвал его. {reason}";
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
     word_on: "On", "Вкл";

@@ -175,6 +175,8 @@ pub struct Host {
     plugin_installer: std::sync::OnceLock<Arc<crate::plugin_installer::PluginInstaller>>,
     /// Angelica's own updates; none in tests.
     self_update: std::sync::OnceLock<Arc<crate::self_update::SelfUpdate>>,
+    /// The catalog's index; none in tests and without a release key.
+    catalog: std::sync::OnceLock<crate::catalog_index::Source>,
 }
 
 impl Host {
@@ -203,6 +205,7 @@ impl Host {
             opener,
             plugin_installer: std::sync::OnceLock::new(),
             self_update: std::sync::OnceLock::new(),
+            catalog: std::sync::OnceLock::new(),
         }
     }
 
@@ -245,6 +248,15 @@ impl Host {
     #[must_use]
     pub fn self_update(&self) -> Option<&Arc<crate::self_update::SelfUpdate>> {
         self.self_update.get()
+    }
+
+    pub fn set_catalog(&self, source: crate::catalog_index::Source) {
+        let _ = self.catalog.set(source);
+    }
+
+    #[must_use]
+    pub fn catalog(&self) -> Option<&crate::catalog_index::Source> {
+        self.catalog.get()
     }
 
     /// The engine components must be compiled with.

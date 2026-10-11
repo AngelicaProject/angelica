@@ -1,6 +1,6 @@
 # Catalog
 
-The Angelica catalog lists plugins that players can find and install. It lives in the `angelica-registry` repository and is built entirely by CI: the registry builds every catalog plugin from its published source, signs it, and publishes a signed index. A plugin outside the catalog still installs from its author's link with the same sandbox and permissions ([plugin file](../formats/plugin-file-v1.md)).
+The Angelica catalog lists plugins that players can find and install from the Angelica menu. It lives in the `angelica-registry` repository and is built entirely by CI: the registry builds every catalog plugin from its published source, signs it, and publishes a signed index. A plugin outside the catalog still installs from its author's link with the same sandbox and permissions ([plugin file](../formats/plugin-file-v1.md)).
 
 ## How a plugin enters the catalog
 
@@ -16,4 +16,10 @@ When `main` changes, the registry's CI builds each changed plugin from the sourc
 
 What players run is what the registry built from the reviewed source, not a file the author uploaded.
 
-Installed Angelica installs a catalog plugin from its catalog link like any plugin link; the menu marks a plugin whose file is signed with the release key as coming from the Angelica catalog. A plugin id installed from the catalog cannot be replaced by an author's file, and the other way round.
+## In the game
+
+The **Catalog** tab of the Angelica menu reads the index when it first opens and then every 6 hours; a player who never opens it sends nothing. It lists each plugin with its tile, name, version, and description, and **Install**, or **Installed** for one the player has. **Install** installs the plugin from its catalog link through the plugin installer, exactly as a link the player pasted: the installer verifies the file, compiles it on the player's computer, and the player approves its permissions. The menu marks a plugin whose file is signed with the release key as coming from the Angelica catalog. A plugin installed from the catalog updates from its catalog link; a plugin id installed from the catalog cannot be replaced by an author's file, and the other way round.
+
+## Withdrawing
+
+The index lists withdrawn versions and plugins. When the index lists an installed catalog plugin's version as withdrawn, Angelica turns the plugin off and says why under Settings → For developers; the player can remove it. A maintainer withdraws by a pull request that adds the version or plugin to `withdrawn.toml`; it is published like any change.

@@ -123,6 +123,7 @@ fn classes_of(permissions: impl IntoIterator<Item = Permission>) -> Vec<Class> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Installed,
+    Catalog,
     Settings,
 }
 
@@ -200,6 +201,8 @@ pub struct Menu {
     /// was copied last.
     report: Option<String>,
     copied: Option<String>,
+    /// Withdrawn plugins already turned off in this session.
+    withdrawn: std::collections::BTreeSet<String>,
     notes: Vec<Note>,
     seen: u64,
 }
@@ -273,6 +276,7 @@ impl Menu {
             removing: None,
             report: None,
             copied: None,
+            withdrawn: std::collections::BTreeSet::new(),
             notes: Vec::new(),
             seen: 0,
         }
@@ -425,9 +429,11 @@ impl Menu {
                             keep = false;
                         }
                     }
+                    Tab::Catalog => self.draw_catalog(ui, view),
                     Tab::Settings => self.draw_settings(ui, view),
                 }
             });
+        self.apply_withdrawals(view);
         if self.tab != Tab::Settings || self.section != Section::General {
             self.choosing_key = false;
         }
@@ -505,6 +511,7 @@ impl Menu {
         let mut x = row.left() + view.at(10.0);
         for (tab, title) in [
             (Tab::Installed, s.tab_installed),
+            (Tab::Catalog, s.tab_catalog),
             (Tab::Settings, s.tab_settings),
         ] {
             let active = self.tab == tab;
@@ -575,6 +582,160 @@ impl Menu {
         }
         self.footer(ui, view);
         opened
+    }
+
+    /// The Catalog tab: the plugins of the catalog's index, each with
+    /// Install, in the same height as the Installed tab.
+    fn draw_catalog(&mut self, ui: &mut Ui, view: &View<'_>) {
+        use crate::catalog_index::State;
+        let s = self.strings();
+        let p = view.p;
+        let height = view.at(COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST);
+        let Some(source) = view.host.catalog() else {
+            return;
+        };
+        let state = source.state();
+        if state == State::NotLoaded {
+            source.request();
+        }
+        let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let mut ui =
+            ui.new_child(UiBuilder::new().max_rect(area.shrink2(vec2(view.at(16.0), 0.0))));
+        ui.add_space(view.at(14.0));
+        let note = |ui: &mut Ui, text: &str, color: Color32| {
+            ui.add(
+                egui::Label::new(RichText::new(text).font(sans(view.at(13.0))).color(color)).wrap(),
+            );
+        };
+        let index = match state {
+            State::NotLoaded | State::Loading => {
+                return note(&mut ui, s.catalog_loading, p.secondary);
+            }
+            State::Failed(reason) => {
+                note(
+                    &mut ui,
+                    &fill(s.catalog_failed, &[("reason", &reason)]),
+                    p.attention,
+                );
+                ui.add_space(view.at(8.0));
+                if theme::word(&mut ui, s.retry, Word::Action, true, view.k).clicked() {
+                    source.request();
+                }
+                return;
+            }
+            State::Loaded(index) => index,
+        };
+        let listed: Vec<_> = index
+            .plugins
+            .iter()
+            .filter(|plugin| index.withdrawn(&plugin.id, &plugin.version).is_none())
+            .collect();
+        if listed.is_empty() {
+            return note(&mut ui, s.catalog_empty, p.secondary);
+        }
+        let installer = view.host.plugin_installer().cloned();
+        egui::ScrollArea::vertical()
+            .id_salt("angelica-catalog")
+            .max_height(ui.available_height())
+            .show(&mut ui, |ui| {
+                for plugin in listed {
+                    let present = view
+                        .plugins
+                        .iter()
+                        .any(|installed| installed.manifest.id() == plugin.id);
+                    self.catalog_row(ui, view, plugin, present, installer.as_deref());
+                }
+            });
+    }
+
+    /// A plugin of the catalog: its tile, name, version and description, and
+    /// Install, or Installed when it is.
+    fn catalog_row(
+        &self,
+        ui: &mut Ui,
+        view: &View<'_>,
+        plugin: &crate::catalog_index::Listed,
+        present: bool,
+        installer: Option<&PluginInstaller>,
+    ) {
+        let s = self.strings();
+        let p = view.p;
+        let (row, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(52.0)), Sense::hover());
+        let painter = ui.painter();
+        painter.line_segment(
+            [row.left_bottom(), row.right_bottom()],
+            Stroke::new(1.0, p.line),
+        );
+        let tile = Rect::from_min_size(
+            pos2(row.left(), row.center().y - view.at(12.0)),
+            vec2(view.at(24.0), view.at(24.0)),
+        );
+        theme::tile(painter, tile, &plugin.name, false, false, p);
+        let left = row.left() + view.at(36.0);
+        let action_width = view.at(96.0);
+        let width = row.right() - action_width - left - view.at(8.0);
+        let name = elided(painter, &plugin.name, sans(view.at(13.5)), p.text, width);
+        painter.galley(pos2(left, row.top() + view.at(9.0)), name, p.text);
+        let about = elided(
+            painter,
+            &format!("{} · {}", plugin.version, plugin.description),
+            sans(view.at(12.0)),
+            p.secondary,
+            width,
+        );
+        painter.galley(pos2(left, row.top() + view.at(28.0)), about, p.secondary);
+        let action = Rect::from_min_max(
+            pos2(row.right() - action_width, row.top()),
+            row.right_bottom(),
+        );
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(action)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| {
+                if present {
+                    theme::word(ui, s.catalog_installed, Word::Secondary, false, view.k);
+                } else if let Some(installer) = installer
+                    && theme::word(
+                        ui,
+                        s.catalog_install,
+                        Word::Action,
+                        !installer.busy(),
+                        view.k,
+                    )
+                    .clicked()
+                {
+                    let _ = installer.install(&plugin.link);
+                }
+            },
+        );
+    }
+
+    /// Turns off installed catalog plugins the index withdrew, once each,
+    /// and says why.
+    fn apply_withdrawals(&mut self, view: &View<'_>) {
+        let Some(crate::catalog_index::State::Loaded(index)) =
+            view.host.catalog().map(crate::catalog_index::Source::state)
+        else {
+            return;
+        };
+        let s = self.strings();
+        for (plugin, status) in view.plugins.iter().zip(view.statuses) {
+            let manifest = &plugin.manifest;
+            if manifest.origin != Origin::Catalog || *status == Status::Disabled {
+                continue;
+            }
+            if let Some(reason) = index.withdrawn(manifest.id(), &manifest.plugin.version)
+                && self.withdrawn.insert(manifest.id().to_owned())
+            {
+                view.host.queue(Action::Disable(manifest.id().to_owned()));
+                view.host.diagnostic(fill(
+                    s.catalog_withdrawn,
+                    &[("name", &manifest.plugin.name), ("reason", reason)],
+                ));
+            }
+        }
     }
 
     /// The search field and the filter by class.

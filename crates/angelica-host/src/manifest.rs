@@ -214,6 +214,18 @@ pub enum Origin {
     Development,
 }
 
+/// A plugin id: 1 to 64 lowercase letters, digits, and inner hyphens.
+#[must_use]
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && !id.ends_with('-')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("angelica.toml: {0}")]
 pub struct ManifestError(pub String);
@@ -231,15 +243,7 @@ impl Manifest {
             ));
         }
         let plugin = &manifest.plugin;
-        if plugin.id.is_empty()
-            || plugin.id.len() > 64
-            || plugin.id.starts_with('-')
-            || plugin.id.ends_with('-')
-            || !plugin
-                .id
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
+        if !valid_id(&plugin.id) {
             return fail(
                 "plugin.id has 1 to 64 lowercase letters, digits, and inner hyphens".into(),
             );
