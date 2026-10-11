@@ -4,7 +4,7 @@ The Angelica catalog lists plugins that players can find and install from the An
 
 ## How a plugin enters the catalog
 
-1. **The author releases the plugin through CI.** A tag `v<version>` in the plugin's repository builds the component, signs the plugin file with the author key,, publishes it in the tag's release, and behind the author's link.
+1. **The author releases the plugin through CI.** A tag `v<version>` in the plugin's repository builds the component, signs the plugin file with the author key,, publishes it in the tag's release, and behind the author's link (`angelica plugin new` writes these workflows).
 2. **A pull request to `angelica-registry`** adds or updates `plugins/<id>.toml`: the plugin's repository, the tag, and the author key ([format](../formats/catalog-v1.md)). The author's release CI can open it.
 3. **The registry's CI checks the pull request** without secrets: the entry's form; that the tag's release in the plugin's repository holds a plugin file signed with the entry's author key, so the author agreed; that the plugin builds from the source at the tag with the pinned toolchain and the SDK of the angelica repository's `main`, and its tests pass; and what the plugin declares compared with its catalog version — permissions, hosts, and memory. The review is in the run's summary.
 4. **What merges by itself.** An update of a plugin already in the catalog, from the same repository and author key, whose checks pass and which declares no permission, host, or memory the catalog version does not, is merged by the registry's CI, which reviews it again with its own code from the release files.

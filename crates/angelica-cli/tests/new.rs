@@ -30,6 +30,12 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
     assert!(skill.starts_with("---") && skill.contains("name: angelica-plugin"));
     assert!(skill.contains("# Working on Loot Notes") && !skill.contains("{angelica}"));
     assert!(read("rust-toolchain.toml").contains("wasm32-wasip2"));
+    assert!(read(".github/workflows/ci.yml").contains("cargo test"));
+    let release = read(".github/workflows/release.yml");
+    assert!(
+        release.contains("release/loot_notes.wasm") && release.contains("dist/loot-notes.angelica")
+    );
+    assert!(release.contains("${{ secrets.ANGELICA_AUTHOR_KEY }}") && !release.contains("{id}"));
     // The checkout's path stays in the uncommitted cargo configuration.
     let checkout = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
     let checkout = checkout.trim_end_matches("/crates/angelica-cli");
