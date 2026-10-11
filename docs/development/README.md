@@ -9,6 +9,7 @@ This section defines how changes are implemented, validated, reviewed, and shipp
 - [`pull-requests.md`](./pull-requests.md) — pull request titles, descriptions, readiness, and review preparation.
 - [`code-review.md`](./code-review.md) — review methodology, severity, and merge verdicts.
 - [`ci.md`](./ci.md) — CI gates and failure investigation.
+- [`releases.md`](./releases.md) — versions, update channels, release assets, the release key, and how hosts and maps update.
 
 ## Implementation
 
