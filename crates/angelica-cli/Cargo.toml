@@ -17,6 +17,8 @@ path = "src/main.rs"
 angelica-map.workspace = true
 angelica-pe.workspace = true
 angelica-host.workspace = true
+angelica-update.workspace = true
+semver.workspace = true
 iced-x86 = { workspace = true, features = ["intel"] }
 wasmtime.workspace = true
 clap.workspace = true
@@ -27,6 +29,8 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+angelica-update.workspace = true
+ed25519-dalek.workspace = true
 angelica-pe = { workspace = true, features = ["testing"] }
 angelica-sqpack = { workspace = true, features = ["testing"] }
 serde_json.workspace = true

@@ -1,6 +1,6 @@
 # Host installation format 1
 
-The installation folder contains `runtime.dll` and its detached release signature, as specified in [loading](../architecture/loading.md), or a newer pair in `staged/`. Beside the runtime are `plugin-installer.exe` from the same build and its detached release signature `plugin-installer.exe.sig` (64 raw Ed25519 bytes over the file), which the host runs to install [plugins from their authors](../architecture/plugins.md#plugins-from-their-authors).
+The installation folder contains `current.json` and the version folders it chooses from, `versions/<version>/`, each with `runtime.dll` and its detached release signature, as specified in [loading](../architecture/loading.md#updates); an installation without `current.json` has them in the installation folder itself. Beside the runtime are `plugin-installer.exe` from the same build and its detached release signature `plugin-installer.exe.sig` (64 raw Ed25519 bytes over the file), which the host runs to install [plugins from their authors](../architecture/plugins.md#plugins-from-their-authors).
 
 ## Configuration
 
@@ -52,7 +52,7 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 ## Angelica settings
 
-`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), and each is left out when the player has not chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
+`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
 
 ## Storage
 
@@ -64,4 +64,4 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 ## Development installations
 
-`angelica dev key` creates a development signing key, and `angelica dev install` signs a runtime, the plugin installer, a map, and plugins with it into an installation folder (the runtime and the plugin installer into `staged/`). The proxy and runtime must be built with that key's public half in `ANGELICA_RELEASE_PUBLIC_KEY`. A development key is never a release key.
+`angelica dev key` creates a development signing key, and `angelica dev install` signs a runtime, the plugin installer, a map, and plugins with it into an installation folder (the runtime and the plugin installer into a new version folder `versions/dev-<seconds>/`, which `current.json` then names, so it can be installed while the game runs and takes effect at the next start). The proxy and runtime must be built with that key's public half in `ANGELICA_RELEASE_PUBLIC_KEY`. A development key is never a release key.

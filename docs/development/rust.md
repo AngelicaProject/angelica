@@ -15,6 +15,7 @@
 - `angelica-hook`;
 - `angelica-proxy`;
 - the `interop` module of `angelica-host`.
+- the `system` module of `angelica-setup`, which only starts the installer again with administrator rights and reads the interface language.
 
 In those places:
 

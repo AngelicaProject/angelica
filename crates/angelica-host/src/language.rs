@@ -129,6 +129,20 @@ strings! {
     size_small: "small", "маленький";
     size_normal: "normal", "обычный";
     size_large: "large", "крупный";
+    setting_angelica: "Angelica", "Angelica";
+    setting_channel: "Channel", "Канал";
+    setting_map: "Game map", "Карта игры";
+    map_ready: "updated to {version} in this session", "обновлена до {version} в этой игре";
+    channel_stable: "stable", "стабильный";
+    channel_nightly: "nightly", "ночной";
+    channel_note: "Nightly builds come after every change, for testers; they may stop the game.", "Ночные сборки выходят после каждого изменения, для тестеров; они могут остановить игру.";
+    angelica_version: "version {version}", "версия {version}";
+    angelica_development: "a development build, which does not update", "сборка для разработки, она не обновляется";
+    angelica_not_checked: "not checked yet", "ещё не проверялась";
+    angelica_checking: "checking…", "проверяем…";
+    angelica_up_to_date: "the newest", "самая новая";
+    angelica_ready: "{version} starts with the next game start", "{version} запустится при следующем запуске игры";
+    angelica_failed: "could not check: {reason}", "не удалось проверить: {reason}";
     setting_updates: "Update plugins", "Обновлять плагины";
     updates_auto: "by themselves", "сами";
     updates_note: "A version that asks for more waits for you.", "Версия, которая просит больше, подождёт вас.";
@@ -289,6 +303,9 @@ pub struct Settings {
     /// The key the player chose for the menu; `Insert` without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<MenuKey>,
+    /// The update channel; the one the build was released on without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<angelica_update::Channel>,
 }
 
 /// The settings file's name: a plugin id cannot begin with `_`, so it never

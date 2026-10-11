@@ -13,7 +13,7 @@ When changing these versions, verify the current stable upstream release first a
 
 - Code that runs in the game process never lets a failure propagate into game code. Every detour, exported function, and callback catches panics at its boundary and falls back to the original game behavior.
 - Expected failures (an absent entry, a refused permission, a malformed file) are typed errors and visible diagnostics, not panics.
-- Files the host writes (settings, staged updates, caches) are written to a temporary file and atomically replaced.
+- Files the host writes (settings, `current.json`, caches) are written to a temporary file and atomically replaced.
 - Nothing is decided by guessing: an ambiguous match, an unknown version, or an unverifiable condition is reported and treated as absent.
 
 ## Machine-readable tools

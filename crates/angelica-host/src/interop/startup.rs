@@ -73,14 +73,54 @@ extern "system" fn angelica_start_v1() -> i32 {
     status
 }
 
+/// Angelica's own updates: checked on a thread of their own when this is a
+/// release build with a release key; a development build only says so.
+fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpdate> {
+    use crate::self_update::{Http, SelfUpdate, Setup, Status, build_channel, spawn, spawn_map};
+    let updates = Arc::new(SelfUpdate::default());
+    let (Some(channel), Some(key), Ok(running)) = (
+        build_channel(),
+        RELEASE_KEY,
+        env!("CARGO_PKG_VERSION").parse::<semver::Version>(),
+    ) else {
+        updates.set(Status::Development);
+        updates.set_map(Status::Development);
+        return updates;
+    };
+    spawn_map(
+        config.map_directory.clone(),
+        key,
+        updates.clone(),
+        Arc::new(Http::new()),
+    );
+    let settings = crate::language::Settings::path(&directories(config, root).state);
+    spawn(
+        Setup {
+            installation: root.to_path_buf(),
+            repository: crate::self_update::REPOSITORY.into(),
+            key,
+            running,
+        },
+        updates.clone(),
+        Arc::new(Http::new()),
+        move || {
+            crate::language::Settings::load(&settings)
+                .channel
+                .unwrap_or(channel)
+        },
+    );
+    updates
+}
+
 fn initialize() -> Result<(), String> {
     let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
-    let root = if root.file_name().is_some_and(|name| name == "staged") {
-        root.parent()
-            .ok_or("staged host has no installation directory")?
-    } else {
-        root
+    // `versions/<version>/runtime.dll` is a version `current.json` named.
+    let root = match root.parent() {
+        Some(versions) if versions.file_name().is_some_and(|name| name == "versions") => versions
+            .parent()
+            .ok_or("versions has no installation directory")?,
+        _ => root,
     };
     let initial_logs = root.join("logs");
     std::fs::create_dir_all(&initial_logs).map_err(|e| e.to_string())?;
@@ -120,6 +160,7 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
     ));
     host.set_plugin_installer(installer.clone());
+    host.set_self_update(self_update(&config, root));
     // Without the program, only what the player asks for reports that.
     installer.start(
         installer

@@ -1,0 +1,191 @@
+name: Release
+
+# Stable releases are published from version tags; the rolling nightly
+# pre-release is rebuilt after every green CI run of a push to main. The
+# release model is described in docs/development/releases.md.
+#
+# workflow_run runs with the release secrets, so it builds only pushes to
+# main that passed CI, and the gate checks that the commit is main's head.
+on: # zizmor: ignore[dangerous-triggers]
+  push:
+    tags:
+      - "v*"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  # A nightly is built only for the current head of main: CI for an older
+  # merge can finish after a newer one landed.
+  gate:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.head.outputs.build }}
+    steps:
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head" = "$COMMIT" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping $COMMIT: main is now at $head"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    # A newer nightly supersedes one still building; stable releases never
+    # cancel each other. Only a run that passed the gate can cancel another.
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('release-{0}', github.ref_name) || 'release-nightly' }}
+      cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ANGELICA_RELEASE_PUBLIC_KEY: ${{ vars.ANGELICA_RELEASE_PUBLIC_KEY }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.COMMIT }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.98.1
+
+      - name: Require the release key
+        run: |
+          if ! [[ "$ANGELICA_RELEASE_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the repository variable ANGELICA_RELEASE_PUBLIC_KEY is not 64 hexadecimal digits"
+            exit 1
+          fi
+
+      - name: Require a green main commit for stable releases
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$COMMIT" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit on main"
+            exit 1
+          fi
+          for _ in $(seq 1 120); do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$COMMIT&branch=main&event=push" \
+              --jq '[.workflow_runs[] | "\(.status):\(.conclusion)"] | join(" ")')
+            case " $runs " in
+              *" completed:success "*) echo "CI passed on main for $COMMIT"; exit 0 ;;
+            esac
+            case "$runs" in
+              *in_progress*|*queued*|*requested*|*waiting*|*pending*) sleep 30 ;;
+              *) echo "::error::CI has not passed on main for $COMMIT (runs: ${runs:-none})"; exit 1 ;;
+            esac
+          done
+          echo "::error::timed out waiting for CI on main for $COMMIT"
+          exit 1
+
+      # The declared version is [workspace.package] version in Cargo.toml.
+      # A nightly is <next>-nightly.<run>, where <next> is the declared
+      # version until it is tagged and the next patch version after.
+      - name: Determine the version
+        id: version
+        run: |
+          declared=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml)
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "v$declared" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::the tag $GITHUB_REF_NAME does not match the declared version $declared"
+              exit 1
+            fi
+            version=$declared
+            channel=stable
+            tag=$GITHUB_REF_NAME
+          else
+            next=$declared
+            if git rev-parse -q --verify "refs/tags/v$declared" > /dev/null; then
+              IFS=. read -r major minor patch <<< "$declared"
+              next="$major.$minor.$((patch + 1))"
+            fi
+            version="$next-nightly.$GITHUB_RUN_NUMBER"
+            channel=nightly
+            tag=nightly
+            sed -i "/^\[workspace.package\]/,/^\[/s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+            cargo update --workspace
+          fi
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building Angelica $version ($channel)"
+
+      - name: Build the proxy, the host, the plugin installer, and the tools
+        env:
+          ANGELICA_RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: cargo build --release -p angelica-proxy -p angelica-host -p angelica-plugin-installer -p angelica-cli
+
+      - name: Sign the release files
+        env:
+          ANGELICA_RELEASE_SIGNING_KEY: ${{ secrets.ANGELICA_RELEASE_SIGNING_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          mkdir -p dist
+          cp target/release/runtime.dll target/release/plugin-installer.exe target/release/dinput8.dll dist/
+          target/release/angelica.exe release sign dist/runtime.dll dist/plugin-installer.exe dist/dinput8.dll
+          printf '{"version":"%s","channel":"%s"}\n' "$VERSION" "$CHANNEL" > dist/release.json
+
+      - name: Build the installer with the signed files inside
+        env:
+          ANGELICA_RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          ANGELICA_SETUP_PAYLOAD="$(pwd)/dist" cargo build --release -p angelica-setup
+          cp target/release/angelica-setup.exe dist/
+          rm dist/release.json
+
+      - name: Write the update feed and checksums
+        env:
+          ANGELICA_RELEASE_SIGNING_KEY: ${{ secrets.ANGELICA_RELEASE_SIGNING_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          target/release/angelica.exe release feed --product angelica --channel "$CHANNEL" \
+            --version "$VERSION" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --file dist/runtime.dll --file dist/plugin-installer.exe --file dist/dinput8.dll \
+            --output dist/channel.json
+          (cd dist && sha256sum -- * > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+
+      - name: Publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [ "$TAG" = "nightly" ]; then
+            gh release delete nightly --cleanup-tag --yes || true
+            gh release create nightly dist/* --prerelease --target "$COMMIT" \
+              --title "Nightly $VERSION" \
+              --notes "Built from $COMMIT after CI passed on main. Nightly builds are for testers and may stop the game."
+          else
+            gh release create "$TAG" dist/* --title "Angelica $VERSION" --generate-notes --latest
+          fi
