@@ -97,6 +97,8 @@ strings! {
     retry: "Try again", "Попробовать снова";
     keep_off: "Keep it off", "Оставить выключенным";
     open_folder: "Open folder", "Открыть папку";
+    copy_report: "Copy report", "Скопировать отчёт";
+    report_copied: "Report copied", "Отчёт скопирован";
     remove: "Remove…", "Удалить…";
     remove_title: "Removing", "Удаление";
     remove_keep: "Remove, keep its data", "Удалить, данные оставить";

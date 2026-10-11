@@ -7,9 +7,9 @@ use crate::{
     host::{Action, Event, Host, Plugin, Status},
     key::MenuKey,
     language::{Language, Settings, Strings, fill},
-    manifest::{Class, Origin, Permission},
+    manifest::{Class, Manifest, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
-    sandbox::bindings::angelica::plugin::runtime::Level,
+    sandbox::{LogLine, bindings::angelica::plugin::runtime::Level},
     theme::{self, Icon, Palette, Size, Theme, Word, medium, mono, sans, strong, wordmark},
 };
 use egui::{
@@ -158,6 +158,7 @@ enum RowAction {
     TurnOff,
     Review,
     Folder,
+    Report,
     Remove,
 }
 
@@ -195,6 +196,10 @@ pub struct Menu {
     dialog: Option<String>,
     /// The plugin the removal dialog asks about.
     removing: Option<String>,
+    /// A report waiting to go to the clipboard, and the plugin whose report
+    /// was copied last.
+    report: Option<String>,
+    copied: Option<String>,
     notes: Vec<Note>,
     seen: u64,
 }
@@ -266,6 +271,8 @@ impl Menu {
             selected: None,
             dialog: None,
             removing: None,
+            report: None,
+            copied: None,
             notes: Vec::new(),
             seen: 0,
         }
@@ -879,9 +886,20 @@ impl Menu {
                 self.dialog = Some(id.to_owned());
             }
             RowAction::Folder => view.host.queue(Action::OpenFolder(id.to_owned())),
+            RowAction::Report => {
+                self.report = Some(report(view, plugin));
+                self.copied = Some(id.to_owned());
+            }
             RowAction::Remove => self.removing = Some(id.to_owned()),
         }
         false
+    }
+
+    /// Puts a report the player asked for on the clipboard.
+    fn copy_report(&mut self, ui: &Ui) {
+        if let Some(report) = self.report.take() {
+            ui.ctx().copy_text(report);
+        }
     }
 
     /// The chosen plugin's details under its row: what it does, what it may
@@ -952,6 +970,15 @@ impl Menu {
                     if *status != Status::AwaitingApproval {
                         actions.push((s.open_folder, RowAction::Folder));
                     }
+                    let copied = self.copied.as_deref() == Some(manifest.id());
+                    actions.push((
+                        if copied {
+                            s.report_copied
+                        } else {
+                            s.copy_report
+                        },
+                        RowAction::Report,
+                    ));
                     actions.push((s.remove, RowAction::Remove));
                     for (index, (text, row_action)) in actions.into_iter().enumerate() {
                         let kind = if row_action == RowAction::Remove {
@@ -967,7 +994,9 @@ impl Menu {
                     }
                 });
             });
-        action.is_some_and(|action| self.act(view, plugin, action))
+        let opened = action.is_some_and(|action| self.act(view, plugin, action));
+        self.copy_report(ui);
+        opened
     }
 
     /// The menu of a row's right click. Returns true when the player opened
@@ -1035,6 +1064,10 @@ impl Menu {
             if menu_item(ui, view, None, s.open_folder, p.text) {
                 view.host.queue(Action::OpenFolder(id.to_owned()));
             }
+        }
+        if menu_item(ui, view, None, s.copy_report, p.text) {
+            self.act(view, plugin, RowAction::Report);
+            self.copy_report(ui);
         }
         separate(ui);
         if menu_item(ui, view, None, s.remove, p.danger) {
@@ -1911,6 +1944,99 @@ impl Menu {
     }
 }
 
+/// What a player sends a plugin's author when something goes wrong: the
+/// plugin as Angelica sees it — the game, the map, its state, permissions,
+/// what the installer did, and the lines it logged last, which is how a
+/// plugin tells about its work. In English, for the author.
+fn report(view: &View<'_>, plugin: &Plugin) -> String {
+    let installer = view
+        .host
+        .plugin_installer()
+        .map(|installer| installer.messages())
+        .unwrap_or_default();
+    report_text(
+        &view.host.services().game.version(),
+        view.map_status,
+        &plugin.manifest,
+        &plugin.status(),
+        installer.iter().map(|(_, report)| report),
+        &plugin.log.lines(),
+    )
+}
+
+/// The text of [`report`].
+fn report_text<'a>(
+    game: &str,
+    map_status: &[String],
+    manifest: &Manifest,
+    status: &Status,
+    installer: impl Iterator<Item = &'a Report>,
+    lines: &[LogLine],
+) -> String {
+    use std::fmt::Write as _;
+    let id = manifest.id();
+    let mut out = String::new();
+    let _ = writeln!(out, "Angelica {}, game {game}", env!("CARGO_PKG_VERSION"));
+    for line in map_status {
+        let _ = writeln!(out, "{line}");
+    }
+    let origin = match manifest.origin {
+        Origin::Catalog => "from the Angelica catalog",
+        Origin::Author => "from its author",
+        Origin::Development => "in development",
+    };
+    let _ = writeln!(
+        out,
+        "\n{} ({id}) {}, {origin}",
+        manifest.plugin.name, manifest.plugin.version
+    );
+    let state = match status {
+        Status::Running => "running".to_owned(),
+        Status::Disabled => "off".to_owned(),
+        Status::AwaitingApproval => "awaiting approval".to_owned(),
+        Status::Faulted(reason) => format!("stopped: {reason}"),
+    };
+    let _ = writeln!(out, "State: {state}");
+    let permissions: Vec<&str> = manifest.permissions().iter().map(|p| p.name()).collect();
+    let _ = writeln!(
+        out,
+        "Permissions: {}",
+        if permissions.is_empty() {
+            "none".to_owned()
+        } else {
+            permissions.join(", ")
+        }
+    );
+    for report in installer {
+        let line = match report {
+            Report::Installed { plugin, version } if plugin == id => format!("installed {version}"),
+            Report::Updated { plugin, from, to } if plugin == id => {
+                format!("updated {from} to {to}")
+            }
+            Report::Compiled(plugin) if plugin == id => "compiled again".to_owned(),
+            Report::Failed(Failure::Update(plugin), reason) if plugin == id => {
+                format!("update failed: {reason}")
+            }
+            Report::Failed(Failure::Compile(plugin), reason) if plugin == id => {
+                format!("compiling failed: {reason}")
+            }
+            _ => continue,
+        };
+        let _ = writeln!(out, "Installer in this session: {line}");
+    }
+    let _ = writeln!(out, "\nLog, the last {} lines:", lines.len());
+    for line in lines {
+        let level = match line.level {
+            Level::Debug => "debug",
+            Level::Info => "info",
+            Level::Warning => "warning",
+            Level::Error => "error",
+        };
+        let _ = writeln!(out, "[{level}] {}", line.text);
+    }
+    out
+}
+
 /// A plugin's tile, striped while the plugin is in development.
 fn plugin_tile(painter: &egui::Painter, rect: Rect, plugin: &Plugin, faded: bool, p: &Palette) {
     let development = plugin.manifest.origin == Origin::Development;
@@ -2698,6 +2824,46 @@ mod tests {
         );
         assert!(lines(&entries, "", Some(Class::OtherPlayers)).is_empty());
         assert_eq!(lines(&entries, "", None).len(), 3);
+    }
+
+    #[test]
+    fn a_report_tells_the_author_what_angelica_sees() {
+        let manifest = Manifest::parse(
+            "manifest = 1\n[plugin]\nid = \"timers\"\nname = \"Timers\"\nversion = \"1.2.0\"\napi = \"1.0\"\ndescription = \"Resets\"\n[permissions]\n\"chat.print\" = true\n",
+        )
+        .unwrap();
+        let installer = [
+            Report::Updated {
+                plugin: "timers".into(),
+                from: "1.1.0".into(),
+                to: "1.2.0".into(),
+            },
+            Report::Compiled("other".into()),
+        ];
+        let text = report_text(
+            "2026.09.15.0000.0000",
+            &["Game map: verified for this build".into()],
+            &manifest,
+            &Status::Faulted("a trap in tick".into()),
+            installer.iter(),
+            &[LogLine {
+                level: Level::Warning,
+                text: "the feed could not be read".into(),
+            }],
+        );
+        for expected in [
+            "game 2026.09.15.0000.0000",
+            "Game map: verified for this build",
+            "Timers (timers) 1.2.0, from the Angelica catalog",
+            "State: stopped: a trap in tick",
+            "Permissions: chat.print",
+            "Installer in this session: updated 1.1.0 to 1.2.0",
+            "Log, the last 1 lines:",
+            "[warning] the feed could not be read",
+        ] {
+            assert!(text.contains(expected), "{expected:?} in {text}");
+        }
+        assert!(!text.contains("compiled again"), "another plugin's report");
     }
 
     #[test]

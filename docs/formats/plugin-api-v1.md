@@ -24,7 +24,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
 | `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 
-Every plugin has its log, folder, windows, and jobs. An operation that needs a permission the player did not grant returns `permission-denied`.
+Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
 Every fallible call returns `types.error`: a stable `kind` for programs and a `message` that names the path, table, URL, or value involved. A guest that ignores an error keeps running; a trap disables it.
 
