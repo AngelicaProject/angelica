@@ -70,3 +70,8 @@ undocumented_unsafe_blocks = "deny"
 # Code in the game process catches panics at every boundary.
 [profile.release]
 panic = "unwind"
+
+# Tests run plugins: dependencies, wasmtime's compiler above all, build
+# optimized, while the workspace's own crates stay quick to rebuild.
+[profile.dev.package."*"]
+opt-level = 2

@@ -2,6 +2,8 @@
 
 Tests protect contracts, not implementation trivia. Tests must not depend on an installed game, credentials, or network access, except the explicitly ignored tests described below.
 
+Development and test builds compile the workspace's dependencies with optimization (`[profile.dev.package."*"]` in `Cargo.toml`): plugin tests compile components with wasmtime's compiler, which is many times slower unoptimized. The workspace's own crates stay unoptimized so they rebuild quickly; the first build after a dependency changes takes longer.
+
 ## Test layers
 
 - **Pure crates** (`angelica-pe`, `angelica-map`, manifest and permission logic): unit tests and property tests over synthetic PE images and map files built in the tests.
