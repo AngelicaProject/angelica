@@ -8,6 +8,7 @@ This section owns Angelica's versioned contracts, including those whose data liv
 - [`text-table-v1.md`](./text-table-v1.md) — the file of replacement cell text a plugin activates.
 - [`game-structures.md`](./game-structures.md) — the game structures the host's adapters change, and the map entries they use.
 - [`host-installation-v1.md`](./host-installation-v1.md) — host configuration, authenticated file sets, player grants, plugin settings, and development installations.
+- [`update-feed-v1.md`](./update-feed-v1.md) — the signed feed that names the newest release of Angelica or of the game map.
 - [`plugin-file-v1.md`](./plugin-file-v1.md) — the file an author signs to distribute a plugin outside the catalog, and its installation.
 
 Once a format is released, an incompatible change requires a new format version. Readers refuse a version they do not know instead of reinterpreting it.

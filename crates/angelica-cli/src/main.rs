@@ -6,6 +6,7 @@ mod dev;
 mod excel;
 mod exe;
 mod new;
+mod release;
 mod verify;
 
 use std::process::ExitCode;
@@ -36,6 +37,9 @@ enum Command {
     /// A signed local installation for development.
     #[command(subcommand)]
     Dev(dev::DevCommand),
+    /// Release signing and update feeds, for the release workflows.
+    #[command(subcommand)]
+    Release(release::ReleaseCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -82,6 +86,7 @@ fn main() -> ExitCode {
         Command::Plugin(PluginCommand::Install(args)) => author::install(&args),
         Command::Plugin(PluginCommand::Update(args)) => author::update(&args),
         Command::Dev(command) => dev::run(&command),
+        Command::Release(command) => release::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),
     }

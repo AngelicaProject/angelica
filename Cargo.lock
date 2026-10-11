@@ -52,10 +52,12 @@ dependencies = [
  "angelica-map",
  "angelica-pe",
  "angelica-sqpack",
+ "angelica-update",
  "clap",
  "ed25519-dalek",
  "getrandom",
  "iced-x86",
+ "semver",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -194,6 +196,18 @@ dependencies = [
 name = "angelica-text"
 version = "0.1.0"
 dependencies = [
+ "sha2 0.10.9",
+ "thiserror",
+]
+
+[[package]]
+name = "angelica-update"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "semver",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror",
 ]

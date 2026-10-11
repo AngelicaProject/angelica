@@ -11,6 +11,7 @@ members = [
   "crates/angelica-proxy",
   "crates/angelica-host",
   "crates/angelica-sdk",
+  "crates/angelica-update",
   "crates/angelica-fake-game",
   "crates/angelica-fake-game/hostile",
   "examples/hello",
@@ -35,6 +36,7 @@ flate2 = { version = "1.1.10", default-features = false, features = ["rust_backe
 angelica-hook = { path = "crates/angelica-hook" }
 angelica-host = { path = "crates/angelica-host" }
 angelica-sdk = { path = "crates/angelica-sdk" }
+angelica-update = { path = "crates/angelica-update" }
 ed25519-dalek = "3.0.0"
 getrandom = "0.4.3"
 clap = { version = "4.5", features = ["derive"] }

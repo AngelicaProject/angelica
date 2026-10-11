@@ -1,0 +1,21 @@
+[package]
+name = "angelica-update"
+description = "Signed update feeds of Angelica and the game map: reading, verifying, and writing them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ed25519-dalek.workspace = true
+semver = { workspace = true, features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
