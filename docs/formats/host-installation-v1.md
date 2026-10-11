@@ -24,7 +24,7 @@ Map releases and plugin packages contain `files.json` and `files.json.sig`. The 
 {"format":1,"files":{"angelica.toml":"<lowercase SHA-256>","plugin.wasm":"<lowercase SHA-256>","plugin.cwasm":"<lowercase SHA-256>"}}
 ```
 
-Each listed file is read and its SHA-256 checked; only these bytes reach the map reader or the component loader. A plugin package holds `angelica.toml`, `plugin.wasm`, and `plugin.cwasm`, in a folder named by the plugin id. A map package holds `map.toml`, its `entries/*.toml`, and optionally `builds/*.toml`.
+Each listed file is read and its SHA-256 checked; only these bytes reach the map reader or the component loader. A plugin package holds `angelica.toml`, `plugin.wasm`, and `plugin.cwasm`, in a folder named by the plugin id. `angelica dev install` also adds a `development` file, whose contents do not matter: the host lists such a plugin as in development, with a striped tile and a `dev` token after its name. Release packages never hold one. A map package holds `map.toml`, its `entries/*.toml`, and optionally `builds/*.toml`.
 
 `plugin.cwasm` is the component compiled by `angelica plugin compile` from the packaged `plugin.wasm`. It is native code: the signer must compile it from the source itself and never sign an artifact a plugin author supplied. The compiler version, engine settings, architecture, operating system, and CPU features must match the runtime; otherwise the package is refused, and the game never compiles a component.
 

@@ -78,6 +78,7 @@ strings! {
     add: "+ Add", "+ Добавить";
     adding: "Adding…", "Добавляю…";
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
+    source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
     version: "version {version}", "версия {version}";

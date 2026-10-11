@@ -671,7 +671,7 @@ impl Drawer<'_> {
                 egui::pos2(row.left() + look.at(20.0), y),
                 egui::Vec2::splat(look.at(24.0)),
             );
-            theme::tile(&painter, tile, &entry.title, faded, p);
+            theme::tile(&painter, tile, &entry.title, faded, false, p);
             let name = painter.text(
                 egui::pos2(row.left() + look.at(42.0), y),
                 egui::Align2::LEFT_CENTER,

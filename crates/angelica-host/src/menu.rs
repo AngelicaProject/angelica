@@ -718,19 +718,32 @@ impl Menu {
             pos2(columns.tile, rect.center().y),
             vec2(view.at(24.0), view.at(24.0)),
         );
-        theme::tile(&painter, tile, &plugin.manifest.plugin.name, off, p);
+        let development = plugin.manifest.origin == Origin::Development;
+        plugin_tile(&painter, tile, plugin, off, p);
+        let token = if development { view.at(40.0) } else { 0.0 };
         let name = elided(
             &painter,
             &plugin.manifest.plugin.name,
             sans(view.at(13.5)),
             if off { p.muted } else { p.text },
-            columns.permissions - view.at(12.0) - columns.name,
+            columns.permissions - view.at(12.0) - columns.name - token,
         );
+        let name_width = name.size().x;
         painter.galley(
             pos2(columns.name, rect.center().y - name.size().y / 2.0),
             name,
             p.text,
         );
+        if development {
+            theme::development_token(
+                &painter,
+                columns.name + name_width + view.at(8.0),
+                rect.center().y,
+                view.k,
+                off,
+                p,
+            );
+        }
         let (mut acted, mut opened) = (false, false);
         if pointed && !chosen {
             (acted, opened) = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
@@ -969,7 +982,7 @@ impl Menu {
             ui.add_space(view.at(6.0));
             let (tile, _) =
                 ui.allocate_exact_size(vec2(view.at(30.0), view.at(30.0)), Sense::hover());
-            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+            plugin_tile(ui.painter(), tile, plugin, false, p);
             ui.add_space(view.at(4.0));
             ui.vertical(|ui| {
                 ui.label(
@@ -1050,6 +1063,7 @@ impl Menu {
         let manifest = &plugin.manifest;
         match manifest.origin {
             Origin::Catalog => s.source_catalog.to_owned(),
+            Origin::Development => s.source_development.to_owned(),
             Origin::Author if manifest.plugin.authors.is_empty() => s.source_author.to_owned(),
             Origin::Author => fill(
                 s.source_authors,
@@ -1230,7 +1244,7 @@ impl Menu {
                                 vec2(view.at(40.0), view.at(40.0)),
                                 Sense::hover(),
                             );
-                            theme::tile(ui.painter(), tile, &plugin.manifest.plugin.name, false, p);
+                            plugin_tile(ui.painter(), tile, plugin, false, p);
                             ui.add_space(view.at(12.0));
                             ui.vertical(|ui| {
                                 ui.label(
@@ -1701,7 +1715,7 @@ impl Menu {
                         plugin_heading(
                             ui,
                             view,
-                            &plugin.manifest.plugin.name,
+                            &plugin,
                             &fill(s.version, &[("version", &plugin.manifest.plugin.version)]),
                         );
                         ui.add(
@@ -1897,12 +1911,26 @@ impl Menu {
     }
 }
 
+/// A plugin's tile, striped while the plugin is in development.
+fn plugin_tile(painter: &egui::Painter, rect: Rect, plugin: &Plugin, faded: bool, p: &Palette) {
+    let development = plugin.manifest.origin == Origin::Development;
+    theme::tile(
+        painter,
+        rect,
+        &plugin.manifest.plugin.name,
+        faded,
+        development,
+        p,
+    );
+}
+
 /// A plugin at the top of a dialog: its tile, its name, and one line.
-fn plugin_heading(ui: &mut Ui, view: &View<'_>, name: &str, line: &str) {
+fn plugin_heading(ui: &mut Ui, view: &View<'_>, plugin: &Plugin, line: &str) {
     let p = view.p;
+    let name = &plugin.manifest.plugin.name;
     ui.horizontal(|ui| {
         let (tile, _) = ui.allocate_exact_size(vec2(view.at(40.0), view.at(40.0)), Sense::hover());
-        theme::tile(ui.painter(), tile, name, false, p);
+        plugin_tile(ui.painter(), tile, plugin, false, p);
         ui.add_space(view.at(12.0));
         ui.vertical(|ui| {
             ui.label(
