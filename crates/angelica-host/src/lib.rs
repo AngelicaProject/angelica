@@ -7,6 +7,7 @@
 #![allow(linker_messages)]
 pub mod author;
 pub mod catalog;
+pub mod catalog_index;
 pub mod chat;
 pub mod commands;
 pub mod config;

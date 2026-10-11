@@ -181,6 +181,101 @@ fn greetings_start_again_after_a_game_restart() {
 }
 "#;
 
+/// CI for every push and pull request.
+const CI: &str = r"name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+          targets: wasm32-wasip2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+";
+
+/// A release from a tag `v<version>`: the plugin file signed with the
+/// author key, in the tag's release and behind the link that stays the same.
+const RELEASE: &str = r#"name: Release
+
+# A tag v<version> matching plugin.version in angelica.toml releases the
+# plugin: CI signs it with the author key (the repository secret
+# ANGELICA_AUTHOR_KEY), puts it into the tag's release, which the Angelica
+# catalog checks, and behind the link players install from:
+# https://github.com/<owner>/<name>/releases/download/{id}/{id}.angelica
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: 1.98.1
+          targets: wasm32-wasip2
+
+      - name: Check the tag
+        run: |
+          declared=$(sed -n '/^\[plugin\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' angelica.toml)
+          if [ "v$declared" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME does not match plugin.version $declared"
+            exit 1
+          fi
+
+      - run: cargo test
+      - run: cargo build --release --target wasm32-wasip2
+      - name: Install the angelica tool
+        run: cargo install --locked --git https://github.com/AngelicaProject/angelica angelica-cli --root "$RUNNER_TEMP/angelica"
+
+      - name: Sign and publish
+        env:
+          ANGELICA_AUTHOR_KEY: ${{ secrets.ANGELICA_AUTHOR_KEY }}
+        run: |
+          key="$RUNNER_TEMP/author.key"
+          printf '%s' "$ANGELICA_AUTHOR_KEY" > "$key"
+          tool="$RUNNER_TEMP/angelica/bin/angelica.exe"
+          component=target/wasm32-wasip2/release/{crate}.wasm
+          mkdir -p dist
+          "$tool" plugin pack . --component "$component" --key "$key" --output dist/{id}.angelica
+          "$tool" plugin publish . --component "$component" --github "$GITHUB_REPOSITORY" --key "$key"
+          rm -f "$key"
+          gh release create "$GITHUB_REF_NAME" dist/{id}.angelica --title "{name} ${GITHUB_REF_NAME#v}" --generate-notes
+"#;
+
 /// The local Angelica checkout the dependencies build from; kept out of
 /// the repository, so its path stays on this machine.
 const CARGO_CONFIG: &str = r#"[patch."https://github.com/AngelicaProject/angelica"]
@@ -329,6 +424,8 @@ fn create(args: &NewArgs) -> Result<PathBuf, String> {
         (".gitignore", GITIGNORE),
         (".cargo/config.toml", CARGO_CONFIG),
         ("rust-toolchain.toml", TOOLCHAIN),
+        (".github/workflows/ci.yml", CI),
+        (".github/workflows/release.yml", RELEASE),
     ] {
         let path = folder.join(path);
         if let Some(parent) = path.parent() {

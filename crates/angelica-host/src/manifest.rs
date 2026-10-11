@@ -201,7 +201,8 @@ pub struct Manifest {
 /// Where a plugin's package came from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Origin {
-    /// The official catalog, signed with the release key.
+    /// The official catalog: a package signed with the release key, or a
+    /// plugin file the catalog built and signed with it.
     #[default]
     Catalog,
     /// Its author, outside the catalog: a plugin file the player installed,
@@ -211,6 +212,18 @@ pub enum Origin {
     /// `angelica dev install`, which adds a `development` file to the
     /// package. The menu marks it so a developer tells it from the rest.
     Development,
+}
+
+/// A plugin id: 1 to 64 lowercase letters, digits, and inner hyphens.
+#[must_use]
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && !id.ends_with('-')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -230,15 +243,7 @@ impl Manifest {
             ));
         }
         let plugin = &manifest.plugin;
-        if plugin.id.is_empty()
-            || plugin.id.len() > 64
-            || plugin.id.starts_with('-')
-            || plugin.id.ends_with('-')
-            || !plugin
-                .id
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
+        if !valid_id(&plugin.id) {
             return fail(
                 "plugin.id has 1 to 64 lowercase letters, digits, and inner hyphens".into(),
             );

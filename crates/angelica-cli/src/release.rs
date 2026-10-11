@@ -23,6 +23,46 @@ pub enum ReleaseCommand {
     Feed(FeedArgs),
     /// Sign a game map into one release file, `map.pack`.
     Map(MapArgs),
+    /// Review a catalog entry's pull request: whether it merges by itself.
+    Review(ReviewArgs),
+    /// Write the catalog's signed index from the registry and the built files.
+    Catalog(CatalogArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewArgs {
+    /// The entry in the pull request, `plugins/<id>.toml`.
+    #[arg(long)]
+    entry: PathBuf,
+    /// The plugin file of the entry's tag, from the plugin's repository.
+    #[arg(long)]
+    author_file: PathBuf,
+    /// The entry the catalog has now; absent for a new plugin.
+    #[arg(long, requires = "previous_file")]
+    previous_entry: Option<PathBuf>,
+    /// The plugin file the catalog publishes now.
+    #[arg(long, requires = "previous_entry")]
+    previous_file: Option<PathBuf>,
+    #[command(flatten)]
+    reporting: Output,
+}
+
+#[derive(Debug, Args)]
+pub struct CatalogArgs {
+    /// The registry checkout, with `plugins/` and `withdrawn.toml`.
+    #[arg(long)]
+    registry: PathBuf,
+    /// The folder of the plugin files the catalog built, `<id>.angelica`.
+    #[arg(long)]
+    files: PathBuf,
+    /// When the index was built, RFC 3339 in UTC.
+    #[arg(long)]
+    published: String,
+    /// Where to write `catalog.json`; its signature goes beside it as `.sig`.
+    #[arg(long)]
+    output: PathBuf,
+    #[command(flatten)]
+    reporting: Output,
 }
 
 #[derive(Debug, Args)]
@@ -85,6 +125,8 @@ pub fn run(command: &ReleaseCommand) -> ExitCode {
         ReleaseCommand::Sign(args) => (sign(args), &args.reporting),
         ReleaseCommand::Feed(args) => (feed(args), &args.reporting),
         ReleaseCommand::Map(args) => (map(args), &args.reporting),
+        ReleaseCommand::Review(args) => (review(args), &args.reporting),
+        ReleaseCommand::Catalog(args) => (catalog(args), &args.reporting),
     };
     match result {
         Ok(report) => {
@@ -234,4 +276,79 @@ fn map(args: &MapArgs) -> Result<serde_json::Value, String> {
     let bytes = angelica_update::pack(&packed).map_err(|e| e.to_string())?;
     std::fs::write(&args.output, &bytes).map_err(|e| format!("{}: {e}", args.output.display()))?;
     Ok(serde_json::json!({ "pack": args.output, "files": packed.len() }))
+}
+
+fn read_entry(path: &std::path::Path) -> Result<crate::catalog::Entry, String> {
+    let id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| format!("{}: not plugins/<id>.toml", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::catalog::Entry::parse(&text, id).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn review(args: &ReviewArgs) -> Result<serde_json::Value, String> {
+    let entry = read_entry(&args.entry)?;
+    let author_file = std::fs::read(&args.author_file)
+        .map_err(|e| format!("{}: {e}", args.author_file.display()))?;
+    let previous = match (&args.previous_entry, &args.previous_file) {
+        (Some(entry), Some(file)) => {
+            let before = read_entry(entry)?;
+            let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let (_, manifest) = crate::catalog::open(&bytes)?;
+            Some((before, manifest))
+        }
+        _ => None,
+    };
+    let review = crate::catalog::review(
+        &entry,
+        &author_file,
+        previous.as_ref().map(|(entry, manifest)| (entry, manifest)),
+    )?;
+    serde_json::to_value(review).map_err(|e| e.to_string())
+}
+
+fn catalog(args: &CatalogArgs) -> Result<serde_json::Value, String> {
+    let key = release_key()?;
+    let release = key.verifying_key().to_bytes();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(args.registry.join("plugins"))
+        .map_err(|e| format!("plugins: {e}"))?
+        .filter_map(Result::ok)
+        .map(|item| item.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "toml"))
+        .collect();
+    paths.sort();
+    let mut plugins = Vec::new();
+    for path in paths {
+        let entry = read_entry(&path)?;
+        let file = args.files.join(format!("{}.angelica", entry.id));
+        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        plugins.push(crate::catalog::listed(&entry, &bytes, &release)?);
+    }
+    let withdrawn = match std::fs::read_to_string(args.registry.join("withdrawn.toml")) {
+        Ok(text) => {
+            let withdrawn: crate::catalog::Withdrawn =
+                toml::from_str(&text).map_err(|e| format!("withdrawn.toml: {e}"))?;
+            if withdrawn.format != 1 {
+                return Err("withdrawn.toml: unsupported format".into());
+            }
+            withdrawn.withdrawn
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(format!("withdrawn.toml: {e}")),
+    };
+    let index = serde_json::json!({
+        "format": 1,
+        "published": args.published,
+        "plugins": plugins,
+        "withdrawn": withdrawn,
+    });
+    let mut json = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
+    json.push(b'\n');
+    let signature = ed25519_dalek::Signer::sign(&key, &json).to_bytes();
+    std::fs::write(&args.output, &json).map_err(|e| format!("{}: {e}", args.output.display()))?;
+    let mut sig = args.output.clone().into_os_string();
+    sig.push(".sig");
+    std::fs::write(&sig, signature).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "catalog": args.output, "plugins": plugins.len() }))
 }

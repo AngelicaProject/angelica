@@ -112,6 +112,15 @@ fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpda
     updates
 }
 
+/// The catalog's index, read with the release key; none without one.
+fn catalog_source() -> Option<crate::catalog_index::Source> {
+    Some(crate::catalog_index::Source {
+        catalog: Arc::default(),
+        fetch: Arc::new(crate::self_update::Http::new()),
+        key: RELEASE_KEY?,
+    })
+}
+
 fn initialize() -> Result<(), String> {
     let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
@@ -161,6 +170,9 @@ fn initialize() -> Result<(), String> {
     ));
     host.set_plugin_installer(installer.clone());
     host.set_self_update(self_update(&config, root));
+    if let Some(source) = catalog_source() {
+        host.set_catalog(source);
+    }
     // Without the program, only what the player asks for reports that.
     installer.start(
         installer
@@ -353,7 +365,7 @@ fn load_package(
     let component =
         unsafe { super::component::load_authenticated(&sandbox.engine, &package.artifact) }
             .inspect_err(|_| {
-                if package.manifest.origin == crate::manifest::Origin::Author {
+                if package.compiled_here {
                     repairs.push(package.manifest.id().to_owned());
                 }
             })?;
