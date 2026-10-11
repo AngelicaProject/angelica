@@ -11,6 +11,7 @@ members = [
   "crates/angelica-proxy",
   "crates/angelica-host",
   "crates/angelica-sdk",
+  "crates/angelica-setup",
   "crates/angelica-update",
   "crates/angelica-fake-game",
   "crates/angelica-fake-game/hostile",
