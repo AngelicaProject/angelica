@@ -34,6 +34,7 @@ pub mod package;
 pub mod panel;
 pub mod plugin_installer;
 pub mod sandbox;
+pub mod self_update;
 pub mod sheets;
 pub mod state;
 pub mod storage;

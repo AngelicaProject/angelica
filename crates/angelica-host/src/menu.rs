@@ -1593,9 +1593,10 @@ impl Menu {
         }
     }
 
-    fn updates(&self, ui: &mut Ui, view: &View<'_>) {
+    fn updates(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
+        self.angelica_updates(ui, view);
         if let Some(installer) = view.host.plugin_installer() {
             setting(ui, view, s.setting_check, |ui| {
                 let checking = installer.checking();
@@ -1633,6 +1634,81 @@ impl Menu {
             )
             .wrap(),
         );
+    }
+
+    /// Angelica's own version, its update, and the channel.
+    fn angelica_updates(&mut self, ui: &mut Ui, view: &View<'_>) {
+        use crate::self_update::Status;
+        let s = self.strings();
+        let p = view.p;
+        let Some(updates) = view.host.self_update().cloned() else {
+            return;
+        };
+        let status = updates.status();
+        setting(ui, view, s.setting_angelica, |ui| {
+            let checking = status == Status::Checking;
+            let enabled = !checking && status != Status::Development;
+            let label = if checking { s.checking } else { s.check_now };
+            if theme::word(ui, label, Word::Action, enabled, view.k).clicked() {
+                updates.request();
+            }
+        });
+        let state = match &status {
+            Status::Development => s.angelica_development.to_owned(),
+            Status::NotChecked => s.angelica_not_checked.to_owned(),
+            Status::Checking => s.angelica_checking.to_owned(),
+            Status::UpToDate => s.angelica_up_to_date.to_owned(),
+            Status::Ready(version) => fill(s.angelica_ready, &[("version", version)]),
+            Status::Failed(reason) => fill(s.angelica_failed, &[("reason", reason)]),
+        };
+        let version = fill(
+            s.angelica_version,
+            &[("version", env!("CARGO_PKG_VERSION"))],
+        );
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("{}, {state}.", capitalized(&version)))
+                    .font(sans(view.at(12.0)))
+                    .color(if matches!(status, Status::Failed(_)) {
+                        p.attention
+                    } else {
+                        p.secondary
+                    }),
+            )
+            .wrap(),
+        );
+        ui.add_space(view.at(10.0));
+        let Some(built) = crate::self_update::build_channel() else {
+            return;
+        };
+        let current = self.settings.channel.unwrap_or(built);
+        let mut chosen = None;
+        setting(ui, view, s.setting_channel, |ui| {
+            let index = usize::from(current == angelica_update::Channel::Nightly);
+            chosen = theme::choice(ui, &[s.channel_stable, s.channel_nightly], index, view.k).map(
+                |index| {
+                    if index == 0 {
+                        angelica_update::Channel::Stable
+                    } else {
+                        angelica_update::Channel::Nightly
+                    }
+                },
+            );
+        });
+        ui.add(
+            egui::Label::new(
+                RichText::new(s.channel_note)
+                    .font(sans(view.at(12.0)))
+                    .color(p.secondary),
+            )
+            .wrap(),
+        );
+        ui.add_space(view.at(10.0));
+        if let Some(channel) = chosen.filter(|channel| *channel != current) {
+            self.settings.channel = Some(channel);
+            self.save(view.host);
+            updates.request();
+        }
     }
 
     /// When updates were last checked, in words.

@@ -173,6 +173,8 @@ pub struct Host {
     opener: Box<dyn Fn(&Path) + Send + Sync>,
     /// Installs plugins from links outside the game; none in tests.
     plugin_installer: std::sync::OnceLock<Arc<crate::plugin_installer::PluginInstaller>>,
+    /// Angelica's own updates; none in tests.
+    self_update: std::sync::OnceLock<Arc<crate::self_update::SelfUpdate>>,
 }
 
 impl Host {
@@ -200,6 +202,7 @@ impl Host {
             log_sink,
             opener,
             plugin_installer: std::sync::OnceLock::new(),
+            self_update: std::sync::OnceLock::new(),
         }
     }
 
@@ -233,6 +236,15 @@ impl Host {
     #[must_use]
     pub fn plugin_installer(&self) -> Option<&Arc<crate::plugin_installer::PluginInstaller>> {
         self.plugin_installer.get()
+    }
+
+    pub fn set_self_update(&self, updates: Arc<crate::self_update::SelfUpdate>) {
+        let _ = self.self_update.set(updates);
+    }
+
+    #[must_use]
+    pub fn self_update(&self) -> Option<&Arc<crate::self_update::SelfUpdate>> {
+        self.self_update.get()
     }
 
     /// The engine components must be compiled with.

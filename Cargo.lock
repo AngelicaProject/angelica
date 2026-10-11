@@ -103,6 +103,7 @@ dependencies = [
  "angelica-pe",
  "angelica-sqpack",
  "angelica-text",
+ "angelica-update",
  "ed25519-dalek",
  "egui",
  "getrandom",
