@@ -12,16 +12,16 @@ It offers no plugins: the player installs them from the Angelica menu in the gam
 
 ## What it does
 
-- **Finds the game** in, in order: the folder the player chose before (from an existing `angelica.json`), Steam libraries (the Steam path from the registry and `libraryfolders.vdf`, app 39210), the Square Enix launcher's default folder, and XIVLauncher's configured game path. A folder counts only when it holds `game/ffxiv_dx11.exe`.
+- **Finds the game** in, in order: Steam libraries (the Steam path from the registry and `libraryfolders.vdf`, app 39210), the Square Enix launcher's default folder, and XIVLauncher's configured game path. A folder counts only when it holds `game/ffxiv_dx11.exe`.
 - **Installs Angelica** for the current user into `%LOCALAPPDATA%\Angelica` ([installation](../formats/host-installation-v1.md)): `runtime.dll`, `plugin-installer.exe`, and their release signatures, taken from inside the installer and verified against the release key before they are written. It writes the channel the installer was built for into `state/_angelica.json`. The host downloads the game map and later updates by itself.
 - **Puts two files into the game's `game` folder**: the proxy `dinput8.dll` ([loading](./loading.md)) and `angelica.json` with the installation folder. When that folder is not writable for the user (as under `Program Files`), it starts a second copy of itself with administrator rights that only copies these two files and exits.
-- **Never overwrites another tool's `dinput8.dll`.** A `dinput8.dll` that is not Angelica's proxy (its release signature does not verify) stops the installation with an explanation; Angelica's own proxy of any version is replaced.
+- **Never overwrites another tool's `dinput8.dll`.** A `dinput8.dll` without the mark every Angelica proxy carries (the name of its log, `angelica-loader.log`) stops the installation with an explanation; Angelica's own proxy of any version is replaced.
 - **Registers itself** under the user's *Installed apps* with a copy of itself in the installation folder as the uninstaller.
 - Installing again over an existing installation updates the proxy and keeps the player's plugins, grants, settings, and storage.
 
 ## Removing
 
-The uninstaller, run from *Installed apps*, shows the same window: that Angelica's file leaves the game folder, and the choice to keep or delete the player's plugins and their data. It removes `dinput8.dll` (only when it is Angelica's proxy) and `angelica.json` from the game folder, asking for administrator rights the same way, and then asks whether to keep the player's plugins and their data. Without them it removes the installation folder; with them it leaves `plugins`, `grants`, `state`, and `storage` in place for a later installation.
+The uninstaller, run from *Installed apps*, shows the same window: that Angelica's file leaves the game folder, and the choice to keep or delete the player's plugins and their data. It removes `dinput8.dll` (only when it is Angelica's proxy) and `angelica.json` from the game folder, asking for administrator rights the same way. Without the player's data it removes the installation folder; with them it leaves `plugins`, `grants`, `state`, and `storage` in place for a later installation.
 
 ## Building
 
