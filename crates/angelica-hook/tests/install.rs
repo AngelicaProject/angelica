@@ -240,3 +240,31 @@ fn a_vtable_slot_points_at_the_replacement_while_enabled() {
         assert_eq!(call(), 2);
     }
 }
+
+#[test]
+fn threads_that_patch_code_at_once_do_not_freeze_each_other_forever() {
+    // Each thread suspends every other while it writes; without one freeze
+    // at a time, two of them could suspend each other and both stop.
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            std::thread::spawn(|| {
+                // mov eax, 1; ret
+                let target = executable(&[0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3]);
+                let one = function::<Nullary>(target);
+                for _ in 0..10 {
+                    // SAFETY: the bytes are mapped code of this thread.
+                    unsafe {
+                        let mut patch = CodePatch::new(target + 1, &[0x01], &[0x02]).unwrap();
+                        patch.apply().unwrap();
+                        assert_eq!(one(), 2);
+                        patch.revert().unwrap();
+                        assert_eq!(one(), 1);
+                    }
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}

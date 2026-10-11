@@ -18,6 +18,8 @@ concurrency:
 jobs:
   rust:
     runs-on: windows-latest
+    # A hang fails the run instead of holding it for six hours.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
