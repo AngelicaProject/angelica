@@ -29,7 +29,7 @@ An update feed tells an installed Angelica what the newest release of a channel 
 | `published` | when the release was built, RFC 3339 in UTC |
 | `files` | each installed file by its name: the release asset that holds it, its size in bytes, and its SHA-256 |
 
-An Angelica feed lists `runtime.dll`, `plugin-installer.exe`, and `dinput8.dll`, each with its `.sig` asset beside it in the release; a map feed lists `map.zip`, the [signed file set](./host-installation-v1.md#authenticated-file-sets) of the map. Assets are downloaded from the same release as the feed: `https://github.com/<repository>/releases/download/<tag>/<asset>`, where `<tag>` is `v<version>` for stable and `nightly` for nightly.
+An Angelica feed lists `runtime.dll`, `plugin-installer.exe`, and `dinput8.dll`, each with its `.sig` asset beside it in the release; a map feed lists `map.pack` ([below](#map-pack)). Assets are downloaded from the same release as the feed: `https://github.com/<repository>/releases/download/<tag>/<asset>`, where `<tag>` is `v<version>` for stable and `nightly` for nightly.
 
 A reader refuses a feed of another format, product, or channel, a version that is not valid SemVer, a file name that is not a plain file name, and a size above 256 MiB. It installs a file only when the downloaded bytes have the listed size and SHA-256, and, for the runtime and the plugin installer, when their `.sig` also verifies. Unknown fields are refused.
 
