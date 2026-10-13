@@ -546,6 +546,14 @@ impl crate::host::Updates for FolderPackages {
             return Vec::new();
         }
         self.checked = std::time::Instant::now();
+        // The installer creates the installation's key with the first plugin
+        // it installs, which may be after the game started; a key read at
+        // start is never replaced.
+        if self.trust.installation.is_none()
+            && let Ok(Some(key)) = crate::author::installation_key(&self.trust.keys)
+        {
+            self.trust.installation = Some(key);
+        }
         let mut repairs = Vec::new();
         let packages = self
             .look()
