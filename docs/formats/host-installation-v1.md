@@ -8,6 +8,8 @@ The installation folder contains `current.json` and the version folders it choos
 
 The host writes `host.log` in the log folder, one line per event, each after the local time (`2026-10-13 17:54:03.120`). Every start begins with a `start:` line naming Angelica's version and channel, the game's version and executable hash, and the process; no line names the installation's path or the Windows user. Lines follow for the game map, the hooks a plugin asks for (in place or why not), the overlay (the graphics adapter, its driver, the device, and the game's swap chain when it attaches; a resize of the swap chain; why it stopped), plugins loaded and stopped, what the plugin installer did, Angelica and map updates installed or failed (a check that keeps failing the same way is logged once), and a catalog index that could not be read. A log over 2 MiB at start becomes `host.old.log`, replacing the one before.
 
+`diagnostics.json` beside `host.json`, when present, turns parts of Angelica off to find which one a problem comes from, one start at a time, without another build: `overlay` is `on` (the default), `hook` (the overlay hooks `Present` and passes every frame on, making and drawing nothing), or `off` (no Direct3D device and no hook); `updates: false` stops Angelica, map, plugin, and catalog checks over the network; `plugins: false` loads no installed plugin. Unknown fields or values make the file count as absent, which the log says; the start line is followed by what the file turned off.
+
 Optional limits:
 
 | Field | Default | Range | Meaning |

@@ -137,6 +137,46 @@ fn log_start(base: usize, hash: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The overlay's hooks as `diagnostics.json` asks: none when it is off.
+fn install_overlay(
+    host: &Arc<Host>,
+    map_status: Vec<String>,
+    diagnostics: crate::config::Diagnostics,
+) -> Option<OverlayHooks> {
+    use crate::config::OverlayMode;
+    if diagnostics.overlay == OverlayMode::Off {
+        return None;
+    }
+    match OverlayHooks::install(
+        host.clone(),
+        map_status,
+        diagnostics.overlay == OverlayMode::On,
+    ) {
+        Ok(hooks) => {
+            super::log("overlay hooks installed");
+            Some(hooks)
+        }
+        Err(error) => {
+            host.diagnostic(format!("overlay unavailable: {error}"));
+            None
+        }
+    }
+}
+
+/// What `diagnostics.json` turns off, said in the log.
+fn diagnostics(root: &Path) -> crate::config::Diagnostics {
+    let (diagnostics, problem) = crate::config::Diagnostics::load(root);
+    if let Some(problem) = problem {
+        super::log(&problem);
+    }
+    if diagnostics != crate::config::Diagnostics::default() {
+        super::log(&format!(
+            "diagnostics.json turns parts off: {diagnostics:?}"
+        ));
+    }
+    diagnostics
+}
+
 fn initialize() -> Result<(), String> {
     let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
@@ -158,6 +198,7 @@ fn initialize() -> Result<(), String> {
 
     let (base, snapshot, hash) = executable_snapshot()?;
     log_start(base, &hash)?;
+    let diagnostics = diagnostics(root);
     let (catalog, map, map_status) = load_map(&config, base, &snapshot, hash);
     for line in &map_status {
         super::log(line);
@@ -187,17 +228,20 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
     ));
     host.set_plugin_installer(installer.clone());
-    host.set_self_update(self_update(&config, root));
-    if let Some(source) = catalog_source() {
-        host.set_catalog(source);
+    if diagnostics.updates {
+        host.set_self_update(self_update(&config, root));
+        if let Some(source) = catalog_source() {
+            host.set_catalog(source);
+        }
     }
     // Without the program, only what the player asks for reports that.
     installer.start(
-        installer
-            .program_exists()
+        (diagnostics.updates && installer.program_exists())
             .then_some(crate::plugin_installer::UPDATE_INTERVAL),
     );
-    discover_plugins(&config, &sandbox, &trust, &mut host);
+    if diagnostics.plugins {
+        discover_plugins(&config, &sandbox, &trust, &mut host);
+    }
     let map_data = MapData {
         directory: config.map_directory.clone(),
         seen: None,
@@ -205,13 +249,15 @@ fn initialize() -> Result<(), String> {
         state: host.services().state.clone(),
         ui: host.services().ui.clone(),
     };
-    host.watch(Box::new(FolderPackages::new(
-        config.plugin_directory.clone(),
-        sandbox.clone(),
-        trust,
-        installer,
-        map_data,
-    )));
+    if diagnostics.plugins {
+        host.watch(Box::new(FolderPackages::new(
+            config.plugin_directory.clone(),
+            sandbox.clone(),
+            trust,
+            installer,
+            map_data,
+        )));
+    }
 
     // Keep code and callbacks mapped even if a later tool retains one of our hooks.
     let mut pinned = std::ptr::null_mut();
@@ -231,16 +277,7 @@ fn initialize() -> Result<(), String> {
     host.start_all();
     let host = Arc::new(host);
     super::crash::install(host.clone(), catalog, config.log_directory.clone());
-    let overlay = match OverlayHooks::install(host.clone(), map_status) {
-        Ok(hooks) => {
-            super::log("overlay hooks installed");
-            Some(hooks)
-        }
-        Err(error) => {
-            host.diagnostic(format!("overlay unavailable: {error}"));
-            None
-        }
-    };
+    let overlay = install_overlay(&host, map_status, diagnostics);
     let _ = STATE.set(State {
         host,
         overlay: Mutex::new(overlay),

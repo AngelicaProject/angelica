@@ -101,3 +101,101 @@ impl Config {
         }
     }
 }
+
+/// How much of the overlay runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayMode {
+    /// The menu and plugin windows are drawn.
+    #[default]
+    On,
+    /// `Present` is hooked and passed on; nothing is made or drawn.
+    Hook,
+    /// No Direct3D device, no hook.
+    Off,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Parts of Angelica the player turns off to find which one a problem
+/// comes from: `diagnostics.json` beside `host.json`. Without the file
+/// everything runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Diagnostics {
+    #[serde(default)]
+    pub overlay: OverlayMode,
+    /// Angelica, map, plugin, and catalog checks over the network.
+    #[serde(default = "yes")]
+    pub updates: bool,
+    /// Loading installed plugins.
+    #[serde(default = "yes")]
+    pub plugins: bool,
+}
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self {
+            overlay: OverlayMode::On,
+            updates: true,
+            plugins: true,
+        }
+    }
+}
+
+impl Diagnostics {
+    /// `diagnostics.json` in `root`, with what is wrong with it; a file that
+    /// cannot be read turns nothing off.
+    #[must_use]
+    pub fn load(root: &Path) -> (Self, Option<String>) {
+        match std::fs::read(root.join("diagnostics.json")) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(diagnostics) => (diagnostics, None),
+                Err(e) => (Self::default(), Some(format!("diagnostics.json: {e}"))),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Self::default(), None),
+            Err(e) => (Self::default(), Some(format!("diagnostics.json: {e}"))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn parts_turn_off_one_by_one_and_a_bad_file_turns_nothing_off() {
+        let folder = tempfile::tempdir().unwrap();
+        assert_eq!(
+            Diagnostics::load(folder.path()),
+            (Diagnostics::default(), None)
+        );
+        std::fs::write(
+            folder.path().join("diagnostics.json"),
+            r#"{"overlay": "hook"}"#,
+        )
+        .unwrap();
+        let (diagnostics, problem) = Diagnostics::load(folder.path());
+        assert_eq!(problem, None);
+        assert_eq!(diagnostics.overlay, OverlayMode::Hook);
+        assert!(diagnostics.updates && diagnostics.plugins);
+        std::fs::write(
+            folder.path().join("diagnostics.json"),
+            r#"{"overlay": "off", "updates": false, "plugins": false}"#,
+        )
+        .unwrap();
+        let (diagnostics, _) = Diagnostics::load(folder.path());
+        assert_eq!(diagnostics.overlay, OverlayMode::Off);
+        assert!(!diagnostics.updates && !diagnostics.plugins);
+        std::fs::write(
+            folder.path().join("diagnostics.json"),
+            r#"{"overlay": "half"}"#,
+        )
+        .unwrap();
+        let (diagnostics, problem) = Diagnostics::load(folder.path());
+        assert_eq!(diagnostics, Diagnostics::default());
+        assert!(problem.is_some());
+    }
+}
