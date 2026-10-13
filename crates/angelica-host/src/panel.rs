@@ -31,6 +31,9 @@ pub struct Panel {
     /// The plugin windows collapsed to their title bars, by plugin and
     /// window id.
     collapsed: HashSet<(String, String)>,
+    /// The order plugin windows first opened in this game session, which
+    /// places each new one a step below and right of the one before.
+    placed: HashMap<(String, String), usize>,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -106,6 +109,7 @@ impl Panel {
             menu: Menu::new(host, system),
             inputs: HashMap::new(),
             collapsed: HashSet::new(),
+            placed: HashMap::new(),
             icons: Icons::default(),
             map_status,
         }
@@ -129,19 +133,44 @@ impl Panel {
     pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {
         self.icons.begin_frame();
         let keep = self.menu.draw(host, context, &self.map_status, menu);
-        if menu {
-            return keep;
-        }
+        let raised = self.menu.take_raised();
+        // Plugin windows are drawn with the menu open too; one opened from
+        // the menu comes in front of it.
         for plugin in &host.plugins() {
             if plugin.status() != Status::Running {
                 continue;
             }
             let (look, strings) = self.menu.look(context);
+            let raise = raised.as_deref() == Some(plugin.manifest.id());
             for window in plugin.windows() {
                 self.draw_window(host, plugin, &window, context, look, strings);
+                if raise {
+                    let id = plugin.manifest.id();
+                    let collapsed = self.collapsed.contains(&(id.to_owned(), window.id.clone()));
+                    context.move_to_top(egui::LayerId::new(
+                        egui::Order::Middle,
+                        window_id(id, &window.id, collapsed),
+                    ));
+                }
             }
         }
         keep
+    }
+
+    /// Where a plugin window first opens: in the middle of the screen, each
+    /// next one a step lower and to the right; the player moves it from
+    /// there.
+    fn place(&mut self, key: &(String, String), context: &egui::Context, look: Look) -> egui::Pos2 {
+        let next = self.placed.len();
+        let order = *self.placed.entry(key.clone()).or_insert(next);
+        let width = look.at(480.0);
+        let screen = context.content_rect();
+        #[allow(clippy::cast_precision_loss)]
+        let step = look.at(28.0) * (order % 8) as f32;
+        egui::pos2(
+            screen.center().x - width / 2.0 + step,
+            screen.top() + screen.height() * 0.16 + step,
+        )
     }
 
     fn draw_window(
@@ -156,6 +185,8 @@ impl Panel {
         let id = plugin.manifest.id();
         let key = (id.to_owned(), window.id.clone());
         let collapsed = self.collapsed.contains(&key);
+        let place = self.place(&key, context, look);
+        let window_id = window_id(id, &window.id, collapsed);
         let status = window.status.as_ref().map(|status| {
             let mark = match status.tone {
                 Tone::Good => Mark::Running,
@@ -179,12 +210,8 @@ impl Panel {
             "{} — {}",
             window.title, plugin.manifest.plugin.name
         ))
-        .id(egui::Id::new((
-            "angelica-plugin",
-            id,
-            &window.id,
-            collapsed,
-        )))
+        .id(window_id)
+        .default_pos(place)
         .title_bar(false)
         .collapsible(false)
         .resizable(!collapsed)
@@ -195,45 +222,49 @@ impl Panel {
                 pressed = menu::bar(ui, &look, &bar);
             });
         } else {
-            frame.default_width(look.at(480.0)).show(context, |ui| {
-                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                pressed = menu::bar(ui, &look, &bar);
-                if let Some(button) = &pressed.menu {
-                    egui::Popup::menu(button).show(|ui| {
-                        if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
-                            host.queue(Action::OpenFolder(id.to_owned()));
-                        }
-                        if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
-                            host.queue(Action::Disable(id.to_owned()));
-                        }
-                    });
-                }
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(
-                        menu::num_u8(look.at(12.0)),
-                        menu::num_u8(look.at(8.0)),
-                    ))
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing =
-                                    egui::vec2(look.at(12.0), look.at(4.0));
-                                let mut drawer = Drawer {
-                                    host,
-                                    plugin: id,
-                                    window: &window.id,
-                                    inputs: &mut self.inputs,
-                                    icons: &mut self.icons,
-                                    last: None,
-                                    look,
-                                    strings,
-                                };
-                                let mut position = 0;
-                                drawer.widgets(ui, &window.widgets, &mut position);
-                            });
-                    });
-            });
+            // The window keeps its size: what does not fit scrolls, and the
+            // player resizes it by its corner.
+            frame
+                .default_size(egui::vec2(look.at(480.0), look.at(460.0)))
+                .show(context, |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    pressed = menu::bar(ui, &look, &bar);
+                    if let Some(button) = &pressed.menu {
+                        egui::Popup::menu(button).show(|ui| {
+                            if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
+                                host.queue(Action::OpenFolder(id.to_owned()));
+                            }
+                            if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
+                                host.queue(Action::Disable(id.to_owned()));
+                            }
+                        });
+                    }
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(
+                            menu::num_u8(look.at(16.0)),
+                            menu::num_u8(look.at(12.0)),
+                        ))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing =
+                                        egui::vec2(look.at(12.0), look.at(8.0));
+                                    let mut drawer = Drawer {
+                                        host,
+                                        plugin: id,
+                                        window: &window.id,
+                                        inputs: &mut self.inputs,
+                                        icons: &mut self.icons,
+                                        last: None,
+                                        look,
+                                        strings,
+                                    };
+                                    let mut position = 0;
+                                    drawer.widgets(ui, &window.widgets, &mut position);
+                                });
+                        });
+                });
         }
         if pressed.toggle {
             if collapsed {
@@ -255,6 +286,11 @@ impl Panel {
             host.queue_event(id, Event::Closed(window.id.clone()));
         }
     }
+}
+
+/// A plugin window's egui id; a collapsed window is its own window.
+fn window_id(plugin: &str, window: &str, collapsed: bool) -> egui::Id {
+    egui::Id::new(("angelica-plugin", plugin, window, collapsed))
 }
 
 struct Drawer<'a> {
@@ -425,9 +461,9 @@ impl Drawer<'_> {
             Widget::Entry(entry) => self.entry(ui, entry),
             Widget::Icon(icon) => self.icon(ui, *icon),
             Widget::Separator => {
-                ui.add_space(self.look.at(4.0));
+                ui.add_space(self.look.at(6.0));
                 theme::rule(ui);
-                ui.add_space(self.look.at(4.0));
+                ui.add_space(self.look.at(6.0));
                 return None;
             }
             Widget::BeginRow
@@ -451,15 +487,15 @@ impl Drawer<'_> {
     fn heading(&self, ui: &mut egui::Ui, text: &str) -> egui::Response {
         let look = self.look;
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), look.at(26.0)),
+            egui::vec2(ui.available_width(), look.at(34.0)),
             egui::Sense::hover(),
         );
         let painter = ui.painter();
         let title = painter.text(
-            egui::pos2(rect.left(), rect.bottom() - look.at(5.0)),
+            egui::pos2(rect.left(), rect.bottom() - look.at(7.0)),
             egui::Align2::LEFT_BOTTOM,
             text,
-            theme::sans(look.at(12.0)),
+            theme::sans(look.at(12.5)),
             look.p.secondary,
         );
         let y = title.center().y + 1.0;
@@ -479,7 +515,7 @@ impl Drawer<'_> {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = look.at(8.0);
             let (name, _) = ui.allocate_exact_size(
-                egui::vec2(look.at(120.0), look.at(20.0)),
+                egui::vec2(look.at(130.0), look.at(20.0)),
                 egui::Sense::hover(),
             );
             let galley = ui.painter().layout(
@@ -608,17 +644,17 @@ impl Drawer<'_> {
             .inner_margin(egui::Margin {
                 left: menu::num_u8(look.at(42.0)),
                 right: menu::num_u8(look.at(10.0)),
-                top: 0,
-                bottom: menu::num_u8(look.at(8.0)),
+                top: menu::num_u8(look.at(2.0)),
+                bottom: menu::num_u8(look.at(12.0)),
             })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(2.0));
+                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(6.0));
                 for fact in &entry.facts {
                     self.fact(ui, fact);
                 }
                 if !entry.more.is_empty() {
-                    ui.add_space(look.at(4.0));
+                    ui.add_space(look.at(6.0));
                     ui.horizontal_wrapped(|ui| {
                         for action in &entry.more {
                             let word = theme::word(
@@ -645,7 +681,7 @@ impl Drawer<'_> {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             let (row, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), look.at(36.0)),
+                egui::vec2(ui.available_width(), look.at(40.0)),
                 egui::Sense::click(),
             );
             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

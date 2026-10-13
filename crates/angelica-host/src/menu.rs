@@ -197,6 +197,8 @@ pub struct Menu {
     dialog: Option<String>,
     /// The plugin the removal dialog asks about.
     removing: Option<String>,
+    /// The plugin the player opened, whose windows go to the front.
+    raised: Option<String>,
     /// A report waiting to go to the clipboard, and the plugin whose report
     /// was copied last.
     report: Option<String>,
@@ -274,6 +276,7 @@ impl Menu {
             selected: None,
             dialog: None,
             removing: None,
+            raised: None,
             report: None,
             copied: None,
             withdrawn: std::collections::BTreeSet::new(),
@@ -424,11 +427,7 @@ impl Menu {
                 }
                 self.draw_tabs(ui, view);
                 match self.tab {
-                    Tab::Installed => {
-                        if self.draw_installed(ui, view) {
-                            keep = false;
-                        }
-                    }
+                    Tab::Installed => self.draw_installed(ui, view),
                     Tab::Catalog => self.draw_catalog(ui, view),
                     Tab::Settings => self.draw_settings(ui, view),
                 }
@@ -560,9 +559,8 @@ impl Menu {
         }
     }
 
-    /// Installed: the search, the list, and the link field. Returns true
-    /// when the player opened a plugin, which closes the menu.
-    fn draw_installed(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
+    /// Installed: the search, the list, and the link field.
+    fn draw_installed(&mut self, ui: &mut Ui, view: &View<'_>) {
         self.toolbar(ui, view);
         let entries: Vec<Entry<'_>> = view
             .plugins
@@ -576,12 +574,11 @@ impl Menu {
             })
             .collect();
         let lines = lines(&entries, &self.query, self.filter);
-        let opened = self.draw_list(ui, view, &lines);
+        self.draw_list(ui, view, &lines);
         if let Some(installer) = view.host.plugin_installer() {
             self.draw_link(ui, view, installer);
         }
         self.footer(ui, view);
-        opened
     }
 
     /// The Catalog tab: the plugins of the catalog's index, each with
@@ -795,8 +792,8 @@ impl Menu {
         }
     }
 
-    /// The list. Returns true when the player opened a plugin.
-    fn draw_list(&mut self, ui: &mut Ui, view: &View<'_>, lines: &[Line]) -> bool {
+    /// The list.
+    fn draw_list(&mut self, ui: &mut Ui, view: &View<'_>, lines: &[Line]) {
         let s = self.strings();
         let p = view.p;
         if self
@@ -828,11 +825,10 @@ impl Menu {
             });
             let used = ui.cursor().top() - top;
             ui.add_space((list_height - used).max(0.0));
-            return false;
+            return;
         }
         columns_header(ui, view, s);
         let height = view.at(ROW);
-        let mut opened = false;
         egui::ScrollArea::vertical()
             .id_salt("angelica-installed")
             .auto_shrink([false, false])
@@ -849,22 +845,16 @@ impl Menu {
                             ui.add_space(height - view.at(26.0));
                             theme::header(ui, group.title(s), Some(count), color, view.k);
                         }
-                        Line::Plugin(index) => {
-                            if self.plugin_row(ui, view, index, height) {
-                                opened = true;
-                            }
-                        }
+                        Line::Plugin(index) => self.plugin_row(ui, view, index, height),
                     }
                 }
             });
-        opened
     }
 
     /// A plugin's row: its tile, name, permissions, version, and state,
     /// with its actions under the pointer, a menu on the right click, and
-    /// its details when it is chosen. Returns true when the
-    /// player opened the plugin.
-    fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) -> bool {
+    /// its details when it is chosen.
+    fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) {
         let p = view.p;
         let plugin = &view.plugins[index];
         let status = &view.statuses[index];
@@ -912,9 +902,9 @@ impl Menu {
                 p,
             );
         }
-        let (mut acted, mut opened) = (false, false);
+        let mut acted = false;
         if pointed && !chosen {
-            (acted, opened) = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
+            acted = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
         } else {
             row_facts(&painter, view, plugin, status, rect, &columns);
         }
@@ -928,7 +918,7 @@ impl Menu {
         }
         if !acted {
             if response.double_clicked() && *status == Status::Running {
-                opened |= self.act(view, plugin, RowAction::Open);
+                self.act(view, plugin, RowAction::Open);
             } else if response.clicked() {
                 if *status == Status::AwaitingApproval {
                     self.selected = Some(id.to_owned());
@@ -942,16 +932,15 @@ impl Menu {
         }
         response.context_menu(|ui| {
             self.selected = Some(id.to_owned());
-            opened |= self.row_menu(ui, view, plugin, status);
+            self.row_menu(ui, view, plugin, status);
         });
         if chosen {
-            opened |= self.details(ui, view, plugin, status);
+            self.details(ui, view, plugin, status);
         }
-        opened
     }
 
     /// The actions of a pointed row, as words at its right. Returns whether
-    /// the player used one, and whether it opened the plugin.
+    /// the player used one.
     #[allow(clippy::too_many_arguments)]
     fn action_words(
         &mut self,
@@ -962,10 +951,10 @@ impl Menu {
         status: &Status,
         rect: Rect,
         columns: &Columns,
-    ) -> (bool, bool) {
+    ) -> bool {
         let p = view.p;
         let id = plugin.manifest.id();
-        let (mut acted, mut opened) = (false, false);
+        let mut acted = false;
         let mut right = columns.version;
         for (index, (text, action)) in self.row_actions(status).into_iter().enumerate().rev() {
             let kind = if index == 0 {
@@ -1010,11 +999,11 @@ impl Menu {
             }
             if hit.clicked() {
                 acted = true;
-                opened |= self.act(view, plugin, action);
+                self.act(view, plugin, action);
             }
             right = word.left() - view.at(14.0);
         }
-        (acted, opened)
+        acted
     }
 
     /// What can be done with a plugin in its state, the main action first.
@@ -1031,14 +1020,14 @@ impl Menu {
         }
     }
 
-    /// Does `action` for `plugin`. Returns true when it opened the plugin,
-    /// which closes the menu.
-    fn act(&mut self, view: &View<'_>, plugin: &Plugin, action: RowAction) -> bool {
+    /// Does `action` for `plugin`. Opening a plugin keeps the menu open and
+    /// brings the plugin's windows to the front.
+    fn act(&mut self, view: &View<'_>, plugin: &Plugin, action: RowAction) {
         let id = plugin.manifest.id();
         match action {
             RowAction::Open => {
                 view.host.queue_event(id, Event::OpenRequested);
-                return true;
+                self.raised = Some(id.to_owned());
             }
             RowAction::TurnOn => view.host.queue(Action::Enable(id.to_owned())),
             RowAction::TurnOff => view.host.queue(Action::Disable(id.to_owned())),
@@ -1053,7 +1042,12 @@ impl Menu {
             }
             RowAction::Remove => self.removing = Some(id.to_owned()),
         }
-        false
+    }
+
+    /// The plugin the player opened since the last call, whose windows go
+    /// to the front.
+    pub fn take_raised(&mut self) -> Option<String> {
+        self.raised.take()
     }
 
     /// Puts a report the player asked for on the clipboard.
@@ -1064,9 +1058,8 @@ impl Menu {
     }
 
     /// The chosen plugin's details under its row: what it does, what it may
-    /// do, where it comes from, and every action. Returns true when the
-    /// player opened the plugin.
-    fn details(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) -> bool {
+    /// do, where it comes from, and every action.
+    fn details(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
         let s = self.strings();
         let p = view.p;
         let manifest = &plugin.manifest;
@@ -1155,14 +1148,14 @@ impl Menu {
                     }
                 });
             });
-        let opened = action.is_some_and(|action| self.act(view, plugin, action));
+        if let Some(action) = action {
+            self.act(view, plugin, action);
+        }
         self.copy_report(ui);
-        opened
     }
 
-    /// The menu of a row's right click. Returns true when the player opened
-    /// the plugin.
-    fn row_menu(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) -> bool {
+    /// The menu of a row's right click.
+    fn row_menu(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
         let s = self.strings();
         let p = view.p;
         let id = plugin.manifest.id();
@@ -1235,9 +1228,8 @@ impl Menu {
             self.removing = Some(id.to_owned());
         }
         if opened {
-            view.host.queue_event(id, Event::OpenRequested);
+            self.act(view, plugin, RowAction::Open);
         }
-        opened
     }
 
     /// What a plugin's state is called, and its color.
