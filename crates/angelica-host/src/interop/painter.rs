@@ -294,6 +294,13 @@ impl Saved {
     }
 }
 
+/// The back buffer, its description, and the render target view on it.
+struct Target {
+    texture: ID3D11Texture2D,
+    desc: D3D11_TEXTURE2D_DESC,
+    view: ID3D11RenderTargetView,
+}
+
 pub struct Painter {
     device: ID3D11Device,
     immediate: ID3D11DeviceContext,
@@ -307,6 +314,9 @@ pub struct Painter {
     raster: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
     textures: HashMap<TextureId, Texture>,
+    /// The game's back buffer and the view Angelica draws into it with,
+    /// made once for that buffer; dropped before the game resizes it.
+    target: Option<Target>,
 }
 
 fn needed<T>(value: Option<T>, label: &str) -> Result<T, String> {
@@ -493,6 +503,7 @@ impl Painter {
             raster: needed(raster, "raster state")?,
             sampler: needed(sampler, "sampler")?,
             textures: HashMap::new(),
+            target: None,
         })
     }
 
@@ -598,6 +609,13 @@ impl Painter {
         result
     }
 
+    /// Drops the view on the game's back buffer, so the game can resize it;
+    /// in the game, the resize hook drops the whole painter instead.
+    #[cfg(test)]
+    fn release_target(&mut self) {
+        self.target = None;
+    }
+
     fn draw(
         &mut self,
         chain: &IDXGISwapChain,
@@ -605,17 +623,11 @@ impl Painter {
         scale: f32,
     ) -> Result<(), String> {
         let meshes = meshes(primitives, &self.textures)?;
-        // SAFETY: index zero is the swap chain's current back buffer; COM type is queried.
-        let target: ID3D11Texture2D = unsafe { chain.GetBuffer(0) }.map_err(|e| e.to_string())?;
-        let mut target_desc = D3D11_TEXTURE2D_DESC::default();
-        let mut target_view = None;
-        // SAFETY: owned D3D texture and valid output descriptors; default render target view.
-        unsafe {
-            target.GetDesc(&raw mut target_desc);
-            self.device
-                .CreateRenderTargetView(&target, None, Some(&raw mut target_view))
-                .map_err(|e| e.to_string())?;
+        // Nothing to draw: the game's back buffer and context stay untouched.
+        if meshes.is_empty() {
+            return Ok(());
         }
+        let (target_desc, target_view) = target(&self.device, &mut self.target, chain)?;
         let width = f32::from(u16::try_from(target_desc.Width).map_err(|e| e.to_string())?);
         let height = f32::from(u16::try_from(target_desc.Height).map_err(|e| e.to_string())?);
         let linear = matches!(
@@ -660,7 +672,7 @@ impl Painter {
             // SAFETY: as above; the vertex stride matches the input layout.
             unsafe {
                 let context = &self.immediate;
-                context.OMSetRenderTargets(Some(&[target_view]), None);
+                context.OMSetRenderTargets(Some(&[Some(target_view)]), None);
                 context.OMSetBlendState(&self.blend, None, u32::MAX);
                 context.OMSetDepthStencilState(None, 0);
                 context.RSSetState(&self.raster);
@@ -731,6 +743,39 @@ fn pack(
         indices.extend(mesh.indices.iter().flat_map(|i| i.to_le_bytes()));
     }
     (vertices, indices)
+}
+
+/// The back buffer's description and the view on it, made again only when
+/// the swap chain hands out another buffer.
+fn target(
+    device: &ID3D11Device,
+    cached: &mut Option<Target>,
+    chain: &IDXGISwapChain,
+) -> Result<(D3D11_TEXTURE2D_DESC, ID3D11RenderTargetView), String> {
+    // SAFETY: index zero is the swap chain's current back buffer; COM type is queried.
+    let texture: ID3D11Texture2D = unsafe { chain.GetBuffer(0) }.map_err(|e| e.to_string())?;
+    if let Some(target) = cached.as_ref()
+        && target.texture.as_raw() == texture.as_raw()
+    {
+        return Ok((target.desc, target.view.clone()));
+    }
+    *cached = None;
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    let mut view = None;
+    // SAFETY: owned D3D texture and valid output descriptors; default render target view.
+    unsafe {
+        texture.GetDesc(&raw mut desc);
+        device
+            .CreateRenderTargetView(&texture, None, Some(&raw mut view))
+            .map_err(|e| e.to_string())?;
+    }
+    let view = needed(view, "render target view")?;
+    *cached = Some(Target {
+        texture,
+        desc,
+        view: view.clone(),
+    });
+    Ok((desc, view))
 }
 
 /// The meshes to draw, each with its texture and clip rectangle.
@@ -932,7 +977,9 @@ mod tests {
         assert_eq!(topology, D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
         assert_eq!(restored.Width.to_bits(), original.Width.to_bits());
         assert_eq!(restored.Height.to_bits(), original.Height.to_bits());
-        // SAFETY: no back-buffer references survive paint or center_pixel; private window.
+        painter.release_target();
+        // SAFETY: the view on the back buffer is dropped and center_pixel keeps
+        // no reference; private window.
         unsafe {
             chain.ResizeBuffers(
                 1,
