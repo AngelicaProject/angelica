@@ -29,11 +29,11 @@ use windows::{
                     DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R16G16B16A16_FLOAT,
                     DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32_FLOAT, DXGI_SAMPLE_DESC,
                 },
-                IDXGISwapChain,
+                IDXGIDevice, IDXGISwapChain,
             },
         },
     },
-    core::s,
+    core::{Interface, s},
 };
 
 const SHADER: &str = r"
@@ -97,6 +97,66 @@ fn shader(entry: windows::core::PCSTR, target: windows::core::PCSTR) -> Result<V
 }
 
 impl Painter {
+    /// Why the game's device stopped working, once it has.
+    pub fn removed(&self) -> Option<String> {
+        // SAFETY: a query of the owned device with no other precondition.
+        unsafe { self.device.GetDeviceRemovedReason() }
+            .err()
+            .map(|e| format!("{:#010X} {}", e.code().0, e.message()))
+    }
+
+    /// The graphics adapter, its driver, the device, and `chain`, in one
+    /// line for the log.
+    pub fn describe(&self, chain: &IDXGISwapChain) -> String {
+        let mut parts = Vec::new();
+        // SAFETY: queries of owned COM objects into owned outputs.
+        unsafe {
+            if let Ok(adapter) = self
+                .device
+                .cast::<IDXGIDevice>()
+                .and_then(|device| device.GetAdapter())
+            {
+                if let Ok(desc) = adapter.GetDesc() {
+                    let name = String::from_utf16_lossy(&desc.Description);
+                    parts.push(format!(
+                        "{} (vendor {:04x}, device {:04x})",
+                        name.trim_end_matches('\0'),
+                        desc.VendorId,
+                        desc.DeviceId
+                    ));
+                }
+                if let Ok(version) = adapter.CheckInterfaceSupport(&IDXGIDevice::IID) {
+                    let v = version.cast_unsigned();
+                    parts.push(format!(
+                        "driver {}.{}.{}.{}",
+                        v >> 48,
+                        (v >> 32) & 0xffff,
+                        (v >> 16) & 0xffff,
+                        v & 0xffff
+                    ));
+                }
+            }
+            parts.push(format!(
+                "feature level {:#x}, device flags {:#x}",
+                self.device.GetFeatureLevel().0,
+                self.device.GetCreationFlags()
+            ));
+            if let Ok(desc) = chain.GetDesc() {
+                parts.push(format!(
+                    "swap chain {}x{}, format {}, {} buffers, effect {}, flags {:#x}, windowed {}",
+                    desc.BufferDesc.Width,
+                    desc.BufferDesc.Height,
+                    desc.BufferDesc.Format.0,
+                    desc.BufferCount,
+                    desc.SwapEffect.0,
+                    desc.Flags,
+                    desc.Windowed.as_bool()
+                ));
+            }
+        }
+        parts.join("; ")
+    }
+
     pub fn new(chain: &IDXGISwapChain) -> Result<Self, String> {
         // SAFETY: swap chain is a Windows-owned COM object; all output options are valid.
         let device: ID3D11Device = unsafe { chain.GetDevice() }.map_err(|e| e.to_string())?;
@@ -541,6 +601,12 @@ mod tests {
     fn warp_draws_pixels_restores_game_state_and_releases_resize_references() {
         let (window, chain) = super::super::overlay::create_chain(D3D_DRIVER_TYPE_WARP).unwrap();
         let mut painter = Painter::new(&chain).unwrap();
+        let described = painter.describe(&chain);
+        assert!(
+            described.contains("feature level") && described.contains("swap chain"),
+            "{described}"
+        );
+        assert_eq!(painter.removed(), None);
         let original = D3D11_VIEWPORT {
             Width: 17.,
             Height: 19.,
