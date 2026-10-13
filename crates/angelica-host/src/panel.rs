@@ -31,6 +31,9 @@ pub struct Panel {
     /// The plugin windows collapsed to their title bars, by plugin and
     /// window id.
     collapsed: HashSet<(String, String)>,
+    /// The order plugin windows first opened in this game session, which
+    /// places each new one a step below and right of the one before.
+    placed: HashMap<(String, String), usize>,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -106,6 +109,7 @@ impl Panel {
             menu: Menu::new(host, system),
             inputs: HashMap::new(),
             collapsed: HashSet::new(),
+            placed: HashMap::new(),
             icons: Icons::default(),
             map_status,
         }
@@ -129,19 +133,44 @@ impl Panel {
     pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {
         self.icons.begin_frame();
         let keep = self.menu.draw(host, context, &self.map_status, menu);
-        if menu {
-            return keep;
-        }
+        let raised = self.menu.take_raised();
+        // Plugin windows are drawn with the menu open too; one opened from
+        // the menu comes in front of it.
         for plugin in &host.plugins() {
             if plugin.status() != Status::Running {
                 continue;
             }
             let (look, strings) = self.menu.look(context);
+            let raise = raised.as_deref() == Some(plugin.manifest.id());
             for window in plugin.windows() {
                 self.draw_window(host, plugin, &window, context, look, strings);
+                if raise {
+                    let id = plugin.manifest.id();
+                    let collapsed = self.collapsed.contains(&(id.to_owned(), window.id.clone()));
+                    context.move_to_top(egui::LayerId::new(
+                        egui::Order::Middle,
+                        window_id(id, &window.id, collapsed),
+                    ));
+                }
             }
         }
         keep
+    }
+
+    /// Where a plugin window first opens: in the middle of the screen, each
+    /// next one a step lower and to the right; the player moves it from
+    /// there.
+    fn place(&mut self, key: &(String, String), context: &egui::Context, look: Look) -> egui::Pos2 {
+        let next = self.placed.len();
+        let order = *self.placed.entry(key.clone()).or_insert(next);
+        let width = look.at(480.0);
+        let screen = context.content_rect();
+        #[allow(clippy::cast_precision_loss)]
+        let step = look.at(28.0) * (order % 8) as f32;
+        egui::pos2(
+            screen.center().x - width / 2.0 + step,
+            screen.top() + screen.height() * 0.16 + step,
+        )
     }
 
     fn draw_window(
@@ -156,6 +185,8 @@ impl Panel {
         let id = plugin.manifest.id();
         let key = (id.to_owned(), window.id.clone());
         let collapsed = self.collapsed.contains(&key);
+        let place = self.place(&key, context, look);
+        let window_id = window_id(id, &window.id, collapsed);
         let status = window.status.as_ref().map(|status| {
             let mark = match status.tone {
                 Tone::Good => Mark::Running,
@@ -179,12 +210,8 @@ impl Panel {
             "{} — {}",
             window.title, plugin.manifest.plugin.name
         ))
-        .id(egui::Id::new((
-            "angelica-plugin",
-            id,
-            &window.id,
-            collapsed,
-        )))
+        .id(window_id)
+        .default_pos(place)
         .title_bar(false)
         .collapsible(false)
         .resizable(!collapsed)
@@ -255,6 +282,11 @@ impl Panel {
             host.queue_event(id, Event::Closed(window.id.clone()));
         }
     }
+}
+
+/// A plugin window's egui id; a collapsed window is its own window.
+fn window_id(plugin: &str, window: &str, collapsed: bool) -> egui::Id {
+    egui::Id::new(("angelica-plugin", plugin, window, collapsed))
 }
 
 struct Drawer<'a> {
