@@ -67,6 +67,6 @@ Each crate owns one boundary:
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
 - `game_ui` owns the rules for the game's own windows and applies them once per frame through `Screen`, the game's windows as the game adapter offers them.
 - `game::Game` is the boundary to the game process: the version and the adapters a service needs.
-- `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay through a private deferred Direct3D 11 context, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.
+- `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay on the game's Direct3D 11 immediate context with its state saved and restored, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.
 
 `angelica-fake-game` implements `Game` from scripted data and drives rows and strings through the same `excel_text` and `text_case` code, so plugins and the host are tested without Windows or the game.
