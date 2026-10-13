@@ -13,7 +13,7 @@ use windows::{
     Win32::{
         Foundation::{HMODULE, HWND},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            Direct3D::D3D_DRIVER_TYPE_WARP,
             Direct3D11::{
                 D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11CreateDeviceAndSwapChain,
             },
@@ -49,6 +49,8 @@ pub struct Overlay {
     _bootstrap: IDXGISwapChain,
     pub input: Input,
     disabled: AtomicBool,
+    /// Whether frames are drawn; without, `Present` is only passed on.
+    attach: bool,
     frames: Mutex<Option<Frames>>,
     frame_message: u32,
     pending_frame: Mutex<Option<f64>>,
@@ -69,7 +71,7 @@ pub struct OverlayHooks {
 }
 
 impl OverlayHooks {
-    pub fn install(host: Arc<Host>, map_status: Vec<String>) -> Result<Self, String> {
+    pub fn install(host: Arc<Host>, map_status: Vec<String>, attach: bool) -> Result<Self, String> {
         let message_name: Vec<_> = "Angelica.Frame.v1\0".encode_utf16().collect();
         // SAFETY: registers a system-allocated message ID for this owned UTF-16 string.
         let frame_message = unsafe { RegisterWindowMessageW(message_name.as_ptr()) };
@@ -100,6 +102,7 @@ impl OverlayHooks {
             _bootstrap: chain.clone(),
             input: Input::default(),
             disabled: AtomicBool::new(false),
+            attach,
             frames: Mutex::new(None),
             frame_message,
             pending_frame: Mutex::new(None),
@@ -141,8 +144,12 @@ impl OverlayHooks {
     }
 }
 
+/// The bootstrap swap chain that finds `Present`, made on the software
+/// rasterizer: it is kept for the life of the process, and one kept on the
+/// graphics adapter without its window made the game's device fail on a
+/// `GeForce` RTX 3060. The swap chain's vtable is DXGI's, the same for both.
 fn dummy_chain() -> Result<(usize, IDXGISwapChain), String> {
-    create_chain(D3D_DRIVER_TYPE_HARDWARE)
+    create_chain(D3D_DRIVER_TYPE_WARP)
 }
 
 pub(super) fn create_chain(
@@ -279,7 +286,7 @@ impl Overlay {
     }
 
     fn frame(&self, chain: &IDXGISwapChain) -> Result<(), String> {
-        if self.disabled.load(Ordering::Acquire) {
+        if self.disabled.load(Ordering::Acquire) || !self.attach {
             return Ok(());
         }
         // SAFETY: typed swap chain descriptor is queried from Windows.
