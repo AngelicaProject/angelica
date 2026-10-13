@@ -19,18 +19,18 @@ use windows::{
             Direct3D11::{
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER,
                 D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_VERTEX_BUFFER, D3D11_BLEND_DESC,
-                D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
-                D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS, D3D11_CPU_ACCESS_WRITE,
-                D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-                D3D11_INPUT_ELEMENT_DESC, D3D11_MAP_WRITE_DISCARD, D3D11_MAPPED_SUBRESOURCE,
-                D3D11_RASTERIZER_DESC, D3D11_RENDER_TARGET_BLEND_DESC, D3D11_SAMPLER_DESC,
-                D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC,
-                D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11BlendState,
-                ID3D11Buffer, ID3D11ClassInstance, ID3D11DepthStencilState, ID3D11DepthStencilView,
-                ID3D11Device, ID3D11DeviceContext, ID3D11DomainShader, ID3D11GeometryShader,
-                ID3D11HullShader, ID3D11InputLayout, ID3D11PixelShader, ID3D11RasterizerState,
-                ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
-                ID3D11Texture2D, ID3D11VertexShader,
+                D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BOX,
+                D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS,
+                D3D11_CPU_ACCESS_WRITE, D3D11_CULL_NONE, D3D11_FILL_SOLID,
+                D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_INPUT_ELEMENT_DESC, D3D11_MAP_WRITE_DISCARD,
+                D3D11_MAPPED_SUBRESOURCE, D3D11_RASTERIZER_DESC, D3D11_RENDER_TARGET_BLEND_DESC,
+                D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE_ADDRESS_CLAMP,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
+                ID3D11BlendState, ID3D11Buffer, ID3D11ClassInstance, ID3D11DepthStencilState,
+                ID3D11DepthStencilView, ID3D11Device, ID3D11DeviceContext, ID3D11DomainShader,
+                ID3D11GeometryShader, ID3D11HullShader, ID3D11InputLayout, ID3D11PixelShader,
+                ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11SamplerState,
+                ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
             },
             Dxgi::{
                 Common::{
@@ -57,7 +57,7 @@ float4 pixel(Output v) : SV_TARGET { float4 c=v.col*image.Sample(sampler0,v.uv);
 
 struct Texture {
     size: [usize; 2],
-    bytes: Vec<u8>,
+    image: ID3D11Texture2D,
     view: ID3D11ShaderResourceView,
 }
 
@@ -520,7 +520,14 @@ impl Painter {
         {
             return Err("invalid egui texture dimensions".into());
         }
-        let (size, mut bytes) = if let Some(pos) = delta.pos {
+        let pixels: Vec<u8> = image
+            .pixels
+            .iter()
+            .flat_map(egui::Color32::to_array)
+            .collect();
+        let pitch = u32::try_from(image.size[0] * 4).map_err(|e| e.to_string())?;
+        if let Some(pos) = delta.pos {
+            // A part of a texture: written in place, the rest stays.
             let old = self
                 .textures
                 .get(&id)
@@ -528,17 +535,32 @@ impl Painter {
             if pos[0] + image.size[0] > old.size[0] || pos[1] + image.size[1] > old.size[1] {
                 return Err("texture update lies outside the image".into());
             }
-            (old.size, old.bytes.clone())
-        } else {
-            (image.size, vec![0; image.size[0] * image.size[1] * 4])
-        };
-        let pos = delta.pos.unwrap_or([0, 0]);
-        for y in 0..image.size[1] {
-            for x in 0..image.size[0] {
-                let at = ((pos[1] + y) * size[0] + pos[0] + x) * 4;
-                bytes[at..at + 4].copy_from_slice(&image.pixels[y * image.size[0] + x].to_array());
+            let to = |value: usize| u32::try_from(value).map_err(|e| e.to_string());
+            let area = D3D11_BOX {
+                left: to(pos[0])?,
+                top: to(pos[1])?,
+                front: 0,
+                right: to(pos[0] + image.size[0])?,
+                bottom: to(pos[1] + image.size[1])?,
+                back: 1,
+            };
+            // SAFETY: the box lies inside the texture (checked above), and
+            // `pixels` holds its rows at `pitch` bytes each; the default-usage
+            // texture accepts updates on the immediate context of the
+            // rendering thread.
+            unsafe {
+                self.immediate.UpdateSubresource(
+                    &old.image,
+                    0,
+                    Some(&raw const area),
+                    pixels.as_ptr().cast(),
+                    pitch,
+                    0,
+                );
             }
+            return Ok(());
         }
+        let size = image.size;
         let desc = D3D11_TEXTURE2D_DESC {
             Width: u32::try_from(size[0]).map_err(|e| e.to_string())?,
             Height: u32::try_from(size[1]).map_err(|e| e.to_string())?,
@@ -549,13 +571,13 @@ impl Painter {
                 Count: 1,
                 Quality: 0,
             },
-            Usage: D3D11_USAGE_IMMUTABLE,
+            Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0.cast_unsigned(),
             ..Default::default()
         };
         let data = D3D11_SUBRESOURCE_DATA {
-            pSysMem: bytes.as_ptr().cast(),
-            SysMemPitch: u32::try_from(size[0] * 4).map_err(|e| e.to_string())?,
+            pSysMem: pixels.as_ptr().cast(),
+            SysMemPitch: pitch,
             ..Default::default()
         };
         let mut texture = None;
@@ -570,15 +592,19 @@ impl Painter {
                     Some(&raw mut texture),
                 )
                 .map_err(|e| e.to_string())?;
+        }
+        let texture = needed(texture, "texture")?;
+        // SAFETY: as above.
+        unsafe {
             self.device
-                .CreateShaderResourceView(&needed(texture, "texture")?, None, Some(&raw mut view))
+                .CreateShaderResourceView(&texture, None, Some(&raw mut view))
                 .map_err(|e| e.to_string())?;
         }
         self.textures.insert(
             id,
             Texture {
                 size,
-                bytes,
+                image: texture,
                 view: needed(view, "texture view")?,
             },
         );
@@ -609,10 +635,15 @@ impl Painter {
         result
     }
 
-    /// Drops the view on the game's back buffer, so the game can resize it;
-    /// in the game, the resize hook drops the whole painter instead.
-    #[cfg(test)]
-    fn release_target(&mut self) {
+    /// Whether `chain` presents on the device this painter draws with.
+    pub fn serves(&self, chain: &IDXGISwapChain) -> bool {
+        // SAFETY: a query of the swap chain's device into an owned reference.
+        unsafe { chain.GetDevice::<ID3D11Device>() }
+            .is_ok_and(|device| device.as_raw() == self.device.as_raw())
+    }
+
+    /// Drops the view on the game's back buffer, so the game can resize it.
+    pub fn release_target(&mut self) {
         self.target = None;
     }
 
@@ -895,6 +926,74 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_texture_update_writes_in_place() {
+        let (window, chain) = super::super::overlay::create_chain(D3D_DRIVER_TYPE_WARP).unwrap();
+        let mut painter = Painter::new(&chain).unwrap();
+        // A quad over the target that samples the top-left texel of a 2x2
+        // white texture, which a partial update then makes blue.
+        let mut mesh = egui::epaint::Mesh::default();
+        for pos in [
+            egui::pos2(0., 0.),
+            egui::pos2(64., 0.),
+            egui::pos2(64., 64.),
+            egui::pos2(0., 64.),
+        ] {
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos,
+                uv: egui::pos2(0.25, 0.25),
+                color: egui::Color32::WHITE,
+            });
+        }
+        mesh.indices = vec![0, 1, 2, 0, 2, 3];
+        let primitives = [ClippedPrimitive {
+            clip_rect: egui::Rect::EVERYTHING,
+            primitive: Primitive::Mesh(mesh),
+        }];
+        let mut textures = egui::TexturesDelta::default();
+        textures
+            .set
+            .entry(TextureId::default())
+            .or_default()
+            .push(egui::epaint::ImageDelta::full(
+                egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+                egui::TextureOptions::NEAREST,
+            ));
+        painter
+            .paint(&chain, &primitives, &mut textures, 1.)
+            .unwrap();
+        assert_eq!(center_pixel(&chain, &painter), [255, 255, 255, 255]);
+        textures.set.entry(TextureId::default()).or_default().push(
+            egui::epaint::ImageDelta::partial(
+                [0, 0],
+                egui::ColorImage::filled([1, 1], egui::Color32::BLUE),
+                egui::TextureOptions::NEAREST,
+            ),
+        );
+        painter
+            .paint(&chain, &primitives, &mut textures, 1.)
+            .unwrap();
+        assert_eq!(center_pixel(&chain, &painter), [0, 0, 255, 255]);
+        textures.set.entry(TextureId::default()).or_default().push(
+            egui::epaint::ImageDelta::partial(
+                [1, 1],
+                egui::ColorImage::filled([2, 2], egui::Color32::RED),
+                egui::TextureOptions::NEAREST,
+            ),
+        );
+        assert!(
+            painter
+                .paint(&chain, &primitives, &mut textures, 1.)
+                .is_err()
+        );
+        drop(painter);
+        drop(chain);
+        // SAFETY: no resources use this private test window anymore.
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(window as _);
+        }
+    }
+
+    #[test]
     fn warp_draws_pixels_restores_game_state_and_releases_resize_references() {
         let (window, chain) = super::super::overlay::create_chain(D3D_DRIVER_TYPE_WARP).unwrap();
         let mut painter = Painter::new(&chain).unwrap();
@@ -904,6 +1003,7 @@ mod tests {
             "{described}"
         );
         assert_eq!(painter.removed(), None);
+        assert!(painter.serves(&chain));
         let original = D3D11_VIEWPORT {
             Width: 17.,
             Height: 19.,
