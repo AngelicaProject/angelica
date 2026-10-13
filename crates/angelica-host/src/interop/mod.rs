@@ -24,6 +24,7 @@ pub(super) fn guard<T>(fallback: T, work: impl FnOnce() -> T) -> T {
         }
     }
 }
+/// Appends a line to `host.log`, after the local time.
 pub(super) fn log(message: &str) {
     guard((), || {
         use std::io::Write;
@@ -33,9 +34,36 @@ pub(super) fn log(message: &str) {
                 .append(true)
                 .open(directory.join("host.log"))
         {
-            let _ = writeln!(file, "{message}");
+            let _ = writeln!(file, "{} {message}", now());
         }
     });
+}
+
+/// The local time to the millisecond, as `2026-10-13 17:54:03.120`.
+fn now() -> String {
+    let mut time = windows_sys::Win32::Foundation::SYSTEMTIME::default();
+    // SAFETY: GetLocalTime only writes the owned SYSTEMTIME.
+    unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&raw mut time) };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        time.wYear,
+        time.wMonth,
+        time.wDay,
+        time.wHour,
+        time.wMinute,
+        time.wSecond,
+        time.wMilliseconds
+    )
+}
+
+/// Keeps `host.log` small: a log over `LOG_LIMIT` bytes at start becomes
+/// `host.old.log`, replacing the one before.
+pub(super) fn rotate_log(directory: &std::path::Path) {
+    const LOG_LIMIT: u64 = 2 * 1024 * 1024;
+    let log = directory.join("host.log");
+    if std::fs::metadata(&log).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
+        let _ = std::fs::rename(&log, directory.join("host.old.log"));
+    }
 }
 
 /// Opens a folder in Explorer for the player.

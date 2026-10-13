@@ -23,6 +23,15 @@ impl WindowsGame {
     }
 }
 
+/// Logs whether the hooks of `what` are in place, and passes `result` on.
+fn hooked(what: &str, result: Result<(), String>) -> Result<(), String> {
+    match &result {
+        Ok(()) => super::log(&format!("{what} hooks: in place")),
+        Err(error) => super::log(&format!("{what} hooks: not installed: {error}")),
+    }
+    result
+}
+
 /// The game's memory, read through Windows so that an unreadable address
 /// fails instead of faulting.
 struct ProcessMemory;
@@ -48,19 +57,31 @@ impl Game for WindowsGame {
     }
 
     fn enable_excel_text(&self) -> Result<(), String> {
-        super::excel_rows::install(&self.catalog, self.base, self.excel.clone())
+        hooked(
+            "game text",
+            super::excel_rows::install(&self.catalog, self.base, self.excel.clone()),
+        )
     }
 
     fn enable_text_case(&self) -> Result<(), String> {
-        super::text_case::install(&self.catalog, self.base, self.case.clone())
+        hooked(
+            "letter case",
+            super::text_case::install(&self.catalog, self.base, self.case.clone()),
+        )
     }
 
     fn enable_file_replacements(&self) -> Result<(), String> {
-        super::file_reads::install(&self.catalog, self.base, self.files.clone())
+        hooked(
+            "file replacements",
+            super::file_reads::install(&self.catalog, self.base, self.files.clone()),
+        )
     }
 
     fn enable_commands(&self) -> Result<(), String> {
-        super::chat::install_commands(&self.catalog, self.base, self.commands.clone())
+        hooked(
+            "chat commands",
+            super::chat::install_commands(&self.catalog, self.base, self.commands.clone()),
+        )
     }
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
@@ -68,7 +89,10 @@ impl Game for WindowsGame {
     }
 
     fn enable_chat_messages(&self) -> Result<(), String> {
-        super::chat::install_messages(&self.catalog, self.base, self.events.clone())
+        hooked(
+            "chat messages",
+            super::chat::install_messages(&self.catalog, self.base, self.events.clone()),
+        )
     }
 
     fn with_screen(

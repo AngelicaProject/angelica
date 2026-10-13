@@ -78,6 +78,7 @@ extern "system" fn angelica_start_v1() -> i32 {
 fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpdate> {
     use crate::self_update::{Http, SelfUpdate, Setup, Status, build_channel, spawn, spawn_map};
     let updates = Arc::new(SelfUpdate::default());
+    updates.log_to(Arc::new(|line: &str| super::log(line)));
     let (Some(channel), Some(key), Ok(running)) = (
         build_channel(),
         RELEASE_KEY,
@@ -114,11 +115,26 @@ fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpda
 
 /// The catalog's index, read with the release key; none without one.
 fn catalog_source() -> Option<crate::catalog_index::Source> {
+    let catalog = Arc::new(crate::catalog_index::Catalog::default());
+    catalog.log_to(Arc::new(|line: &str| super::log(line)));
     Some(crate::catalog_index::Source {
-        catalog: Arc::default(),
+        catalog,
         fetch: Arc::new(crate::self_update::Http::new()),
         key: RELEASE_KEY?,
     })
+}
+
+/// The first line of a start in the log: Angelica, the game, the process.
+fn log_start(base: usize, hash: &str) -> Result<(), String> {
+    super::log(&format!(
+        "start: Angelica {} ({}); game {}, executable sha256 {}; process {}",
+        env!("CARGO_PKG_VERSION"),
+        crate::self_update::build_channel().map_or("development", |c| c.name()),
+        super::game::WindowsGame::read_version(&module_path(base)?),
+        hash,
+        std::process::id()
+    ));
+    Ok(())
 }
 
 fn initialize() -> Result<(), String> {
@@ -137,9 +153,11 @@ fn initialize() -> Result<(), String> {
         let _ = LOG_DIRECTORY.set(initial_logs);
     })?;
     std::fs::create_dir_all(&config.log_directory).map_err(|e| e.to_string())?;
+    super::rotate_log(&config.log_directory);
     let _ = LOG_DIRECTORY.set(config.log_directory.clone());
 
     let (base, snapshot, hash) = executable_snapshot()?;
+    log_start(base, &hash)?;
     let (catalog, map, map_status) = load_map(&config, base, &snapshot, hash);
     for line in &map_status {
         super::log(line);

@@ -97,12 +97,33 @@ pub fn build_channel() -> Option<Channel> {
     }
 }
 
+/// Where a line for the host's log goes.
+pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// The state the menu shows, shared with the update thread.
 #[derive(Default)]
 pub struct SelfUpdate {
     status: Mutex<Option<Status>>,
     map: Mutex<Option<Status>>,
     requested: AtomicBool,
+    log: std::sync::OnceLock<LogSink>,
+}
+
+/// The log line for a change of what a check found; none when nothing
+/// worth a line happened.
+fn logged(what: &str, before: Option<&Status>, after: &Status) -> Option<String> {
+    match after {
+        Status::Ready(version) if before != Some(after) => {
+            Some(format!("{what}: {version} is installed"))
+        }
+        Status::Failed(reason) if before != Some(after) => {
+            Some(format!("{what}: the check failed: {reason}"))
+        }
+        Status::UpToDate if matches!(before, Some(Status::Failed(_))) => {
+            Some(format!("{what}: checked again, up to date"))
+        }
+        _ => None,
+    }
 }
 
 impl SelfUpdate {
@@ -115,8 +136,20 @@ impl SelfUpdate {
             .unwrap_or(Status::NotChecked)
     }
 
+    /// Sends what the checks do to the host's log.
+    pub fn log_to(&self, sink: LogSink) {
+        let _ = self.log.set(sink);
+    }
+
     pub fn set(&self, status: Status) {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner) = Some(status);
+        let mut current = self.status.lock().unwrap_or_else(PoisonError::into_inner);
+        if let (Some(log), Some(line)) = (
+            self.log.get(),
+            logged("Angelica update", current.as_ref(), &status),
+        ) {
+            log(&line);
+        }
+        *current = Some(status);
     }
 
     /// What the last check of the game map found; `Ready` is a map installed
@@ -131,7 +164,14 @@ impl SelfUpdate {
     }
 
     pub fn set_map(&self, status: Status) {
-        *self.map.lock().unwrap_or_else(PoisonError::into_inner) = Some(status);
+        let mut current = self.map.lock().unwrap_or_else(PoisonError::into_inner);
+        if let (Some(log), Some(line)) = (
+            self.log.get(),
+            logged("game map update", current.as_ref(), &status),
+        ) {
+            log(&line);
+        }
+        *current = Some(status);
     }
 
     /// Checks now instead of at the next interval.
@@ -686,6 +726,31 @@ mod tests {
         assert_eq!(
             update_map(&map, MAP_REPOSITORY, &running.key, &releases).unwrap(),
             Status::UpToDate
+        );
+    }
+
+    #[test]
+    fn the_log_hears_of_installs_failures_and_recoveries_once() {
+        let ready = Status::Ready("0.2.0".into());
+        let failed = Status::Failed("map.json: the server answered 503".into());
+        assert_eq!(
+            logged("Angelica update", None, &ready).as_deref(),
+            Some("Angelica update: 0.2.0 is installed")
+        );
+        assert_eq!(logged("Angelica update", Some(&ready), &ready), None);
+        assert!(logged("game map update", Some(&Status::Checking), &failed).is_some());
+        assert_eq!(logged("game map update", Some(&failed), &failed), None);
+        assert_eq!(
+            logged("game map update", Some(&failed), &Status::UpToDate).as_deref(),
+            Some("game map update: checked again, up to date")
+        );
+        assert_eq!(
+            logged(
+                "game map update",
+                Some(&Status::Checking),
+                &Status::UpToDate
+            ),
+            None
         );
     }
 }

@@ -6,6 +6,8 @@ The installation folder contains `current.json` and the version folders it choos
 
 `host.json` optionally configures the runtime. It has `format: 1` and absolute `map_directory`, `plugin_directory`, `storage_directory`, `grants_directory`, and `log_directory` paths, and optionally absolute `state_directory`, `cache_directory`, and `keys_directory` paths. Without the file these are `map`, `plugins`, `storage`, `grants`, `logs`, `state`, `cache`, and `keys` under the installation folder.
 
+The host writes `host.log` in the log folder, one line per event, each after the local time (`2026-10-13 17:54:03.120`). Every start begins with a `start:` line naming Angelica's version and channel, the game's version and executable hash, and the process; no line names the installation's path or the Windows user. Lines follow for the game map, the hooks a plugin asks for (in place or why not), the overlay (the graphics adapter, its driver, the device, and the game's swap chain when it attaches; a resize of the swap chain; why it stopped), plugins loaded and stopped, what the plugin installer did, Angelica and map updates installed or failed (a check that keeps failing the same way is logged once), and a catalog index that could not be read. A log over 2 MiB at start becomes `host.old.log`, replacing the one before.
+
 Optional limits:
 
 | Field | Default | Range | Meaning |
