@@ -222,10 +222,8 @@ impl Input {
     /// Whether the game does not receive a message Angelica took.
     fn consumes(&self, message: u32, wparam: usize) -> bool {
         match message {
-            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
-            | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
-                self.mouse.load(Ordering::Acquire)
-            }
+            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_MOUSEWHEEL
+            | WM_MOUSEHWHEEL => self.mouse.load(Ordering::Acquire),
             // `Esc` closes the open menu, so the game does not receive it.
             WM_KEYDOWN | WM_CHAR => {
                 self.keyboard.load(Ordering::Acquire)
@@ -235,8 +233,10 @@ impl Input {
             WM_SYSKEYDOWN | WM_SYSKEYUP => {
                 self.keyboard.load(Ordering::Acquire) && !self.menu.load(Ordering::Acquire)
             }
-            // The game always learns that a key was released, so a key it
-            // saw go down never stays down for it.
+            // The game always learns that a key or a mouse button was
+            // released, so one it saw go down never stays down for it, as
+            // when the camera turns with a button held and the pointer ends
+            // over Angelica's window.
             _ => false,
         }
     }
@@ -308,4 +308,29 @@ unsafe extern "system" fn procedure(
     let original: WNDPROC = unsafe { std::mem::transmute(original) };
     // SAFETY: forward the original Windows message arguments unchanged.
     unsafe { CallWindowProcW(original, window, message, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_game_always_receives_button_releases() {
+        let input = Input::default();
+        input.mouse.store(true, Ordering::Release);
+        for down in [WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE] {
+            assert!(input.consumes(down, 0), "{down:#x}");
+        }
+        for up in [
+            WM_LBUTTONUP,
+            WM_RBUTTONUP,
+            WM_MBUTTONUP,
+            WM_KEYUP,
+            WM_SYSKEYUP,
+        ] {
+            assert!(!input.consumes(up, 0), "{up:#x}");
+        }
+        input.mouse.store(false, Ordering::Release);
+        assert!(!input.consumes(WM_LBUTTONDOWN, 0));
+    }
 }

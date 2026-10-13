@@ -27,7 +27,13 @@ use windows::{
     core::Interface,
 };
 use windows_sys::Win32::{
-    System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentProcessId},
+    System::{
+        LibraryLoader::{
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+            GetModuleHandleExW, GetModuleHandleW,
+        },
+        Threading::GetCurrentProcessId,
+    },
     UI::{
         HiDpi::GetDpiForWindow,
         WindowsAndMessaging::{
@@ -45,8 +51,6 @@ static RESIZE: AtomicUsize = AtomicUsize::new(0);
 pub struct Overlay {
     host: Arc<Host>,
     map_status: Vec<String>,
-    // Retain the COM provider that owns the patched vtable until process exit.
-    _bootstrap: IDXGISwapChain,
     pub input: Input,
     disabled: AtomicBool,
     /// Whether frames are drawn; without, `Present` is only passed on.
@@ -62,8 +66,31 @@ struct Frames {
     started: Instant,
     last: Instant,
     window: usize,
+    /// The game's swap chain the painter draws into.
+    chain: usize,
     /// Frames Angelica drew into the game's back buffer.
     drawn: u64,
+}
+
+/// Keeps the module that holds `address` loaded until the process exits.
+fn pin(address: usize) -> Result<(), String> {
+    let mut module = std::ptr::null_mut();
+    // SAFETY: FROM_ADDRESS looks up the module that holds a mapped address;
+    // PIN only keeps it loaded. The output is owned.
+    let pinned = unsafe {
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            address as *const u16,
+            &raw mut module,
+        )
+    };
+    if pinned == 0 {
+        return Err(format!(
+            "cannot keep the swap chain's module loaded: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 pub struct OverlayHooks {
     present: VtableSlot,
@@ -80,6 +107,16 @@ impl OverlayHooks {
         }
         let (window, chain) = dummy_chain()?;
         let vtable = chain.vtable();
+        // The vtable and the functions it names belong to DXGI, which stays
+        // loaded once pinned; the bootstrap swap chain goes right after.
+        let pinned = pin(std::ptr::addr_of!(vtable.Present) as usize)
+            .and_then(|()| pin(vtable.Present as usize));
+        if let Err(error) = pinned {
+            drop(chain);
+            // SAFETY: this hidden window belongs to this startup call.
+            unsafe { DestroyWindow(window as _) };
+            return Err(error);
+        }
         // SAFETY: typed vtable fields are Windows-owned aligned COM slots; callbacks match.
         let mut present = unsafe {
             VtableSlot::new(
@@ -99,7 +136,6 @@ impl OverlayHooks {
         let overlay = Arc::new(Overlay {
             host,
             map_status,
-            _bootstrap: chain.clone(),
             input: Input::default(),
             disabled: AtomicBool::new(false),
             attach,
@@ -145,7 +181,7 @@ impl OverlayHooks {
 }
 
 /// The bootstrap swap chain that finds `Present`, made on the software
-/// rasterizer: it is kept for the life of the process, and one kept on the
+/// rasterizer and released once `Present` is hooked: one kept on the
 /// graphics adapter without its window made the game's device fail on a
 /// `GeForce` RTX 3060. The swap chain's vtable is DXGI's, the same for both.
 fn dummy_chain() -> Result<(usize, IDXGISwapChain), String> {
@@ -315,6 +351,16 @@ impl Overlay {
         if description.OutputWindow.0 as usize != frame.window {
             return Ok(());
         }
+        // A new swap chain of the game's window, as after the game made its
+        // device again: a painter for it, with the interface kept.
+        if chain.as_raw() as usize != frame.chain || !frame.painter.serves(chain) {
+            frame.painter = Painter::new(chain)?;
+            frame.chain = chain.as_raw() as usize;
+            super::log(&format!(
+                "overlay follows a new swap chain of the game: {}",
+                frame.painter.describe(chain)
+            ));
+        }
         // Says whether the device stopped before Angelica drew into it.
         if let Some(reason) = frame.painter.removed() {
             return Err(removed(frame.drawn, &reason));
@@ -428,6 +474,7 @@ impl Overlay {
             started: Instant::now(),
             last: Instant::now(),
             window,
+            chain: chain.as_raw() as usize,
             drawn: 0,
         })
     }
@@ -534,16 +581,19 @@ unsafe extern "system" fn resize(
     flags: u32,
 ) -> i32 {
     super::guard((), || {
-        if let Some(overlay) = OVERLAY.get() {
-            if let Ok(mut frames) = overlay.frames.lock() {
-                if frames.is_some() {
-                    super::log(&format!(
-                        "the game resizes its swap chain: {width}x{height}, format {format}, {count} buffers, flags {flags:#x}"
-                    ));
-                }
-                *frames = None;
-            }
+        // Only the game's swap chain matters; other tools resize their own.
+        // The view on its back buffer goes, so the resize can succeed; the
+        // interface stays as it was.
+        if let Some(overlay) = OVERLAY.get()
+            && let Ok(mut frames) = overlay.frames.lock()
+            && let Some(frame) = frames.as_mut()
+            && frame.chain == raw as usize
+        {
+            frame.painter.release_target();
             overlay.input.release();
+            super::log(&format!(
+                "the game resizes its swap chain: {width}x{height}, format {format}, {count} buffers, flags {flags:#x}"
+            ));
         }
     });
     // SAFETY: original COM ResizeBuffers function has this exact ABI and is retained.
