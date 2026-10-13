@@ -32,7 +32,7 @@ Paths use forward slashes and are relative. Traversal, empty parts, links, Windo
 
 ## Installation key
 
-`keys/installation.key` (the secret) and `keys/installation.pub` (the public half), each 64 hexadecimal digits, sign the packages the installer makes from [plugin files](./plugin-file-v1.md) of plugins from their authors. The installer creates them on first use. The host reads only the public half and accepts it only for plugin packages, never for the runtime or the map; such a package holds `plugin.angelica` and `plugin.cwasm`, and the host also verifies the author's signature and the author bound to the plugin id in `keys/authors/`.
+`keys/installation.key` (the secret) and `keys/installation.pub` (the public half), each 64 hexadecimal digits, sign the packages the installer makes from [plugin files](./plugin-file-v1.md) of plugins from their authors. The installer creates them on first use; a host started before that reads the public half when it next looks for new packages, and never replaces a key it already read. The host reads only the public half and accepts it only for plugin packages, never for the runtime or the map; such a package holds `plugin.angelica` and `plugin.cwasm`, and the host also verifies the author's signature and the author bound to the plugin id in `keys/authors/`.
 
 The installation key keeps packages from being swapped or damaged; it does not protect against a program running as the same Windows user, which can sign with it and could change the game process directly anyway. The boundary is the player's account. Native code never comes from an author: the installer compiles every component itself.
 
