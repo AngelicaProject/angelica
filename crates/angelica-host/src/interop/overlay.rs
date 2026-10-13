@@ -60,6 +60,8 @@ struct Frames {
     started: Instant,
     last: Instant,
     window: usize,
+    /// Frames Angelica drew into the game's back buffer.
+    drawn: u64,
 }
 pub struct OverlayHooks {
     present: VtableSlot,
@@ -295,12 +297,20 @@ impl Overlay {
             return Ok(());
         };
         if frames.is_none() {
-            *frames = Some(self.attach(chain, description.OutputWindow.0 as usize)?);
-            super::log("overlay attached to a process swap chain");
+            let attached = self.attach(chain, description.OutputWindow.0 as usize)?;
+            super::log(&format!(
+                "overlay attached to a process swap chain: {}",
+                attached.painter.describe(chain)
+            ));
+            *frames = Some(attached);
         }
         let frame = frames.as_mut().ok_or("renderer initialization failed")?;
         if description.OutputWindow.0 as usize != frame.window {
             return Ok(());
+        }
+        // Says whether the device stopped before Angelica drew into it.
+        if let Some(reason) = frame.painter.removed() {
+            return Err(removed(frame.drawn, &reason));
         }
         let now = Instant::now();
         let elapsed = now.duration_since(frame.last).as_secs_f64();
@@ -314,36 +324,7 @@ impl Overlay {
         if unsafe { GetClientRect(description.OutputWindow.0, &raw mut rect) } == 0 {
             return Err("GetClientRect failed".into());
         }
-        let mut input = self
-            .input
-            .raw
-            .lock()
-            .map_err(|_| "input state poisoned")?
-            .take();
-        for event in &mut input.events {
-            match event {
-                egui::Event::PointerMoved(pos) | egui::Event::PointerButton { pos, .. } => {
-                    pos.x /= scale;
-                    pos.y /= scale;
-                }
-                _ => {}
-            }
-        }
-        input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(
-                f32::from(u16::try_from(rect.right - rect.left).map_err(|e| e.to_string())?)
-                    / scale,
-                f32::from(u16::try_from(rect.bottom - rect.top).map_err(|e| e.to_string())?)
-                    / scale,
-            ),
-        ));
-        input.time = Some(now.duration_since(frame.started).as_secs_f64());
-        input
-            .viewports
-            .entry(egui::ViewportId::ROOT)
-            .or_default()
-            .native_pixels_per_point = Some(scale);
+        let input = self.raw_input(&rect, scale, now.duration_since(frame.started))?;
         let menu = self.input.menu.load(Ordering::Acquire);
         let panel = &mut frame.panel;
         let chosen = self.input.chosen_key.swap(0, Ordering::AcqRel);
@@ -379,8 +360,53 @@ impl Overlay {
             output.pixels_per_point,
         );
         output.textures_delta.clear();
-        result
+        if let Some(reason) = frame.painter.removed() {
+            return Err(removed(frame.drawn, &reason));
+        }
+        result?;
+        frame.drawn += 1;
+        Ok(())
     }
+    /// This frame's input, in points of the window's `rect` at `scale`.
+    fn raw_input(
+        &self,
+        rect: &windows_sys::Win32::Foundation::RECT,
+        scale: f32,
+        time: std::time::Duration,
+    ) -> Result<egui::RawInput, String> {
+        let mut input = self
+            .input
+            .raw
+            .lock()
+            .map_err(|_| "input state poisoned")?
+            .take();
+        for event in &mut input.events {
+            match event {
+                egui::Event::PointerMoved(pos) | egui::Event::PointerButton { pos, .. } => {
+                    pos.x /= scale;
+                    pos.y /= scale;
+                }
+                _ => {}
+            }
+        }
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(
+                f32::from(u16::try_from(rect.right - rect.left).map_err(|e| e.to_string())?)
+                    / scale,
+                f32::from(u16::try_from(rect.bottom - rect.top).map_err(|e| e.to_string())?)
+                    / scale,
+            ),
+        ));
+        input.time = Some(time.as_secs_f64());
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(scale);
+        Ok(input)
+    }
+
     /// The renderer, egui with Angelica's fonts and style, and the panel
     /// for the game's `window`, whose input it starts receiving.
     fn attach(&self, chain: &IDXGISwapChain, window: usize) -> Result<Frames, String> {
@@ -395,6 +421,7 @@ impl Overlay {
             started: Instant::now(),
             last: Instant::now(),
             window,
+            drawn: 0,
         })
     }
 
@@ -454,8 +481,23 @@ fn system_fonts() -> Result<Vec<(String, Vec<u8>)>, String> {
     Ok(fonts)
 }
 
+/// `DXGI_PRESENT_TEST`: the game asks whether the window is visible, and
+/// nothing is shown.
+const PRESENT_TEST: u32 = 0x1;
+
+/// A failure because the game's device stopped, with when it stopped.
+fn removed(drawn: u64, reason: &str) -> String {
+    if drawn == 0 {
+        format!("the game's Direct3D device stopped before Angelica drew a frame: {reason}")
+    } else {
+        format!("the game's Direct3D device stopped after Angelica drew {drawn} frames: {reason}")
+    }
+}
+
 unsafe extern "system" fn present(raw: *mut c_void, interval: u32, flags: u32) -> i32 {
-    if let Some(overlay) = OVERLAY.get() {
+    if flags & PRESENT_TEST == 0
+        && let Some(overlay) = OVERLAY.get()
+    {
         let completed = super::guard(false, || {
             // SAFETY: Present supplies a live IDXGISwapChain COM pointer for this call.
             if let Some(chain) = unsafe { IDXGISwapChain::from_raw_borrowed(&raw) }
