@@ -150,6 +150,7 @@ impl Catalog {
                         catalog.set(State::Loading);
                         let state = fetch
                             .get(INDEX, MAX_INDEX)
+                            .map_err(String::from)
                             .and_then(|json| {
                                 let signature = fetch.get(&format!("{INDEX}.sig"), 64)?;
                                 verify(&json, &signature, &key)

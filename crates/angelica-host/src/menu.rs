@@ -1609,7 +1609,12 @@ impl Menu {
         );
         match self.section {
             Section::General => self.general(&mut content, view),
-            Section::Updates => self.updates(&mut content, view),
+            Section::Updates => {
+                egui::ScrollArea::vertical()
+                    .id_salt("angelica-updates")
+                    .auto_shrink([false, false])
+                    .show(&mut content, |ui| self.updates(ui, view));
+            }
             Section::Developers => {
                 egui::ScrollArea::vertical()
                     .id_salt("angelica-developers")
@@ -1778,23 +1783,7 @@ impl Menu {
                 )
                 .wrap(),
             );
-            ui.add_space(view.at(10.0));
         }
-        setting(ui, view, s.setting_updates, |ui| {
-            ui.label(
-                RichText::new(s.updates_auto)
-                    .font(strong(view.at(13.5)))
-                    .color(p.text),
-            );
-        });
-        ui.add(
-            egui::Label::new(
-                RichText::new(s.updates_note)
-                    .font(sans(view.at(12.0)))
-                    .color(p.secondary),
-            )
-            .wrap(),
-        );
     }
 
     /// Angelica's own version, its update, and the channel.
@@ -1848,17 +1837,19 @@ impl Menu {
                 Status::Ready(version) => fill(s.map_ready, &[("version", version)]),
                 Status::Failed(reason) => fill(s.angelica_failed, &[("reason", reason)]),
             };
-            setting(ui, view, s.setting_map, |ui| {
-                ui.label(
-                    RichText::new(capitalized(&state))
-                        .font(sans(view.at(12.5)))
+            setting(ui, view, s.setting_map, |_| {});
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("{}.", capitalized(&state)))
+                        .font(sans(view.at(12.0)))
                         .color(if matches!(map, Status::Failed(_)) {
                             p.attention
                         } else {
                             p.secondary
                         }),
-                );
-            });
+                )
+                .wrap(),
+            );
             ui.add_space(view.at(10.0));
         }
         let Some(built) = crate::self_update::build_channel() else {
