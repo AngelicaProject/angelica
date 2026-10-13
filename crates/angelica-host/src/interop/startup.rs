@@ -195,6 +195,7 @@ fn initialize() -> Result<(), String> {
     std::fs::create_dir_all(&config.log_directory).map_err(|e| e.to_string())?;
     super::rotate_log(&config.log_directory);
     let _ = LOG_DIRECTORY.set(config.log_directory.clone());
+    super::proxy::use_system_proxy(super::log);
 
     let (base, snapshot, hash) = executable_snapshot()?;
     log_start(base, &hash)?;
