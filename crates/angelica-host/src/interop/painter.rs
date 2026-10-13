@@ -1,4 +1,7 @@
-//! Egui triangles rendered on a private deferred D3D11 context.
+//! Egui triangles drawn into the game's back buffer on its immediate
+//! context, the way proven overlays draw: everything the overlay changes in
+//! the context is saved before and put back after, and vertices and indices
+//! go into two buffers that are made once and grow.
 use egui::{
     TextureId,
     epaint::{ClippedPrimitive, Primitive},
@@ -9,23 +12,29 @@ use windows::{
     Win32::{
         Foundation::RECT,
         Graphics::{
-            Direct3D::{D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::D3DCompile, ID3DBlob},
+            Direct3D::{
+                D3D_PRIMITIVE_TOPOLOGY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::D3DCompile,
+                ID3DBlob,
+            },
             Direct3D11::{
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER,
                 D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_VERTEX_BUFFER, D3D11_BLEND_DESC,
                 D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
-                D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS, D3D11_CULL_NONE,
-                D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_INPUT_ELEMENT_DESC,
+                D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS, D3D11_CPU_ACCESS_WRITE,
+                D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                D3D11_INPUT_ELEMENT_DESC, D3D11_MAP_WRITE_DISCARD, D3D11_MAPPED_SUBRESOURCE,
                 D3D11_RASTERIZER_DESC, D3D11_RENDER_TARGET_BLEND_DESC, D3D11_SAMPLER_DESC,
                 D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC,
-                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11BlendState, ID3D11Buffer,
-                ID3D11Device, ID3D11DeviceContext, ID3D11InputLayout, ID3D11PixelShader,
-                ID3D11RasterizerState, ID3D11SamplerState, ID3D11ShaderResourceView,
+                D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11BlendState,
+                ID3D11Buffer, ID3D11ClassInstance, ID3D11DepthStencilState, ID3D11DepthStencilView,
+                ID3D11Device, ID3D11DeviceContext, ID3D11DomainShader, ID3D11GeometryShader,
+                ID3D11HullShader, ID3D11InputLayout, ID3D11PixelShader, ID3D11RasterizerState,
+                ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
                 ID3D11Texture2D, ID3D11VertexShader,
             },
             Dxgi::{
                 Common::{
-                    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM,
+                    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM,
                     DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R16G16B16A16_FLOAT,
                     DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32_FLOAT, DXGI_SAMPLE_DESC,
                 },
@@ -52,10 +61,245 @@ struct Texture {
     view: ID3D11ShaderResourceView,
 }
 
+/// A buffer the CPU rewrites every frame, made again larger when a frame
+/// needs more room.
+struct Dynamic {
+    bind: D3D11_BIND_FLAG,
+    buffer: Option<ID3D11Buffer>,
+    capacity: usize,
+}
+
+impl Dynamic {
+    fn new(bind: D3D11_BIND_FLAG) -> Self {
+        Self {
+            bind,
+            buffer: None,
+            capacity: 0,
+        }
+    }
+
+    /// The buffer, with room for `bytes`.
+    fn with_room(&mut self, device: &ID3D11Device, bytes: usize) -> Result<ID3D11Buffer, String> {
+        if let Some(buffer) = &self.buffer
+            && self.capacity >= bytes
+        {
+            return Ok(buffer.clone());
+        }
+        let capacity = bytes.next_power_of_two().max(64 * 1024);
+        let desc = D3D11_BUFFER_DESC {
+            ByteWidth: u32::try_from(capacity).map_err(|e| e.to_string())?,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: self.bind.0.cast_unsigned(),
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0.cast_unsigned(),
+            ..Default::default()
+        };
+        let mut buffer = None;
+        // SAFETY: a valid dynamic buffer descriptor and an owned output.
+        unsafe { device.CreateBuffer(&raw const desc, None, Some(&raw mut buffer)) }
+            .map_err(|e| e.to_string())?;
+        let buffer = needed(buffer, "buffer")?;
+        self.buffer = Some(buffer.clone());
+        self.capacity = capacity;
+        Ok(buffer)
+    }
+}
+
+/// Writes `bytes` at the start of the dynamic `buffer`, discarding what it
+/// held.
+fn write(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8]) -> Result<(), String> {
+    let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+    // SAFETY: the buffer is dynamic with CPU write access and has room for
+    // `bytes`; the mapping is written once and unmapped before any draw.
+    unsafe {
+        context
+            .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&raw mut mapped))
+            .map_err(|e| e.to_string())?;
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.pData.cast::<u8>(), bytes.len());
+        context.Unmap(buffer, 0);
+    }
+    Ok(())
+}
+
+/// Shader class instances a stage can hold, the most D3D11 allows.
+const INSTANCES: usize = 256;
+
+/// Everything the overlay sets in the game's immediate context, saved before
+/// it draws and put back after.
+struct Saved {
+    scissors: [RECT; 16],
+    scissor_count: u32,
+    viewports: [D3D11_VIEWPORT; 16],
+    viewport_count: u32,
+    raster: Option<ID3D11RasterizerState>,
+    blend: Option<ID3D11BlendState>,
+    blend_factor: [f32; 4],
+    sample_mask: u32,
+    depth: Option<ID3D11DepthStencilState>,
+    stencil: u32,
+    resources: [Option<ID3D11ShaderResourceView>; 1],
+    samplers: [Option<ID3D11SamplerState>; 1],
+    vs_constants: [Option<ID3D11Buffer>; 1],
+    ps_constants: [Option<ID3D11Buffer>; 1],
+    pixel: (Option<ID3D11PixelShader>, Vec<Option<ID3D11ClassInstance>>),
+    vertex: (Option<ID3D11VertexShader>, Vec<Option<ID3D11ClassInstance>>),
+    geometry: (
+        Option<ID3D11GeometryShader>,
+        Vec<Option<ID3D11ClassInstance>>,
+    ),
+    hull: (Option<ID3D11HullShader>, Vec<Option<ID3D11ClassInstance>>),
+    domain: (Option<ID3D11DomainShader>, Vec<Option<ID3D11ClassInstance>>),
+    topology: D3D_PRIMITIVE_TOPOLOGY,
+    index: Option<ID3D11Buffer>,
+    index_format: DXGI_FORMAT,
+    index_offset: u32,
+    vertex_buffer: Option<ID3D11Buffer>,
+    vertex_stride: u32,
+    vertex_offset: u32,
+    layout: Option<ID3D11InputLayout>,
+    targets: [Option<ID3D11RenderTargetView>; 8],
+    depth_view: Option<ID3D11DepthStencilView>,
+}
+
+/// A stage's shader and its class instances, read with `get`.
+fn shader_of<T>(
+    get: impl FnOnce(*mut Option<T>, Option<*mut Option<ID3D11ClassInstance>>, Option<*mut u32>),
+) -> (Option<T>, Vec<Option<ID3D11ClassInstance>>) {
+    let mut shader = None;
+    let mut instances = vec![None; INSTANCES];
+    let mut count = u32::try_from(INSTANCES).unwrap_or(0);
+    get(
+        &raw mut shader,
+        Some(instances.as_mut_ptr()),
+        Some(&raw mut count),
+    );
+    instances.truncate(usize::try_from(count).unwrap_or(0).min(INSTANCES));
+    (shader, instances)
+}
+
+impl Saved {
+    /// Reads the state of `context`.
+    ///
+    /// # Safety
+    /// `context` is the device's immediate context, used on this thread.
+    unsafe fn read(context: &ID3D11DeviceContext) -> Self {
+        // SAFETY: every output matches the getter's documented size and is
+        // owned by this function; the caller owns the context's thread.
+        unsafe {
+            let mut saved = Self {
+                scissors: Default::default(),
+                scissor_count: 16,
+                viewports: Default::default(),
+                viewport_count: 16,
+                raster: context.RSGetState().ok(),
+                blend: None,
+                blend_factor: [0.0; 4],
+                sample_mask: 0,
+                depth: None,
+                stencil: 0,
+                resources: Default::default(),
+                samplers: Default::default(),
+                vs_constants: Default::default(),
+                ps_constants: Default::default(),
+                pixel: shader_of(|s, i, n| context.PSGetShader(s, i, n)),
+                vertex: shader_of(|s, i, n| context.VSGetShader(s, i, n)),
+                geometry: shader_of(|s, i, n| context.GSGetShader(s, i, n)),
+                hull: shader_of(|s, i, n| context.HSGetShader(s, i, n)),
+                domain: shader_of(|s, i, n| context.DSGetShader(s, i, n)),
+                topology: context.IAGetPrimitiveTopology(),
+                index: None,
+                index_format: DXGI_FORMAT::default(),
+                index_offset: 0,
+                vertex_buffer: None,
+                vertex_stride: 0,
+                vertex_offset: 0,
+                layout: context.IAGetInputLayout().ok(),
+                targets: Default::default(),
+                depth_view: None,
+            };
+            context.RSGetScissorRects(
+                &raw mut saved.scissor_count,
+                Some(saved.scissors.as_mut_ptr()),
+            );
+            context.RSGetViewports(
+                &raw mut saved.viewport_count,
+                Some(saved.viewports.as_mut_ptr()),
+            );
+            context.OMGetBlendState(
+                Some(&raw mut saved.blend),
+                Some(&mut saved.blend_factor),
+                Some(&raw mut saved.sample_mask),
+            );
+            context
+                .OMGetDepthStencilState(Some(&raw mut saved.depth), Some(&raw mut saved.stencil));
+            context.PSGetShaderResources(0, Some(&mut saved.resources));
+            context.PSGetSamplers(0, Some(&mut saved.samplers));
+            context.VSGetConstantBuffers(0, Some(&mut saved.vs_constants));
+            context.PSGetConstantBuffers(0, Some(&mut saved.ps_constants));
+            context.IAGetIndexBuffer(
+                Some(&raw mut saved.index),
+                Some(&raw mut saved.index_format),
+                Some(&raw mut saved.index_offset),
+            );
+            context.IAGetVertexBuffers(
+                0,
+                1,
+                Some(&raw mut saved.vertex_buffer),
+                Some(&raw mut saved.vertex_stride),
+                Some(&raw mut saved.vertex_offset),
+            );
+            context.OMGetRenderTargets(Some(&mut saved.targets), Some(&raw mut saved.depth_view));
+            saved
+        }
+    }
+
+    /// Puts the saved state back into `context`.
+    ///
+    /// # Safety
+    /// As for [`Saved::read`], on the context it was read from.
+    unsafe fn restore(&self, context: &ID3D11DeviceContext) {
+        let scissors = &self.scissors[..(self.scissor_count as usize).min(16)];
+        let viewports = &self.viewports[..(self.viewport_count as usize).min(16)];
+        // SAFETY: every input was read from this context and is alive.
+        unsafe {
+            context.RSSetScissorRects(Some(scissors));
+            context.RSSetViewports(Some(viewports));
+            context.RSSetState(self.raster.as_ref());
+            context.OMSetBlendState(
+                self.blend.as_ref(),
+                Some(&self.blend_factor),
+                self.sample_mask,
+            );
+            context.OMSetDepthStencilState(self.depth.as_ref(), self.stencil);
+            context.PSSetShaderResources(0, Some(&self.resources));
+            context.PSSetSamplers(0, Some(&self.samplers));
+            context.VSSetConstantBuffers(0, Some(&self.vs_constants));
+            context.PSSetConstantBuffers(0, Some(&self.ps_constants));
+            context.PSSetShader(self.pixel.0.as_ref(), Some(&self.pixel.1));
+            context.VSSetShader(self.vertex.0.as_ref(), Some(&self.vertex.1));
+            context.GSSetShader(self.geometry.0.as_ref(), Some(&self.geometry.1));
+            context.HSSetShader(self.hull.0.as_ref(), Some(&self.hull.1));
+            context.DSSetShader(self.domain.0.as_ref(), Some(&self.domain.1));
+            context.IASetPrimitiveTopology(self.topology);
+            context.IASetIndexBuffer(self.index.as_ref(), self.index_format, self.index_offset);
+            context.IASetVertexBuffers(
+                0,
+                1,
+                Some(&raw const self.vertex_buffer),
+                Some(&raw const self.vertex_stride),
+                Some(&raw const self.vertex_offset),
+            );
+            context.IASetInputLayout(self.layout.as_ref());
+            context.OMSetRenderTargets(Some(&self.targets), self.depth_view.as_ref());
+        }
+    }
+}
+
 pub struct Painter {
     device: ID3D11Device,
     immediate: ID3D11DeviceContext,
-    deferred: ID3D11DeviceContext,
+    vertices: Dynamic,
+    indices: Dynamic,
+    constants: Dynamic,
     vertex: ID3D11VertexShader,
     pixel: ID3D11PixelShader,
     layout: ID3D11InputLayout,
@@ -162,7 +406,6 @@ impl Painter {
         let device: ID3D11Device = unsafe { chain.GetDevice() }.map_err(|e| e.to_string())?;
         // SAFETY: obtaining the device's owned immediate context has no other precondition.
         let immediate = unsafe { device.GetImmediateContext() }.map_err(|e| e.to_string())?;
-        let mut deferred = None;
         let vs = shader(s!("vertex"), s!("vs_4_0"))?;
         let ps = shader(s!("pixel"), s!("ps_4_0"))?;
         let (mut vertex, mut pixel, mut layout, mut blend, mut raster, mut sampler) =
@@ -219,9 +462,6 @@ impl Painter {
         // device calls copy their inputs and initialize the provided output options.
         unsafe {
             device
-                .CreateDeferredContext(0, Some(&raw mut deferred))
-                .map_err(|e| e.to_string())?;
-            device
                 .CreateVertexShader(&vs, None, Some(&raw mut vertex))
                 .map_err(|e| e.to_string())?;
             device
@@ -243,7 +483,9 @@ impl Painter {
         Ok(Self {
             device,
             immediate,
-            deferred: needed(deferred, "deferred context")?,
+            vertices: Dynamic::new(D3D11_BIND_VERTEX_BUFFER),
+            indices: Dynamic::new(D3D11_BIND_INDEX_BUFFER),
+            constants: Dynamic::new(D3D11_BIND_CONSTANT_BUFFER),
             vertex: needed(vertex, "vertex shader")?,
             pixel: needed(pixel, "pixel shader")?,
             layout: needed(layout, "input layout")?,
@@ -252,30 +494,6 @@ impl Painter {
             sampler: needed(sampler, "sampler")?,
             textures: HashMap::new(),
         })
-    }
-
-    fn buffer(&self, bytes: &[u8], bind: D3D11_BIND_FLAG) -> Result<ID3D11Buffer, String> {
-        let desc = D3D11_BUFFER_DESC {
-            ByteWidth: u32::try_from(bytes.len()).map_err(|e| e.to_string())?,
-            Usage: D3D11_USAGE_IMMUTABLE,
-            BindFlags: bind.0.cast_unsigned(),
-            ..Default::default()
-        };
-        let data = D3D11_SUBRESOURCE_DATA {
-            pSysMem: bytes.as_ptr().cast(),
-            ..Default::default()
-        };
-        let mut buffer = None;
-        // SAFETY: byte buffer is alive and its length equals ByteWidth; D3D copies the data.
-        unsafe {
-            self.device.CreateBuffer(
-                &raw const desc,
-                Some(&raw const data),
-                Some(&raw mut buffer),
-            )
-        }
-        .map_err(|e| e.to_string())?;
-        needed(buffer, "buffer")
     }
 
     fn update_texture(
@@ -381,11 +599,12 @@ impl Painter {
     }
 
     fn draw(
-        &self,
+        &mut self,
         chain: &IDXGISwapChain,
         primitives: &[ClippedPrimitive],
         scale: f32,
     ) -> Result<(), String> {
+        let meshes = meshes(primitives, &self.textures)?;
         // SAFETY: index zero is the swap chain's current back buffer; COM type is queried.
         let target: ID3D11Texture2D = unsafe { chain.GetBuffer(0) }.map_err(|e| e.to_string())?;
         let mut target_desc = D3D11_TEXTURE2D_DESC::default();
@@ -409,7 +628,23 @@ impl Painter {
             .into_iter()
             .flat_map(f32::to_le_bytes)
             .collect();
-        let constant = self.buffer(&screen, D3D11_BIND_CONSTANT_BUFFER)?;
+        let (vertices, indices) = pack(&meshes, scale);
+        let constant = self.constants.with_room(&self.device, screen.len())?;
+        write(&self.immediate, &constant, &screen)?;
+        let vertex_buffer = if vertices.is_empty() {
+            None
+        } else {
+            let buffer = self.vertices.with_room(&self.device, vertices.len())?;
+            write(&self.immediate, &buffer, &vertices)?;
+            Some(buffer)
+        };
+        let index_buffer = if indices.is_empty() {
+            None
+        } else {
+            let buffer = self.indices.with_room(&self.device, indices.len())?;
+            write(&self.immediate, &buffer, &indices)?;
+            Some(buffer)
+        };
         let viewport = D3D11_VIEWPORT {
             Width: width,
             Height: height,
@@ -417,63 +652,71 @@ impl Painter {
             MaxDepth: 1.,
             ..Default::default()
         };
-        // SAFETY: this private deferred context records only our commands. Owned COM objects
-        // are kept alive throughout recording, and ExecuteCommandList(true) restores game state.
-        unsafe {
-            self.deferred.ClearState();
-            self.deferred.OMSetRenderTargets(Some(&[target_view]), None);
-            self.deferred.OMSetBlendState(&self.blend, None, u32::MAX);
-            self.deferred.RSSetState(&self.raster);
-            self.deferred.RSSetViewports(Some(&[viewport]));
-            self.deferred.IASetInputLayout(&self.layout);
-            self.deferred
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.deferred.VSSetShader(&self.vertex, None);
-            self.deferred
-                .VSSetConstantBuffers(0, Some(&[Some(constant.clone())]));
-            self.deferred
-                .PSSetConstantBuffers(0, Some(&[Some(constant)]));
-            self.deferred.PSSetShader(&self.pixel, None);
-            self.deferred
-                .PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
-        }
-        for primitive in primitives {
-            self.draw_mesh(primitive, scale, width, height)?;
-        }
-        let mut commands = None;
-        // SAFETY: finished command list uses owned resources; restore preserves every game
-        // immediate-context state. Finishing with false clears deferred back-buffer references.
-        unsafe {
-            self.deferred
-                .FinishCommandList(false, Some(&raw mut commands))
-                .map_err(|e| e.to_string())?;
-            self.immediate
-                .ExecuteCommandList(&needed(commands, "command list")?, true);
-        }
-        Ok(())
+        // SAFETY: Present runs on the game's rendering thread, which owns the
+        // immediate context; every object set is owned and alive, and the
+        // game's state is read first and put back below.
+        let saved = unsafe { Saved::read(&self.immediate) };
+        let result = (|| {
+            // SAFETY: as above; the vertex stride matches the input layout.
+            unsafe {
+                let context = &self.immediate;
+                context.OMSetRenderTargets(Some(&[target_view]), None);
+                context.OMSetBlendState(&self.blend, None, u32::MAX);
+                context.OMSetDepthStencilState(None, 0);
+                context.RSSetState(&self.raster);
+                context.RSSetViewports(Some(&[viewport]));
+                context.IASetInputLayout(&self.layout);
+                context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                context.IASetVertexBuffers(
+                    0,
+                    1,
+                    Some(&raw const vertex_buffer),
+                    Some(&20),
+                    Some(&0),
+                );
+                context.IASetIndexBuffer(index_buffer.as_ref(), DXGI_FORMAT_R32_UINT, 0);
+                context.VSSetShader(&self.vertex, None);
+                context.VSSetConstantBuffers(0, Some(&[Some(constant.clone())]));
+                context.PSSetConstantBuffers(0, Some(&[Some(constant)]));
+                context.PSSetShader(&self.pixel, None);
+                context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+                context.GSSetShader(None, None);
+                context.HSSetShader(None, None);
+                context.DSSetShader(None, None);
+            }
+            let (mut first_index, mut first_vertex) = (0u32, 0i32);
+            for (mesh, view, clip) in &meshes {
+                let count = u32::try_from(mesh.indices.len()).map_err(|e| e.to_string())?;
+                if let Some(scissor) = scissor(*clip, scale, width, height)? {
+                    // SAFETY: as above; the indices of this mesh were validated
+                    // against its vertices, which start at `first_vertex`.
+                    unsafe {
+                        self.immediate
+                            .PSSetShaderResources(0, Some(&[Some((*view).clone())]));
+                        self.immediate.RSSetScissorRects(Some(&[scissor]));
+                        self.immediate.DrawIndexed(count, first_index, first_vertex);
+                    }
+                }
+                first_index += count;
+                first_vertex += i32::try_from(mesh.vertices.len()).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        // SAFETY: restores what was read above on the same context and thread.
+        unsafe { saved.restore(&self.immediate) };
+        result
     }
+}
 
-    fn draw_mesh(
-        &self,
-        primitive: &ClippedPrimitive,
-        scale: f32,
-        width: f32,
-        height: f32,
-    ) -> Result<(), String> {
-        let Primitive::Mesh(mesh) = &primitive.primitive else {
-            return Err("custom paint callbacks are not supported".into());
-        };
-        if mesh.indices.is_empty() {
-            return Ok(());
-        }
-        if !mesh.is_valid() {
-            return Err("egui mesh contains invalid indices".into());
-        }
-        let texture = self
-            .textures
-            .get(&mesh.texture_id)
-            .ok_or("mesh references an unknown texture")?;
-        let mut vertices = Vec::with_capacity(mesh.vertices.len() * 20);
+/// The vertices of every mesh in order, in pixels, and their indices, each
+/// relative to its mesh.
+fn pack(
+    meshes: &[(&egui::epaint::Mesh, &ID3D11ShaderResourceView, egui::Rect)],
+    scale: f32,
+) -> (Vec<u8>, Vec<u8>) {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (mesh, _, _) in meshes {
         for vertex in &mesh.vertices {
             for v in [
                 vertex.pos.x * scale,
@@ -485,66 +728,75 @@ impl Painter {
             }
             vertices.extend_from_slice(&vertex.color.to_array());
         }
-        let indices: Vec<u8> = mesh.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let vertex_buffer = Some(self.buffer(&vertices, D3D11_BIND_VERTEX_BUFFER)?);
-        let index_buffer = self.buffer(&indices, D3D11_BIND_INDEX_BUFFER)?;
-        let clip = primitive.clip_rect;
-        let scissor = RECT {
-            left: (clip.min.x * scale)
-                .floor()
-                .clamp(0., width)
-                .to_i32()
-                .ok_or("invalid clip left")?,
-            top: (clip.min.y * scale)
-                .floor()
-                .clamp(0., height)
-                .to_i32()
-                .ok_or("invalid clip top")?,
-            right: (clip.max.x * scale)
-                .ceil()
-                .clamp(0., width)
-                .to_i32()
-                .ok_or("invalid clip right")?,
-            bottom: (clip.max.y * scale)
-                .ceil()
-                .clamp(0., height)
-                .to_i32()
-                .ok_or("invalid clip bottom")?,
-        };
-        if scissor.right <= scissor.left || scissor.bottom <= scissor.top {
-            return Ok(());
-        }
-        // SAFETY: vertex stride matches POSITION/TEXCOORD/COLOR; indices were validated,
-        // resource options remain alive while D3D copies and retains their references.
-        unsafe {
-            self.deferred.IASetVertexBuffers(
-                0,
-                1,
-                Some(&raw const vertex_buffer),
-                Some(&20),
-                Some(&0),
-            );
-            self.deferred
-                .IASetIndexBuffer(&index_buffer, DXGI_FORMAT_R32_UINT, 0);
-            self.deferred
-                .PSSetShaderResources(0, Some(&[Some(texture.view.clone())]));
-            self.deferred.RSSetScissorRects(Some(&[scissor]));
-            self.deferred.DrawIndexed(
-                u32::try_from(mesh.indices.len()).map_err(|e| e.to_string())?,
-                0,
-                0,
-            );
-        }
-
-        Ok(())
+        indices.extend(mesh.indices.iter().flat_map(|i| i.to_le_bytes()));
     }
+    (vertices, indices)
+}
+
+/// The meshes to draw, each with its texture and clip rectangle.
+fn meshes<'a>(
+    primitives: &'a [ClippedPrimitive],
+    textures: &'a HashMap<TextureId, Texture>,
+) -> Result<
+    Vec<(
+        &'a egui::epaint::Mesh,
+        &'a ID3D11ShaderResourceView,
+        egui::Rect,
+    )>,
+    String,
+> {
+    let mut meshes = Vec::new();
+    for primitive in primitives {
+        let Primitive::Mesh(mesh) = &primitive.primitive else {
+            return Err("custom paint callbacks are not supported".into());
+        };
+        if mesh.indices.is_empty() {
+            continue;
+        }
+        if !mesh.is_valid() {
+            return Err("egui mesh contains invalid indices".into());
+        }
+        let texture = textures
+            .get(&mesh.texture_id)
+            .ok_or("mesh references an unknown texture")?;
+        meshes.push((mesh, &texture.view, primitive.clip_rect));
+    }
+    Ok(meshes)
+}
+
+/// The scissor rectangle in pixels for a clip rectangle in points; none
+/// when nothing of it is on the target.
+fn scissor(clip: egui::Rect, scale: f32, width: f32, height: f32) -> Result<Option<RECT>, String> {
+    let rect = RECT {
+        left: (clip.min.x * scale)
+            .floor()
+            .clamp(0., width)
+            .to_i32()
+            .ok_or("invalid clip left")?,
+        top: (clip.min.y * scale)
+            .floor()
+            .clamp(0., height)
+            .to_i32()
+            .ok_or("invalid clip top")?,
+        right: (clip.max.x * scale)
+            .ceil()
+            .clamp(0., width)
+            .to_i32()
+            .ok_or("invalid clip right")?,
+        bottom: (clip.max.y * scale)
+            .ceil()
+            .clamp(0., height)
+            .to_i32()
+            .ok_or("invalid clip bottom")?,
+    };
+    Ok((rect.right > rect.left && rect.bottom > rect.top).then_some(rect))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use windows::Win32::Graphics::{
-        Direct3D::D3D_DRIVER_TYPE_WARP,
+        Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_PRIMITIVE_TOPOLOGY_POINTLIST},
         Direct3D11::{
             D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_USAGE_STAGING,
         },
@@ -613,9 +865,19 @@ mod tests {
             MaxDepth: 1.,
             ..Default::default()
         };
+        let game_scissor = RECT {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
         // SAFETY: owned immediate context accepts a single valid viewport descriptor.
         unsafe {
             painter.immediate.RSSetViewports(Some(&[original]));
+            painter.immediate.RSSetScissorRects(Some(&[game_scissor]));
+            painter
+                .immediate
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
         }
         let mut mesh = egui::epaint::Mesh::default();
         for pos in [
@@ -657,6 +919,17 @@ mod tests {
                 .RSGetViewports(&raw mut count, Some(&raw mut restored));
         }
         assert_eq!(count, 1);
+        let mut scissor = RECT::default();
+        let mut scissors = 1;
+        // SAFETY: one-element output storage matches the supplied rectangle count.
+        let topology = unsafe {
+            painter
+                .immediate
+                .RSGetScissorRects(&raw mut scissors, Some(&raw mut scissor));
+            painter.immediate.IAGetPrimitiveTopology()
+        };
+        assert_eq!((scissors, scissor), (1, game_scissor));
+        assert_eq!(topology, D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
         assert_eq!(restored.Width.to_bits(), original.Width.to_bits());
         assert_eq!(restored.Height.to_bits(), original.Height.to_bits());
         // SAFETY: no back-buffer references survive paint or center_pixel; private window.
