@@ -4,9 +4,9 @@
 
 ## What the player sees
 
-1. **Installation.** The game it found (the launcher and the installation's folder; several are a choice, none is a field for the folder), with **Choose another folder**; what is installed beside the game that works with Angelica (Dalamud through XIVLauncher, ReShade); the menu key; and, at the bottom, Angelica's version and **Install →**. A `dinput8.dll` of another program in the game folder is said in red and keeps **Install** off; a game folder that needs administrator rights is said in one line.
+1. **Installation.** The game it found (the launcher and the installation's folder; several are a choice), with **Choose another folder**, which opens Windows' folder dialog; when no game is found, only **Choose the game folder**. A chosen folder counts when it is the game's `game` folder or holds one. Then what is installed beside the game that works with Angelica (Dalamud through XIVLauncher, ReShade), and, at the bottom, Angelica's version and **Install →**. A `dinput8.dll` of another program in the game folder is said in red and keeps **Install** off; a game folder that needs administrator rights is said in one line.
 2. **Installation in progress.** A thin progress line and the current step.
-3. **Done.** The menu key, that updates are installed automatically when the game starts, and **Open** for Angelica's folder; **Close**.
+3. **Done.** The menu key, and that updates are installed automatically when the game starts; **Close**.
 
 It offers no plugins: the player installs them from the Angelica menu in the game. A failure shows what happened and what to do, with **Try again**.
 

@@ -17,7 +17,7 @@ Angelica is distributed through GitHub Releases of `AngelicaProject/angelica`; t
 
 Stable releases are ordinary GitHub releases marked *latest*. Nightly is one rolling pre-release, tag `nightly`, replaced by each build and never marked *latest*. `<next>` is the declared version while it has not been tagged, and the next patch version once it has; `<build>` is the release workflow's run number. Nightly versions sort before the stable release they lead to.
 
-The channel is chosen in **Settings → General → Updates** and stored as `channel` in `state/_angelica.json` ([installation](../formats/host-installation-v1.md#angelica-settings)). Without it, a copy follows the channel its installer came from. The nightly channel checks both feeds and takes the newer version, so a stable release newer than the last nightly arrives at once. Angelica never installs an older version than the one running: switching from nightly to stable keeps the nightly build until a newer stable release.
+The channel is chosen in **Settings → Updates** and stored as `channel` in `state/_angelica.json` ([installation](../formats/host-installation-v1.md#angelica-settings)). Without it, a copy follows the channel its installer came from. The nightly channel checks both feeds and takes the newer version, so a stable release newer than the last nightly arrives at once. Angelica never installs an older version than the one running: switching from nightly to stable keeps the nightly build until a newer stable release.
 
 Nightly runs inside the game process and may stop the game; it is for testers. The installer on the website installs stable.
 
@@ -44,7 +44,7 @@ The release key is an Ed25519 key. Its public half is compiled into the proxy, t
 
 The host updates itself; the player never has to act ([loading](../architecture/loading.md#updates)).
 
-- **Checks.** 20 seconds after the game starts and every 6 hours, on a host thread, the host reads the feed of its channel (both feeds for nightly). A failure is shown in **Settings → General → Updates** and never interrupts the game.
+- **Checks.** 20 seconds after the game starts and every 6 hours, on a host thread, the host reads the feed of its channel (both feeds for nightly). A channel with no release yet (the feed answers `404`) has nothing newer and is not a failure. A failure is shown in **Settings → Updates** and never interrupts the game.
 - **Download.** A newer version's runtime and plugin installer are downloaded, checked against the feed's sizes and hashes and against their release signatures, and written with their signatures into a new version folder `versions/<version>/`; then `current.json` is replaced to name it ([loading](../architecture/loading.md#updates)). A file in use is never replaced, and older version folders are removed once nothing uses them.
 - **Apply.** The proxy loads the new version at the next game start. The menu says **Angelica updates at the next game start** until then.
 - **The proxy** is loaded by the game and changes rarely; only the installer replaces it. A host that needs a newer proxy says so in the menu.

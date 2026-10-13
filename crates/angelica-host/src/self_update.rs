@@ -39,13 +39,42 @@ pub enum Status {
     Failed(String),
 }
 
+/// Why a URL could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchError {
+    /// Nothing is published there (`404`): a channel without a release yet.
+    Missing(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing(name) => write!(f, "{name} is not published"),
+            Self::Failed(reason) => f.write_str(reason),
+        }
+    }
+}
+
+impl From<FetchError> for String {
+    fn from(error: FetchError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Reads a URL.
 pub trait Fetch: Send + Sync {
     /// The body of `url`, at most `limit` bytes.
     ///
     /// # Errors
-    /// Any failure, in words.
-    fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String>;
+    /// Nothing published at `url`, or any other failure, in words.
+    fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, FetchError>;
+}
+
+/// The last part of `url`, which names the file in messages.
+#[must_use]
+pub fn file_name(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or(url)
 }
 
 /// What an update needs to know about the running Angelica.
@@ -132,26 +161,37 @@ impl Default for Http {
 }
 
 impl Fetch for Http {
-    fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+    fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, FetchError> {
         use std::io::Read as _;
+        let name = file_name(url);
         let request = crate::http::Request {
             url: url.to_owned(),
             headers: Vec::new(),
         };
+        // One byte over `limit` is read to tell a larger body: the client's
+        // reader fails on a read past its limit even at the body's end.
         let (head, reader) = self
             .0
-            .send(&request, Duration::from_mins(5), limit, || false)
-            .map_err(|e| format!("{url}: {}", e.message))?;
-        if head.status != 200 {
-            return Err(format!("{url}: the server answered {}", head.status));
+            .send(&request, Duration::from_mins(5), limit + 1, || false)
+            .map_err(|e| FetchError::Failed(format!("{name}: {}", e.message)))?;
+        match head.status {
+            200 => {}
+            404 => return Err(FetchError::Missing(name.to_owned())),
+            status => {
+                return Err(FetchError::Failed(format!(
+                    "{name}: the server answered {status}"
+                )));
+            }
         }
         let mut body = Vec::new();
         reader
             .take(limit + 1)
             .read_to_end(&mut body)
-            .map_err(|e| format!("{url}: {e}"))?;
+            .map_err(|e| FetchError::Failed(format!("{name}: {e}")))?;
         if body.len() as u64 > limit {
-            return Err(format!("{url} is larger than {limit} bytes"));
+            return Err(FetchError::Failed(format!(
+                "{name} is larger than {limit} bytes"
+            )));
         }
         Ok(body)
     }
@@ -171,10 +211,12 @@ pub fn update(setup: &Setup, channel: Channel, fetch: &dyn Fetch) -> Result<Stat
     for &channel in channels {
         match read_feed(setup, channel, fetch) {
             Ok(feed) => feeds.push(feed),
-            Err(error) => failures.push(error),
+            // A channel without a release yet has nothing newer.
+            Err(FetchError::Missing(_)) => {}
+            Err(FetchError::Failed(error)) => failures.push(error),
         }
     }
-    if feeds.is_empty() {
+    if feeds.is_empty() && !failures.is_empty() {
         return Err(failures.join("; "));
     }
     let Some(feed) = angelica_update::newer(&setup.running, &feeds) else {
@@ -188,12 +230,12 @@ pub fn update(setup: &Setup, channel: Channel, fetch: &dyn Fetch) -> Result<Stat
     Ok(Status::Ready(version))
 }
 
-fn read_feed(setup: &Setup, channel: Channel, fetch: &dyn Fetch) -> Result<Feed, String> {
+fn read_feed(setup: &Setup, channel: Channel, fetch: &dyn Fetch) -> Result<Feed, FetchError> {
     let url = angelica_update::feed_url(&setup.repository, Product::Angelica, channel);
     let json = fetch.get(&url, angelica_update::MAX_FEED as u64)?;
     let signature = fetch.get(&format!("{url}.sig"), 64)?;
     Feed::verify(&json, &signature, &setup.key, Product::Angelica, channel)
-        .map_err(|e| format!("{}: {e}", channel.name()))
+        .map_err(|e| FetchError::Failed(format!("{}: {e}", channel.name())))
 }
 
 /// The version `current.json` names.
@@ -295,7 +337,11 @@ pub fn update_map(
     fetch: &dyn Fetch,
 ) -> Result<Status, String> {
     let url = angelica_update::feed_url(repository, Product::Map, Channel::Stable);
-    let json = fetch.get(&url, angelica_update::MAX_FEED as u64)?;
+    let json = match fetch.get(&url, angelica_update::MAX_FEED as u64) {
+        // No map release yet: the installed map is the newest there is.
+        Err(FetchError::Missing(_)) => return Ok(Status::UpToDate),
+        other => other?,
+    };
     let signature = fetch.get(&format!("{url}.sig"), 64)?;
     let feed = Feed::verify(&json, &signature, key, Product::Map, Channel::Stable)
         .map_err(|e| e.to_string())?;
@@ -407,16 +453,18 @@ mod tests {
     struct Releases(Mutex<HashMap<String, Vec<u8>>>);
 
     impl Fetch for Releases {
-        fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+        fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, FetchError> {
             let body = self
                 .0
                 .lock()
                 .unwrap()
                 .get(url)
                 .cloned()
-                .ok_or(format!("404 {url}"))?;
+                .ok_or(FetchError::Missing(file_name(url).to_owned()))?;
             if body.len() as u64 > limit {
-                return Err(format!("{url} is larger than {limit} bytes"));
+                return Err(FetchError::Failed(format!(
+                    "{url} is larger than {limit} bytes"
+                )));
             }
             Ok(body)
         }
@@ -611,5 +659,33 @@ mod tests {
         stranger.key = SigningKey::from_bytes(&[6; 32]).verifying_key().to_bytes();
         let error = update(&stranger, Channel::Stable, &releases).unwrap_err();
         assert!(error.contains("signature"), "{error}");
+    }
+
+    #[test]
+    fn a_channel_without_a_release_yet_is_not_a_failure() {
+        let folder = tempfile::tempdir().unwrap();
+        let releases = Releases(Mutex::default());
+        let running = setup(folder.path(), "0.1.0-nightly.2");
+        // Neither channel has a release.
+        assert_eq!(
+            update(&running, Channel::Nightly, &releases).unwrap(),
+            Status::UpToDate
+        );
+        // Only nightly has one: the missing stable feed is passed over.
+        publish(&releases, Channel::Nightly, "0.1.0-nightly.5", b"nightly");
+        assert_eq!(
+            update(&running, Channel::Nightly, &releases).unwrap(),
+            Status::Ready("0.1.0-nightly.5".into())
+        );
+        assert_eq!(
+            update(&running, Channel::Stable, &releases).unwrap(),
+            Status::UpToDate
+        );
+        // No map release yet either.
+        let map = folder.path().join("map");
+        assert_eq!(
+            update_map(&map, MAP_REPOSITORY, &running.key, &releases).unwrap(),
+            Status::UpToDate
+        );
     }
 }
