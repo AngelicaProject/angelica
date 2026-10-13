@@ -529,6 +529,11 @@ unsafe extern "system" fn resize(
     super::guard((), || {
         if let Some(overlay) = OVERLAY.get() {
             if let Ok(mut frames) = overlay.frames.lock() {
+                if frames.is_some() {
+                    super::log(&format!(
+                        "the game resizes its swap chain: {width}x{height}, format {format}, {count} buffers, flags {flags:#x}"
+                    ));
+                }
                 *frames = None;
             }
             overlay.input.release();

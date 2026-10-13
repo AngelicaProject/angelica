@@ -117,6 +117,7 @@ pub struct Catalog {
     state: Mutex<Option<State>>,
     requested: AtomicBool,
     started: AtomicBool,
+    log: std::sync::OnceLock<crate::self_update::LogSink>,
 }
 
 impl Catalog {
@@ -129,8 +130,19 @@ impl Catalog {
             .unwrap_or(State::NotLoaded)
     }
 
+    /// Sends failures to read the index to the host's log.
+    pub fn log_to(&self, sink: crate::self_update::LogSink) {
+        let _ = self.log.set(sink);
+    }
+
     pub(crate) fn set(&self, state: State) {
-        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = Some(state);
+        let mut current = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if let (Some(log), State::Failed(reason)) = (self.log.get(), &state)
+            && !matches!(current.as_ref(), Some(State::Failed(before)) if before == reason)
+        {
+            log(&format!("catalog: the index could not be read: {reason}"));
+        }
+        *current = Some(state);
     }
 
     /// Reads the index now; the first request starts the thread that reads
