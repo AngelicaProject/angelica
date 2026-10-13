@@ -222,45 +222,49 @@ impl Panel {
                 pressed = menu::bar(ui, &look, &bar);
             });
         } else {
-            frame.default_width(look.at(480.0)).show(context, |ui| {
-                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                pressed = menu::bar(ui, &look, &bar);
-                if let Some(button) = &pressed.menu {
-                    egui::Popup::menu(button).show(|ui| {
-                        if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
-                            host.queue(Action::OpenFolder(id.to_owned()));
-                        }
-                        if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
-                            host.queue(Action::Disable(id.to_owned()));
-                        }
-                    });
-                }
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(
-                        menu::num_u8(look.at(12.0)),
-                        menu::num_u8(look.at(8.0)),
-                    ))
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing =
-                                    egui::vec2(look.at(12.0), look.at(4.0));
-                                let mut drawer = Drawer {
-                                    host,
-                                    plugin: id,
-                                    window: &window.id,
-                                    inputs: &mut self.inputs,
-                                    icons: &mut self.icons,
-                                    last: None,
-                                    look,
-                                    strings,
-                                };
-                                let mut position = 0;
-                                drawer.widgets(ui, &window.widgets, &mut position);
-                            });
-                    });
-            });
+            // The window keeps its size: what does not fit scrolls, and the
+            // player resizes it by its corner.
+            frame
+                .default_size(egui::vec2(look.at(480.0), look.at(460.0)))
+                .show(context, |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    pressed = menu::bar(ui, &look, &bar);
+                    if let Some(button) = &pressed.menu {
+                        egui::Popup::menu(button).show(|ui| {
+                            if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
+                                host.queue(Action::OpenFolder(id.to_owned()));
+                            }
+                            if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
+                                host.queue(Action::Disable(id.to_owned()));
+                            }
+                        });
+                    }
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(
+                            menu::num_u8(look.at(16.0)),
+                            menu::num_u8(look.at(12.0)),
+                        ))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing =
+                                        egui::vec2(look.at(12.0), look.at(8.0));
+                                    let mut drawer = Drawer {
+                                        host,
+                                        plugin: id,
+                                        window: &window.id,
+                                        inputs: &mut self.inputs,
+                                        icons: &mut self.icons,
+                                        last: None,
+                                        look,
+                                        strings,
+                                    };
+                                    let mut position = 0;
+                                    drawer.widgets(ui, &window.widgets, &mut position);
+                                });
+                        });
+                });
         }
         if pressed.toggle {
             if collapsed {
@@ -457,9 +461,9 @@ impl Drawer<'_> {
             Widget::Entry(entry) => self.entry(ui, entry),
             Widget::Icon(icon) => self.icon(ui, *icon),
             Widget::Separator => {
-                ui.add_space(self.look.at(4.0));
+                ui.add_space(self.look.at(6.0));
                 theme::rule(ui);
-                ui.add_space(self.look.at(4.0));
+                ui.add_space(self.look.at(6.0));
                 return None;
             }
             Widget::BeginRow
@@ -483,15 +487,15 @@ impl Drawer<'_> {
     fn heading(&self, ui: &mut egui::Ui, text: &str) -> egui::Response {
         let look = self.look;
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), look.at(26.0)),
+            egui::vec2(ui.available_width(), look.at(34.0)),
             egui::Sense::hover(),
         );
         let painter = ui.painter();
         let title = painter.text(
-            egui::pos2(rect.left(), rect.bottom() - look.at(5.0)),
+            egui::pos2(rect.left(), rect.bottom() - look.at(7.0)),
             egui::Align2::LEFT_BOTTOM,
             text,
-            theme::sans(look.at(12.0)),
+            theme::sans(look.at(12.5)),
             look.p.secondary,
         );
         let y = title.center().y + 1.0;
@@ -511,7 +515,7 @@ impl Drawer<'_> {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = look.at(8.0);
             let (name, _) = ui.allocate_exact_size(
-                egui::vec2(look.at(120.0), look.at(20.0)),
+                egui::vec2(look.at(130.0), look.at(20.0)),
                 egui::Sense::hover(),
             );
             let galley = ui.painter().layout(
@@ -640,17 +644,17 @@ impl Drawer<'_> {
             .inner_margin(egui::Margin {
                 left: menu::num_u8(look.at(42.0)),
                 right: menu::num_u8(look.at(10.0)),
-                top: 0,
-                bottom: menu::num_u8(look.at(8.0)),
+                top: menu::num_u8(look.at(2.0)),
+                bottom: menu::num_u8(look.at(12.0)),
             })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(2.0));
+                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(6.0));
                 for fact in &entry.facts {
                     self.fact(ui, fact);
                 }
                 if !entry.more.is_empty() {
-                    ui.add_space(look.at(4.0));
+                    ui.add_space(look.at(6.0));
                     ui.horizontal_wrapped(|ui| {
                         for action in &entry.more {
                             let word = theme::word(
@@ -677,7 +681,7 @@ impl Drawer<'_> {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             let (row, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), look.at(36.0)),
+                egui::vec2(ui.available_width(), look.at(40.0)),
                 egui::Sense::click(),
             );
             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
