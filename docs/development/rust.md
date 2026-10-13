@@ -15,7 +15,7 @@
 - `angelica-hook`;
 - `angelica-proxy`;
 - the `interop` module of `angelica-host`.
-- the `system` module of `angelica-setup`, which only starts the installer again with administrator rights and reads the interface language.
+- the `system` module of `angelica-setup`, which only starts the installer again with administrator rights, reads the interface language, and opens Windows' folder dialog.
 
 In those places:
 
