@@ -186,11 +186,10 @@ pub struct Http(crate::http::Client);
 impl Http {
     #[must_use]
     pub fn new() -> Self {
-        Self(crate::http::Client::new(
-            vec!["github.com".into(), "*.githubusercontent.com".into()],
-            "angelica",
-            env!("CARGO_PKG_VERSION"),
-        ))
+        Self(crate::http::Client::for_angelica(vec![
+            "github.com".into(),
+            "*.githubusercontent.com".into(),
+        ]))
     }
 }
 

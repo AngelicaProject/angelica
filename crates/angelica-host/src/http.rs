@@ -1,9 +1,12 @@
-//! HTTPS requests of plugins (the `http` interface): GET only, to the hosts
-//! the manifest lists and the player approved, to public addresses only,
+//! HTTPS requests (the `http` interface of plugins, and Angelica's own):
+//! GET only, to the hosts the manifest lists and the player approved,
 //! within the host's size and time limits. The resolver enforces the hosts
-//! and addresses, so redirects are held to the same rules as the first
-//! request. TLS is the operating system's (`native-tls`: `SChannel` and the
-//! system's certificate store on Windows).
+//! and the addresses a client may reach ([`Addresses`]), so redirects are
+//! held to the same rules as the first request. Requests go through the
+//! proxy Windows uses for their URL when one is set ([`set_proxy_finder`]),
+//! as the browser's do. TLS is the operating system's (`native-tls`:
+//! `SChannel` and the system's certificate store on Windows), with the
+//! certificate checked for the requested host.
 #![forbid(unsafe_code)]
 use crate::error::{Error, Kind, Result};
 use std::{
@@ -18,8 +21,8 @@ use ureq::{
     unversioned::{
         resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver},
         transport::{
-            Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, TcpConnector,
-            Transport, TransportAdapter,
+            Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers,
+            NextTimeout, TcpConnector, Transport, TransportAdapter,
         },
     },
 };
@@ -146,18 +149,150 @@ fn public_v4(v4: Ipv4Addr) -> bool {
         || a >= 240)
 }
 
+/// The addresses a client's requests may reach when they connect directly.
+/// Through a proxy, the proxy resolves the host. In every case the server
+/// must hold a certificate for the requested host, so a service on this
+/// computer or in the home network that has none never receives a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Addresses {
+    /// Public addresses, this computer (`127.0.0.0/8`, `::1`), and the range
+    /// VPNs hand out in place of real addresses (`198.18.0.0/15`): a host
+    /// mapped to a local proxy or a VPN's address works, the home network
+    /// stays out of reach. For plugins and for links the player pastes.
+    Plugin,
+    /// Whatever the system resolves, the `hosts` file included: Angelica's
+    /// own requests to fixed hosts, whose files carry release signatures.
+    Any,
+}
+
+impl Addresses {
+    /// Whether a direct connection may go to `address`.
+    #[must_use]
+    pub fn allow(self, address: IpAddr) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Plugin => public(address) || local_or_vpn(address),
+        }
+    }
+}
+
+/// This computer, or the range VPNs hand out in place of real addresses.
+fn local_or_vpn(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(v4) => {
+            let [a, b, _, _] = v4.octets();
+            v4.is_loopback() || (a == 198 && b & 0xFE == 18)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| local_or_vpn(IpAddr::V4(v4)))
+        }
+    }
+}
+
+/// Finds the proxy Windows uses for a URL: `host:port`, or none for a
+/// direct connection.
+pub type ProxyFinder = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+static PROXY: OnceLock<ProxyFinder> = OnceLock::new();
+
+/// Sends requests through the proxy `finder` names for each URL; set once
+/// per process, by the Windows adapter.
+pub fn set_proxy_finder(finder: ProxyFinder) {
+    let _ = PROXY.set(finder);
+}
+
+/// The proxy for `url`, as an HTTP proxy that tunnels with `CONNECT`.
+fn proxy_for(url: &str) -> Option<ureq::Proxy> {
+    let address = PROXY.get()?(url)?;
+    ureq::Proxy::new(&format!("http://{address}")).ok()
+}
+
+/// The proxy in the proxy list `list` that tunnels HTTPS: the first entry
+/// of `PAC`'s or `WinHTTP`'s form, `host:port` or `scheme=host:port`
+/// entries separated by `;` or spaces, skipping SOCKS. None for a direct
+/// connection.
+#[must_use]
+pub fn proxy_from_list(list: &str) -> Option<String> {
+    let entries: Vec<&str> = list
+        .split([';', ' ', '\t'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    let pick = |entry: &str| {
+        let address = entry
+            .strip_prefix("http://")
+            .unwrap_or(entry)
+            .trim_end_matches('/');
+        (!address.is_empty() && !address.contains("://")).then(|| address.to_owned())
+    };
+    // `https=` names the proxy for HTTPS; an entry without a scheme is for
+    // every scheme.
+    entries
+        .iter()
+        .find_map(|entry| entry.strip_prefix("https=").and_then(pick))
+        .or_else(|| {
+            entries
+                .iter()
+                .filter(|entry| !entry.contains('='))
+                .find_map(|entry| pick(entry))
+        })
+}
+
+/// Whether `host` is in the proxy bypass list `bypass`, entries separated
+/// by `;` or spaces: `<local>` for names without a dot, and names with `*`
+/// as a wildcard, case-insensitive.
+#[must_use]
+pub fn bypassed(bypass: &str, host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    bypass
+        .split([';', ' ', '\t'])
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| {
+            if entry == "<local>" {
+                return !host.contains('.');
+            }
+            wildcard(&entry, &host)
+        })
+}
+
+/// Whether `text` matches `pattern`, where `*` stands for any run.
+fn wildcard(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !text.starts_with(first) || !text[first.len()..].ends_with(last) {
+        return false;
+    }
+    let mut rest = &text[first.len()..text.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match rest.find(part) {
+            Some(at) => rest = &rest[at + part.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
 /// A refusal by the resolver: a host the plugin may not reach.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 struct Refused(String);
 
-/// Resolves only listed hosts on port 443 over `https`, and keeps only
-/// public addresses.
+/// Resolves only listed hosts on port 443 over `https`, and keeps only the
+/// addresses the client may reach; the proxy Windows named is resolved as
+/// it is.
 #[derive(Debug)]
 struct ListedResolver {
     hosts: Arc<Vec<String>>,
-    /// Every public host, for [`Client::for_plugin_files`].
+    /// Every host, for [`Client::for_plugin_files`].
     any_host: bool,
+    addresses: Addresses,
     inner: DefaultResolver,
 }
 
@@ -169,6 +304,10 @@ impl Resolver for ListedResolver {
         timeout: NextTimeout,
     ) -> std::result::Result<ResolvedSocketAddrs, ureq::Error> {
         let refused = |message: String| ureq::Error::Other(Box::new(Refused(message)));
+        // The proxy comes from Windows' settings, never from a plugin.
+        if config.proxy().is_some_and(|proxy| proxy.uri() == uri) {
+            return self.inner.resolve(uri, config, timeout);
+        }
         let host = uri.host().unwrap_or_default();
         if uri.scheme_str() != Some("https") {
             return Err(refused(format!("{uri} is not an https URL")));
@@ -183,7 +322,7 @@ impl Resolver for ListedResolver {
         }
         let resolved = self.inner.resolve(uri, config, timeout)?;
         let mut kept = self.inner.empty();
-        for address in resolved.iter().filter(|a| public(a.ip())) {
+        for address in resolved.iter().filter(|a| self.addresses.allow(a.ip())) {
             kept.push(*address);
         }
         if kept.is_empty() {
@@ -207,18 +346,21 @@ fn tls_error(message: impl std::fmt::Display) -> ureq::Error {
 }
 
 impl<In: Transport> Connector<In> for SystemTls {
-    type Out = TlsTransport;
+    type Out = Either<In, TlsTransport>;
 
     fn connect(
         &self,
         details: &ConnectionDetails,
         chained: Option<In>,
-    ) -> std::result::Result<Option<TlsTransport>, ureq::Error> {
+    ) -> std::result::Result<Option<Self::Out>, ureq::Error> {
         let Some(transport) = chained else {
             return Ok(None);
         };
+        // The resolver and `check` let only `https` requests through, so a
+        // connection without TLS is the one to the proxy, whose tunnel TLS
+        // then runs inside.
         if !details.needs_tls() {
-            return Err(ureq::Error::RequireHttpsOnly(details.uri.to_string()));
+            return Ok(Some(Either::A(transport)));
         }
         let connector = self
             .connector
@@ -237,13 +379,13 @@ impl<In: Transport> Connector<In> for SystemTls {
             native_tls::HandshakeError::Failure(e) => tls_error(e),
             native_tls::HandshakeError::WouldBlock(_) => tls_error("the handshake stalled"),
         })?;
-        Ok(Some(TlsTransport {
+        Ok(Some(Either::B(TlsTransport {
             buffers: LazyBuffers::new(
                 details.config.input_buffer_size(),
                 details.config.output_buffer_size(),
             ),
             stream,
-        }))
+        })))
     }
 }
 
@@ -301,7 +443,7 @@ pub struct Head {
     pub headers: Vec<(String, String)>,
 }
 
-/// The requests of one plugin.
+/// The requests of one plugin, or of Angelica.
 pub struct Client {
     agent: ureq::Agent,
     hosts: Arc<Vec<String>>,
@@ -316,6 +458,7 @@ impl Client {
         Self::build(
             hosts,
             false,
+            Addresses::Plugin,
             format!(
                 "Angelica/{} (plugin {id}/{version})",
                 env!("CARGO_PKG_VERSION")
@@ -323,19 +466,34 @@ impl Client {
         )
     }
 
-    /// A client for the plugin files the installer downloads: every public
-    /// host, with the same rules otherwise. A file is trusted for its
-    /// author's signature, not for where it came from.
+    /// A client for the plugin files the installer downloads: every host,
+    /// with the rules of plugins otherwise, since a link may come from
+    /// anywhere. A file is trusted for its author's signature, not for where
+    /// it came from.
     #[must_use]
     pub fn for_plugin_files() -> Self {
         Self::build(
             Vec::new(),
             true,
+            Addresses::Plugin,
             format!("Angelica/{} (installer)", env!("CARGO_PKG_VERSION")),
         )
     }
 
-    fn build(hosts: Vec<String>, any_host: bool, user_agent: String) -> Self {
+    /// A client for Angelica's own requests to `hosts`: updates, the map,
+    /// and the catalog, whose files carry release signatures. It reaches
+    /// whatever the system resolves the hosts to.
+    #[must_use]
+    pub fn for_angelica(hosts: Vec<String>) -> Self {
+        Self::build(
+            hosts,
+            false,
+            Addresses::Any,
+            format!("Angelica/{}", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    fn build(hosts: Vec<String>, any_host: bool, addresses: Addresses, user_agent: String) -> Self {
         let hosts = Arc::new(hosts);
         let config = Config::builder()
             .https_only(true)
@@ -351,11 +509,13 @@ impl Client {
             .build();
         let agent = ureq::Agent::with_parts(
             config,
-            ().chain(TcpConnector::default())
+            ().chain(ConnectProxyConnector::default())
+                .chain(TcpConnector::default())
                 .chain(SystemTls::default()),
             ListedResolver {
                 hosts: hosts.clone(),
                 any_host,
+                addresses,
                 inner: DefaultResolver::default(),
             },
         );
@@ -440,6 +600,18 @@ impl Client {
         limit: u64,
         cancelled: impl Fn() -> bool + Send + 'static,
     ) -> Result<(Head, BodyReader)> {
+        self.send_via(request, time, limit, cancelled, proxy_for(&request.url))
+    }
+
+    /// [`Client::send`] through `proxy`, or directly without one.
+    fn send_via(
+        &self,
+        request: &Request,
+        time: Duration,
+        limit: u64,
+        cancelled: impl Fn() -> bool + Send + 'static,
+        proxy: Option<ureq::Proxy>,
+    ) -> Result<(Head, BodyReader)> {
         self.check(request)?;
         if cancelled() {
             return Err(cancelled_error());
@@ -451,6 +623,7 @@ impl Client {
         let response = builder
             .config()
             .timeout_global(Some(time))
+            .proxy(proxy)
             .build()
             .call()
             .map_err(failure)?;
@@ -650,6 +823,125 @@ mod tests {
     }
 
     #[test]
+    fn plugins_reach_this_computer_and_vpn_addresses_but_not_the_home_network() {
+        for address in [
+            "1.1.1.1",
+            "127.0.0.1",
+            "::1",
+            "198.18.0.1",
+            "198.19.255.1",
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(
+                Addresses::Plugin.allow(address.parse().unwrap()),
+                "{address}"
+            );
+        }
+        for address in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "fd00::1",
+            "fe80::1",
+            "0.0.0.0",
+        ] {
+            assert!(
+                !Addresses::Plugin.allow(address.parse().unwrap()),
+                "{address}"
+            );
+        }
+        for address in ["192.168.1.1", "127.0.0.1", "10.0.0.1"] {
+            assert!(Addresses::Any.allow(address.parse().unwrap()), "{address}");
+        }
+    }
+
+    #[test]
+    fn windows_proxy_settings_are_read_like_the_browser() {
+        assert_eq!(
+            proxy_from_list("127.0.0.1:8080").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(
+            proxy_from_list("http=a.example:80;https=b.example:3128;socks=c.example:1080")
+                .as_deref(),
+            Some("b.example:3128")
+        );
+        assert_eq!(
+            proxy_from_list("socks=c.example:1080; proxy.example:8080").as_deref(),
+            Some("proxy.example:8080")
+        );
+        assert_eq!(
+            proxy_from_list("http://proxy.example:8080/").as_deref(),
+            Some("proxy.example:8080")
+        );
+        assert_eq!(proxy_from_list("socks=c.example:1080"), None);
+        assert_eq!(proxy_from_list(""), None);
+        assert!(bypassed("<local>;*.corp.example", "intranet"));
+        assert!(bypassed("<local>;*.corp.example", "wiki.CORP.example"));
+        assert!(!bypassed("<local>;*.corp.example", "github.com"));
+        assert!(bypassed("github.com", "github.com"));
+        assert!(bypassed("10.*", "10.0.0.5"));
+        assert!(!bypassed("", "github.com"));
+    }
+
+    #[test]
+    fn requests_go_through_the_proxy_as_a_tunnel_to_their_host() {
+        use std::io::{BufRead, BufReader};
+        // A proxy on this computer, as Windows may name one, that records the
+        // tunnel asked of it and then closes, so TLS to the host fails.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let proxy = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            reader.read_line(&mut first).unwrap();
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            let mut stream = stream;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 Connection established
+
+",
+                )
+                .unwrap();
+            first
+        });
+        let error = client()
+            .send_via(
+                &request("https://example.com/feed.json"),
+                GET_TIME,
+                MAX_BODY,
+                || false,
+                Some(ureq::Proxy::new(&format!("http://127.0.0.1:{port}")).unwrap()),
+            )
+            .err()
+            .unwrap();
+        assert!(error.message.contains("TLS"), "{}", error.message);
+        assert_eq!(
+            proxy.join().unwrap().trim(),
+            "CONNECT example.com:443 HTTP/1.1"
+        );
+        // A host the manifest does not list is refused before the proxy.
+        let error = client()
+            .send_via(
+                &request("https://example.net/"),
+                GET_TIME,
+                MAX_BODY,
+                || false,
+                Some(ureq::Proxy::new(&format!("http://127.0.0.1:{port}")).unwrap()),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.kind, Kind::PermissionDenied);
+    }
+
+    #[test]
     fn requests_are_checked_before_anything_is_sent() {
         let client = client();
         let refused = |request: Request, kind: Kind, problem: &str| {
@@ -726,6 +1018,7 @@ mod tests {
     fn redirects_and_resolution_follow_the_same_rules() {
         let resolver = ListedResolver {
             hosts: Arc::new(vec!["example.com".into()]),
+            addresses: Addresses::Plugin,
             any_host: false,
             inner: DefaultResolver::default(),
         };
@@ -755,11 +1048,14 @@ mod tests {
     }
 
     #[test]
-    fn plugin_files_come_from_any_public_host_only() {
+    fn plugin_files_come_from_any_host_outside_the_home_network() {
         let client = Client::for_plugin_files();
         for (url, kind) in [
-            ("https://127.0.0.1/timers.angelica", Kind::PermissionDenied),
-            ("https://localhost/timers.angelica", Kind::PermissionDenied),
+            (
+                "https://192.168.1.1/timers.angelica",
+                Kind::PermissionDenied,
+            ),
+            ("https://10.0.0.1/timers.angelica", Kind::PermissionDenied),
             ("http://example.org/timers.angelica", Kind::InvalidArgument),
             (
                 "https://example.org:8443/timers.angelica",

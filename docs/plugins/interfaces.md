@@ -184,7 +184,7 @@ Fetch data from the plugin's own servers.
 
 - SDK: `http::get(url)`, or `http::Request::new(url).header(..).get()`; `.download(path)` writes a large body to storage. A response has `is_success`, `header`, `text`, and `json`.
 - Permission: `http.get`, with each host listed in the manifest's `[http] hosts`. Instance: job only.
-- HTTPS GET only, to public addresses of the listed hosts, also after redirects. Any status is a response; `network` means the request did not complete.
+- HTTPS GET only, to the listed hosts, also after redirects, through the player's proxy when Windows has one; never to the player's home network. Any status is a response; `network` means the request did not complete.
 - Data from the internet is untrusted: parse it in the job and handle malformed input as an error.
 - Contract: [HTTP](../formats/plugin-api-v1.md#http).
 

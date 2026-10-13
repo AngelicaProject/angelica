@@ -27,7 +27,7 @@ The player is not shown the key. The menu shows that the plugin comes from its a
 
 A plugin is shared by a link: an `https` URL of its plugin file that always serves the newest version. `angelica plugin publish --github <owner/name>` signs the plugin and puts the file `<id>.angelica` into the release `<id>` of that GitHub repository, replacing the previous version, so the link stays `https://github.com/<owner>/<name>/releases/download/<id>/<id>.angelica`; it refuses a version that is not newer than the one the link serves, and a link that serves another author's file. Any other `https` host serves a plugin as well: the signature, not the host, makes a file trusted.
 
-The installer downloads from any public `https` host, with the rules of the plugin API's [HTTP](./plugin-api-v1.md#http) otherwise (port 443, public addresses only, at most 5 redirects), at most the size of the largest plugin file.
+The installer downloads from any `https` host, with the rules of the plugin API's [HTTP](./plugin-api-v1.md#http) otherwise (port 443, the system's proxy, no home-network addresses, at most 5 redirects), at most the size of the largest plugin file.
 
 ## Installation
 

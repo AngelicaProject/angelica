@@ -13,6 +13,9 @@ use runtime::installer::{self, Installation};
 use std::{path::PathBuf, process::ExitCode};
 
 fn main() -> ExitCode {
+    // Downloads go through the proxy Windows uses, as the host's do.
+    #[cfg(windows)]
+    runtime::interop::proxy::use_system_proxy(|_| {});
     let result = run(std::env::args().skip(1).collect());
     let (document, code) = match result {
         Ok(value) => (value, ExitCode::SUCCESS),
