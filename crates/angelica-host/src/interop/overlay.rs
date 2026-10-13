@@ -13,7 +13,7 @@ use windows::{
     Win32::{
         Foundation::{HMODULE, HWND},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            Direct3D::D3D_DRIVER_TYPE_WARP,
             Direct3D11::{
                 D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11CreateDeviceAndSwapChain,
             },
@@ -144,8 +144,12 @@ impl OverlayHooks {
     }
 }
 
+/// The bootstrap swap chain that finds `Present`, made on the software
+/// rasterizer: it is kept for the life of the process, and one kept on the
+/// graphics adapter without its window made the game's device fail on a
+/// `GeForce` RTX 3060. The swap chain's vtable is DXGI's, the same for both.
 fn dummy_chain() -> Result<(usize, IDXGISwapChain), String> {
-    create_chain(D3D_DRIVER_TYPE_HARDWARE)
+    create_chain(D3D_DRIVER_TYPE_WARP)
 }
 
 pub(super) fn create_chain(
