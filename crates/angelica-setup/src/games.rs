@@ -13,12 +13,11 @@ pub fn is_game(game: &Path) -> bool {
     game.join(EXECUTABLE).is_file()
 }
 
-/// The `game` folder for what a player typed or pasted: the folder itself,
-/// or the installation that holds it.
+/// The `game` folder for the folder a player chose: the folder itself, or
+/// the installation that holds it.
 #[must_use]
-pub fn resolve(typed: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(typed.trim().trim_matches('"'));
-    [path.clone(), path.join("game")]
+pub fn resolve(path: &Path) -> Option<PathBuf> {
+    [path.to_path_buf(), path.join("game")]
         .into_iter()
         .find(|candidate| is_game(candidate))
 }
@@ -109,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn the_launchers_game_path_and_typed_folders_resolve_to_the_game_folder() {
+    fn the_launchers_game_path_and_chosen_folders_resolve_to_the_game_folder() {
         assert_eq!(
             xivlauncher_game(r#"{"GamePath": "E:\\FFXIV", "Other": 1}"#),
             Some(PathBuf::from(r"E:\FFXIV"))
@@ -119,9 +118,8 @@ mod tests {
         let game = root.path().join("game");
         std::fs::create_dir_all(&game).unwrap();
         std::fs::write(game.join(EXECUTABLE), b"").unwrap();
-        assert_eq!(resolve(root.path().to_str().unwrap()), Some(game.clone()));
-        let quoted = format!("\"{}\"", game.display());
-        assert_eq!(resolve(&quoted), Some(game));
-        assert_eq!(resolve(r"C:\nowhere"), None);
+        assert_eq!(resolve(root.path()), Some(game.clone()));
+        assert_eq!(resolve(&game), Some(game));
+        assert_eq!(resolve(Path::new(r"C:\nowhere")), None);
     }
 }

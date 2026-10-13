@@ -4,7 +4,7 @@ use crate::{exit, games, install, neighbors::Neighbors, payload, system, words::
 use egui::{Color32, CornerRadius, FontFamily, FontId, Rect, RichText, Sense, Stroke, pos2, vec2};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError, mpsc},
 };
 
 const SIZE: [f32; 2] = [380.0, 500.0];
@@ -44,8 +44,10 @@ struct App {
     words: &'static Words,
     games: Vec<PathBuf>,
     chosen: usize,
-    typing: bool,
-    typed: String,
+    /// The folder the player chose has no game.
+    missing: bool,
+    /// While Windows' folder dialog is open: what it returns, once it does.
+    picking: Option<mpsc::Receiver<Option<PathBuf>>>,
     keep: bool,
     work: Arc<Mutex<Work>>,
 }
@@ -82,10 +84,10 @@ pub fn run(mode: Mode) {
             Ok(Box::new(App {
                 mode,
                 words,
-                typing: games.is_empty(),
                 games,
                 chosen: 0,
-                typed: String::new(),
+                missing: false,
+                picking: None,
                 keep: true,
                 work: Arc::new(Mutex::new(Work::Idle)),
             }))
@@ -231,7 +233,8 @@ impl eframe::App for App {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        if matches!(work, Work::Busy { .. }) {
+        self.picked();
+        if matches!(work, Work::Busy { .. }) || self.picking.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -354,10 +357,51 @@ impl App {
     }
 
     fn game(&self) -> Option<PathBuf> {
-        if self.typing {
-            games::resolve(&self.typed)
-        } else {
-            self.games.get(self.chosen).cloned()
+        self.games.get(self.chosen).cloned()
+    }
+
+    /// Opens Windows' folder dialog over the installer on its own thread,
+    /// starting at the chosen game's installation.
+    fn pick(&mut self) {
+        let (sender, receiver) = mpsc::channel();
+        let start = self
+            .game()
+            .and_then(|game| game.parent().map(std::path::Path::to_path_buf));
+        let owner = system::foreground_window();
+        std::thread::spawn(move || {
+            let _ = sender.send(system::pick_folder(owner, start.as_deref()));
+        });
+        self.picking = Some(receiver);
+    }
+
+    /// Takes the folder the dialog returned: its game is chosen, added to
+    /// the list when it was not there.
+    fn picked(&mut self) {
+        let Some(receiver) = &self.picking else {
+            return;
+        };
+        let picked = match receiver.try_recv() {
+            Ok(picked) => picked,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => None,
+        };
+        self.picking = None;
+        let Some(folder) = picked else {
+            return;
+        };
+        match games::resolve(&folder) {
+            Some(game) => {
+                self.missing = false;
+                self.chosen = self
+                    .games
+                    .iter()
+                    .position(|known| *known == game)
+                    .unwrap_or_else(|| {
+                        self.games.push(game);
+                        self.games.len() - 1
+                    });
+            }
+            None => self.missing = true,
         }
     }
 
@@ -374,18 +418,15 @@ impl App {
             return;
         }
         heading(ui, w.installation);
-        let (games, chosen, typing) = (self.games.clone(), self.chosen, self.typing);
+        let (games, chosen, picking) = (self.games.clone(), self.chosen, self.picking.is_some());
         let mut pick = None;
-        let mut switch = false;
+        let mut browse = false;
         field(ui, w.game, |ui| {
-            if typing {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.typed)
-                        .hint_text(w.game_hint)
-                        .desired_width(f32::INFINITY)
-                        .font(sans(12.5)),
-                );
-            } else if games.len() > 1 {
+            if games.is_empty() {
+                browse = word(ui, w.game_choose, ACTION, false, !picking);
+                return;
+            }
+            if games.len() > 1 {
                 egui::ComboBox::from_id_salt("game")
                     .width(ui.available_width())
                     .selected_text(RichText::new(short(&games[chosen])).color(ACTION))
@@ -410,22 +451,21 @@ impl App {
                 )
                 .on_hover_text(games[chosen].display().to_string());
             }
-            if !typing {
-                ui.add_space(2.0);
-                switch = word(ui, w.game_other, ACTION, false, true);
-            }
+            ui.add_space(2.0);
+            browse = word(ui, w.game_other, ACTION, false, !picking);
         });
         if let Some(index) = pick {
             self.chosen = index;
+            self.missing = false;
         }
-        if switch {
-            self.typing = true;
+        if browse {
+            self.pick();
         }
-        let game = self.game();
-        if self.typing && !self.typed.is_empty() && game.is_none() {
+        if self.missing {
             text(ui, w.game_none, ATTENTION);
             ui.add_space(10.0);
         }
+        let game = self.game();
         let neighbors = game.as_deref().map(|game| {
             Neighbors::find(
                 game,
@@ -447,14 +487,13 @@ impl App {
                 );
             });
         }
-        field(ui, w.menu_key, |ui| key(ui, "Insert"));
         let conflict = neighbors.as_ref().is_some_and(|found| found.other_proxy);
         if conflict {
             text(ui, w.conflict, DANGER);
         } else if game.as_deref().is_some_and(|game| !install::writable(game)) {
             text(ui, w.admin_note, SECONDARY);
         }
-        let ready = game.is_some() && !conflict;
+        let ready = game.is_some() && !conflict && !picking;
         Self::bottom(ui, &Self::version(), |ui| {
             if word(ui, w.install, ACTION, true, ready)
                 && let Some(game) = game
@@ -485,13 +524,6 @@ impl App {
         heading(ui, w.done);
         field(ui, w.menu_key, |ui| key(ui, "Insert"));
         field(ui, w.updates, |ui| text(ui, w.updates_value, TEXT));
-        field(ui, w.folder, |ui| {
-            if word(ui, w.open, ACTION, false, true) {
-                let _ = std::process::Command::new("explorer")
-                    .arg(install::installation_dir())
-                    .spawn();
-            }
-        });
         Self::bottom(ui, &Self::version(), |ui| {
             if word(ui, w.close, ACTION, true, true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

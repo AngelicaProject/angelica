@@ -1,7 +1,8 @@
 //! What the installer asks of Windows. The registry is read and written
 //! with the system's `reg.exe`; the only `unsafe` code starts a copy of the
-//! installer with administrator rights and reads the interface language.
-use std::path::Path;
+//! installer with administrator rights, reads the interface language, and
+//! opens Windows' folder dialog.
+use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
@@ -77,6 +78,101 @@ pub fn register(uninstaller: &Path, version: &str) -> Result<(), String> {
 /// Removes Angelica from the installed apps.
 pub fn unregister() {
     let _ = reg(&["delete", UNINSTALL_KEY, "/f"]);
+}
+
+/// The window the player is using now, to own a dialog opened from it.
+#[must_use]
+pub fn foreground_window() -> isize {
+    #[cfg(windows)]
+    {
+        // SAFETY: GetForegroundWindow takes no arguments and only returns a
+        // handle, which may be null.
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() as isize }
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+/// Windows' own dialog for choosing a folder, over `owner` and opened at
+/// `start`; `None` when the player closes it.
+#[cfg(windows)]
+#[must_use]
+pub fn pick_folder(owner: isize, start: Option<&Path>) -> Option<PathBuf> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoTaskMemFree, CoUninitialize,
+    };
+    use windows::Win32::UI::Shell::{
+        FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem,
+        SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
+    };
+    use windows::core::HSTRING;
+
+    // SAFETY: the calling thread is this function's own and has no COM
+    // state yet; it is uninitialized below once the dialog is released.
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+    let picked = (|| {
+        // SAFETY: FileOpenDialog is the class of IFileOpenDialog, created
+        // in this process on the thread COM was initialized on.
+        let dialog: IFileOpenDialog =
+            unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }.ok()?;
+        // SAFETY: the dialog is a live object; options only add flags.
+        unsafe {
+            let options = dialog.GetOptions().ok()?;
+            dialog
+                .SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM)
+                .ok()?;
+        }
+        if let Some(start) = start {
+            // The shell parses only backslashes; Steam's paths have both.
+            let wide: Vec<u16> = std::os::windows::ffi::OsStrExt::encode_wide(start.as_os_str())
+                .map(|unit| {
+                    if unit == u16::from(b'/') {
+                        u16::from(b'\\')
+                    } else {
+                        unit
+                    }
+                })
+                .collect();
+            let path = HSTRING::from_wide(&wide);
+            // SAFETY: `path` is a valid wide string for the call's length;
+            // a folder that no longer exists only leaves the default.
+            let item = unsafe { SHCreateItemFromParsingName::<_, _, IShellItem>(&path, None) };
+            if let Ok(item) = item {
+                // SAFETY: `item` is a live shell item.
+                let _ = unsafe { dialog.SetFolder(&item) };
+            }
+        }
+        let owner = (owner != 0).then_some(HWND(owner as *mut core::ffi::c_void));
+        // SAFETY: the dialog is live and `owner` is the installer's window
+        // or none; Show returns an error when it is closed without a choice.
+        unsafe { dialog.Show(owner) }.ok()?;
+        // SAFETY: Show succeeded, so the dialog has a result.
+        let item = unsafe { dialog.GetResult() }.ok()?;
+        // SAFETY: `item` is a live shell item; the name it returns is ours
+        // to free.
+        let name = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }.ok()?;
+        // SAFETY: `name` is a null-terminated wide string from the shell.
+        let path = unsafe { name.to_string() }.ok();
+        // SAFETY: `name` was allocated by the shell with CoTaskMemAlloc.
+        unsafe { CoTaskMemFree(Some(name.0.cast())) };
+        path.map(PathBuf::from)
+    })();
+    if initialized {
+        // SAFETY: pairs the successful CoInitializeEx above on this thread,
+        // after every COM object of the dialog is released.
+        unsafe { CoUninitialize() };
+    }
+    picked
+}
+
+#[cfg(not(windows))]
+#[must_use]
+pub fn pick_folder(_owner: isize, _start: Option<&Path>) -> Option<PathBuf> {
+    None
 }
 
 /// Whether Windows shows its interface in Russian.
