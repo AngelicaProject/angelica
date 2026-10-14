@@ -42,6 +42,8 @@ struct Hello {
     used: Result<lens::Watch, String>,
     /// The last action the player used.
     last_used: Option<String>,
+    /// The rule hiding system messages while the player wants them hidden.
+    quiet: Option<lens::Rule>,
     /// The selected tab of the widgets section.
     tab: u32,
     volume: f64,
@@ -156,6 +158,20 @@ impl Hello {
             "used" => {
                 let text = self.used_text();
                 self.say(text);
+            }
+            "quiet" => {
+                if self.quiet.take().is_some() {
+                    self.say("system messages shown");
+                } else {
+                    // Log kind 57 is the game's system messages.
+                    match lens::Rule::new("chat_message_added[kind = 57]", "hide") {
+                        Ok(rule) => {
+                            self.quiet = Some(rule);
+                            self.say("system messages hidden");
+                        }
+                        Err(error) => self.say(format!("cannot hide: {}", error.message)),
+                    }
+                }
             }
             "zoom" => match lens::set("camera.camera.max_distance", 40.0f32) {
                 Ok(count) => self.say(format!("zoom limit 40 on {count} cameras")),
@@ -408,6 +424,7 @@ impl Plugin for Hello {
             used: lens::Watch::new("action_used[kind in (action, item)] { kind, action, target }")
                 .map_err(|error| error.message),
             last_used: None,
+            quiet: None,
             tab: 0,
             volume: 0.5,
             bar: ExperienceBar::default(),
@@ -480,6 +497,14 @@ impl Plugin for Hello {
                                 .button("used", "Last action used")
                                 .button("sprint", "Sprint")
                                 .button("zoom", "Zoom out further")
+                                .button(
+                                    "quiet",
+                                    if self.quiet.is_some() {
+                                        "Show system messages"
+                                    } else {
+                                        "Hide system messages"
+                                    },
+                                )
                                 .button("texture", "Replace a texture")
                         })
                         .row(|row| {

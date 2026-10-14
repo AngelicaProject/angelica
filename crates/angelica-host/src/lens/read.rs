@@ -198,11 +198,13 @@ fn from_bits(kind: ValueKind, bits: u64) -> Option<Raw> {
 fn raw(pages: &Pages<'_>, object: u64, read: &Read) -> Result<Option<Raw>> {
     let object = match read.base {
         Base::Object => object,
-        Base::Value(at) => {
+        Base::Value { at, mask } => {
             let Stored::Value(kind) = read.stored else {
                 return Ok(None);
             };
-            return Ok(pages.argument(at)?.and_then(|bits| from_bits(kind, bits)));
+            return Ok(pages
+                .argument(at)?
+                .and_then(|bits| from_bits(kind, bits & mask)));
         }
         Base::Pointer(at) => match pages.argument(at)? {
             Some(pointer) if pointer != 0 => pointer,

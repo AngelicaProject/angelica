@@ -1303,13 +1303,55 @@ impl api::lens::Host for State {
         Ok(())
     }
 
+    fn decide(&mut self, rule: String, outcome: String) -> ApiResult<u32> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        let permitted: BTreeSet<String> = context
+            .lens_read
+            .union(&context.lens_change)
+            .cloned()
+            .collect();
+        let may_change = |domain: &str| context.lens_change.contains(domain);
+        services
+            .lens
+            .may_decide(&rule, &may_change)
+            .map_err(api::types::Error::from)?;
+        let (handle, prepared) = self
+            .host(|state| {
+                state
+                    .queries
+                    .rule(&services.lens, &rule, &|domain| permitted.contains(domain))
+            })
+            .map_err(api::types::Error::from)?;
+        let started = self.host(|_| {
+            services.lens.decide(
+                crate::lens::decide::Request {
+                    plugin: &context.id,
+                    handle,
+                    text: &rule,
+                    outcome: &outcome,
+                    permitted: permitted.clone(),
+                },
+                &may_change,
+                prepared,
+                &|point, entry, address| services.game.enable_decision(point, entry, address),
+            )
+        });
+        if let Err(error) = started {
+            self.queries.release(handle);
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+
     fn release(&mut self, query: u32) {
-        if self.queries.release(query) {
-            self.context
-                .services
-                .lens
-                .watches
-                .unsubscribe(&self.context.id, query);
+        use crate::lens::HeldKind;
+        let lens = &self.context.services.lens;
+        match self.queries.release(query) {
+            Some(HeldKind::Watch) => lens.watches.unsubscribe(&self.context.id, query),
+            Some(HeldKind::Rule) => lens.decisions.remove(&self.context.id, query),
+            Some(HeldKind::Query) | None => {}
         }
     }
 }

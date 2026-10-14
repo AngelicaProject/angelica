@@ -66,28 +66,32 @@ pub fn install(
 extern "C" fn fire(context: &mut Context, point: usize) {
     super::guard((), || {
         if let Some(lens) = LENS.get() {
-            let call = Call {
-                general: [
-                    context.rax,
-                    context.rbx,
-                    context.rcx,
-                    context.rdx,
-                    context.rsi,
-                    context.rdi,
-                    context.rbp,
-                    context.r8,
-                    context.r9,
-                    context.r10,
-                    context.r11,
-                    context.r12,
-                    context.r13,
-                    context.r14,
-                    context.r15,
-                ],
-                xmm: context.xmm.map(|xmm| xmm[0]),
-                rsp: context.rsp(),
-            };
-            lens.watches.fire(point, &call, &ProcessMemory);
+            lens.watches.fire(point, &call_of(context), &ProcessMemory);
         }
     });
+}
+
+/// The registers of a hooked call, as Lens reads its arguments.
+pub(super) fn call_of(context: &Context) -> Call {
+    Call {
+        general: [
+            context.rax,
+            context.rbx,
+            context.rcx,
+            context.rdx,
+            context.rsi,
+            context.rdi,
+            context.rbp,
+            context.r8,
+            context.r9,
+            context.r10,
+            context.r11,
+            context.r12,
+            context.r13,
+            context.r14,
+            context.r15,
+        ],
+        xmm: context.xmm.map(|xmm| xmm[0]),
+        rsp: context.rsp(),
+    }
 }

@@ -634,6 +634,7 @@ impl Host {
         self.services.events.remove_plugin(id);
         self.services.lens.watches.remove_plugin(id);
         self.services.lens.acting.remove_plugin(id);
+        self.services.lens.decisions.remove_plugin(id);
         self.services
             .lens
             .changes

@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use angelica_hook::testing::executable;
-use angelica_hook::{Context, MidDataHandler, MidHandler, MidHook};
+use angelica_hook::{Context, MidDataHandler, MidHandler, MidHook, MidReturnHandler};
 
 fn function<F: Copy>(address: usize) -> F {
     assert_eq!(size_of::<F>(), size_of::<usize>());
@@ -75,6 +75,36 @@ fn one_handler_serves_hooks_by_their_data() {
     let seen = SEEN.each_ref().map(|value| value.load(Ordering::Relaxed));
     assert_eq!(seen, [11, 22], "the data said which hook fired");
     drop(hooks);
+}
+
+#[test]
+fn a_handler_at_the_entry_returns_without_running_the_function() {
+    extern "C" fn handler(context: &mut Context, data: usize) -> bool {
+        // Negative first arguments are answered with `data` at once.
+        if context.rcx.cast_signed() < 0 {
+            context.rax = data as u64;
+            return true;
+        }
+        false
+    }
+
+    // 0: mov rax, rcx; 3: add rax, rdx; 6: add rax, 1; 10: ret
+    let code = executable(&[
+        0x48, 0x89, 0xC8, 0x48, 0x01, 0xD0, 0x48, 0x83, 0xC0, 0x01, 0xC3,
+    ]);
+    let add = function::<extern "C" fn(i64, i64) -> i64>(code);
+    let handler: MidReturnHandler = handler;
+    // SAFETY: `code` is the function's first instruction, copied for the
+    // test, and the handler does not unwind.
+    let mut hooked = unsafe { MidHook::returning(code, handler, 77, None) }.unwrap();
+    // SAFETY: only this test changes the code.
+    unsafe { hooked.enable() }.unwrap();
+    assert_eq!(add(5, 7), 13, "the function runs");
+    assert_eq!(add(-5, 7), 77, "the function returned at once");
+    assert_eq!(add(6, 7), 14, "and runs again after");
+    // SAFETY: only this test changes the code.
+    unsafe { hooked.disable() }.unwrap();
+    assert_eq!(add(-5, 7), 3);
 }
 
 #[test]

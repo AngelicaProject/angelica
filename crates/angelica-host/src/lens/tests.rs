@@ -967,7 +967,7 @@ fn firings_wait_for_the_next_frame_within_the_rate() {
         queries.plan(&lens, other, &all).is_err(),
         "a watch is not run"
     );
-    assert!(queries.release(other));
+    assert_eq!(queries.release(other), Some(super::HeldKind::Watch));
     lens.watches.unsubscribe("q", other);
     lens.watches.remove_plugin("p");
     lens.watches.fire(0, &call(), &memory);

@@ -88,6 +88,15 @@ Learn when the game does something the game map describes as an event, such as t
 - Find events and their arguments with `angelica schema search` and `schema show`; check a watch with `angelica query`; see it fire in the game with `angelica look --watch 10 "<watch>"`.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
+## Deciding what the game does
+
+Make the game skip something it is about to do, such as adding a message to the chat log, by a rule the host applies itself.
+
+- SDK: `let quiet = lens::Rule::new("chat_message_added[kind = 57]", "hide")?;` and keep it in the plugin; dropping it ends the rule.
+- Permission: the event's domain in the manifest's `[lens] change = ["chat"]`; domains on the rule's paths in `read` or `change`. Instance: main.
+- The plugin is not called when the rule decides: put everything the decision needs into the rule's conditions. Find decision points and their outcomes with `angelica schema show <event>`.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
+
 ## Changing what you see
 
 Change a value the game keeps on the player's computer alone, such as how far the camera zooms out.

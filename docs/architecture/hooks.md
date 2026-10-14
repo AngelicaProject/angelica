@@ -43,6 +43,8 @@ A mid-function hook overwrites the instructions at a location with a `jmp rel32`
 
 The stack pointer is not part of what a handler can change: it is the address just past the context. A handler must not unwind; the host catches panics inside it. A hook made with data passes the handler a number of the installer's choice too, so one handler serves many hooks, as the watch hooks of Lens do with their point.
 
+A returning hook is a mid-function hook at a function's first instruction whose handler may answer for the function: when it returns true, the stub loads the registers back from the context and returns to the caller with the context's `rax`, without running the function; otherwise the function runs. The decision points of Lens use it.
+
 When the hook is installed, a suspended thread on the hooked instruction continues at the start of the stub and runs the handler; a thread on a later overwritten instruction continues at that instruction among the moved ones.
 
 ## Code patches
@@ -63,4 +65,4 @@ Other tools in the process may hook the same function. A detour installed over a
 
 No hook calls plugin code. Functions the game calls often — building rows, converting text — are handled natively by adapters from rules plugins activated; see [`services.md`](./services.md). An adapter that reports what the game did — a line the player sent, a message, a window that opened — records it in a bounded queue, and the host delivers it to plugins in the next frame. A plugin changes what the game does only through rules or host operations, never from inside a hook. An adapter's detour catches panics and passes the call on unchanged when it fails.
 
-The watches of Lens use a mid-function hook at the map entry of each watched event: it reads the plugins' watches from the registers through the checked memory copy, keeps the rows for the next frame, and changes no register ([watches](./lens.md#watches)).
+The watches of Lens use a mid-function hook at the map entry of each watched event: it reads the plugins' watches from the registers through the checked memory copy, keeps the rows for the next frame, and changes no register ([watches](./lens.md#watches)). Its decision points use a returning hook at the start of each decided function: the host applies the plugins' rules there itself and either lets the function run or returns the outcome's value ([decisions](./lens.md#decisions)).

@@ -4,6 +4,7 @@ mod chat;
 mod clipboard;
 mod component;
 mod crash;
+mod decide;
 mod entries;
 mod excel_rows;
 mod file_reads;

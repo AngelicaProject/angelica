@@ -122,6 +122,13 @@ impl Game for WindowsGame {
         usize::try_from(address).is_ok_and(|address| super::memory::write(address, bytes).is_ok())
     }
 
+    fn enable_decision(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
+        hooked(
+            "decision point",
+            super::decide::install(&self.catalog, &self.lens, point, entry, address),
+        )
+    }
+
     fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
         hooked(
             "watched event",

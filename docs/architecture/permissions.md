@@ -22,7 +22,7 @@ Reading the game's objects through [Lens](./lens.md) needs a permission per doma
 
 Acting in a domain through Lens [actions](../formats/plugin-api-v1.md#lens) is a permission of its own: the manifest lists the domain in `[lens] act`, and the player sees the domain's `act` words in the class **Acts in the game for you**, above every other class, with a warning that acting for the player in the game breaks the game's terms of service and the game's company can suspend the account for it. A domain the map describes without `act` words has no actions and is never granted for acting.
 
-Changing values of a domain through Lens [`set`](../formats/plugin-api-v1.md#lens) is a permission of its own too: the manifest lists the domain in `[lens] change`, and the player sees the domain's `change` words in the class **Changes what you see**. Only values that exist on the player's computer alone are ever changeable, and the host puts every one back when the plugin stops.
+Changing values of a domain through Lens [`set`](../formats/plugin-api-v1.md#lens) is a permission of its own too: the manifest lists the domain in `[lens] change`, and the player sees the domain's `change` words in the class **Changes what you see**. Only values that exist on the player's computer alone are ever changeable, and the host puts every one back when the plugin stops. A rule at a decision point ([`decide`](../formats/plugin-api-v1.md#lens)) changes what the game does there for the player alone, and needs the same permission for the event's domain.
 
 ## Acting for the player
 

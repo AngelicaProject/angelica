@@ -254,6 +254,19 @@ An argument gives where its value is and what it is:
 - `arg = n`, for a function: the argument at position `n` from 0, its kind from the function's `abi`. `register = "<register>"` with `kind = "<value kind>"`, for a location: one of `rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`, `rbp`, `r8` to `r15`, or the low 64 bits of `xmm0` to `xmm15`. A float is in an `xmm` register, and only a float.
 - Its shape: a value, with `sheet`, `enum`, `flags`, and `unit` as for a field; `text = n`, NUL-terminated UTF-8 of at most `n` bytes behind a pointer; or `ref = "<type>"`, a pointer to an object of the type, from which a watch's path goes on. Text and references have the kind `ptr`.
 - `domain` and `forbidden`, as for a field.
+- `mask`: optional, for an integer value: the bits that hold it; the others are cleared before it is read or compared, as for a log kind kept in the low bits of a wider argument.
+
+An event of a function may have `outcomes`: what a plugin's rule may make the game do there. Such an event is a decision point.
+
+```toml
+[events.chat_message_added.outcomes.hide]
+doc = "The message is not added to the chat log."
+returns = 0
+```
+
+- An outcome is named like a field. `doc` is not blank and says what the game does instead.
+- `returns`: the integer or boolean the function returns at once, without running, when the outcome is taken; left out only for a function that returns nothing. A function that returns a float has no outcomes.
+- The event is at a `function` entry, whose start the host hooks, and its domain has `change` wording: deciding there changes the domain.
 
 ### Actions
 
@@ -300,7 +313,7 @@ default = 0
 
 ### Rules and resolution
 
-The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an event with outcomes is not at a function or its domain has no `change` wording, an outcome's `returns` does not fit the function's return kind, a `mask` is zero or on anything but an integer, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
 
 In a build, a root is absent when its global is absent, a field when its entry is absent, an event when its `at` is absent, and an action when its function or a global it passes is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, events, and actions under `objects`, and an action whose condition or object path does not fit the model as absent.
 

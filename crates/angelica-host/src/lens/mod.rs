@@ -8,6 +8,7 @@
 //! hooks.
 #![forbid(unsafe_code)]
 pub mod act;
+pub mod decide;
 pub mod plan;
 pub mod query;
 pub mod read;
@@ -17,7 +18,9 @@ pub mod set;
 mod tests;
 pub mod watch;
 
-pub use plan::{Column, ColumnMeaning, Prepared, Stored, prepare, prepare_objects, prepare_watch};
+pub use plan::{
+    Column, ColumnMeaning, Prepared, Stored, prepare, prepare_objects, prepare_rule, prepare_watch,
+};
 pub use read::{Call, Memory, Row, Value, objects, run, run_call};
 pub use schema::Schema;
 pub use watch::{Delivery, Watches};
@@ -42,6 +45,8 @@ pub struct Lens {
     pub acting: act::Acting,
     /// The values plugins changed, and their originals.
     pub changes: set::Changes,
+    /// The plugins' rules at decision points.
+    pub decisions: decide::Decisions,
 }
 
 impl Lens {
@@ -53,6 +58,7 @@ impl Lens {
             watches: Watches::default(),
             acting: act::Acting::default(),
             changes: set::Changes::default(),
+            decisions: decide::Decisions::default(),
         }
     }
 
@@ -72,6 +78,7 @@ impl Lens {
     /// planned again at their next run, watches now.
     pub fn replace(&self, schema: Schema) {
         self.watches.replan(&schema);
+        self.decisions.replan(&schema);
         *self.schema.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(schema);
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
@@ -127,6 +134,116 @@ impl Lens {
         Ok(())
     }
 
+    /// Starts a plugin's rule, prepared under `handle`, to take `outcome`
+    /// at its event: the event's hook is installed through `hook` (with the
+    /// point's id, the event's map entry, and its address) the first time.
+    ///
+    /// # Errors
+    /// `not-found` for an outcome the event does not have,
+    /// `permission-denied` when the plugin may not change the event's
+    /// domain, `unavailable` when the hook cannot be installed.
+    pub fn decide(
+        &self,
+        request: decide::Request<'_>,
+        may_change: &dyn Fn(&str) -> bool,
+        prepared: Prepared,
+        hook: &dyn Fn(usize, &str, u64) -> std::result::Result<(), String>,
+    ) -> Result<()> {
+        let decide::Request {
+            plugin,
+            handle,
+            text,
+            outcome,
+            permitted,
+        } = request;
+        let (schema, _) = self.schema();
+        let Some(event) = prepared
+            .event()
+            .and_then(|name| schema.objects.events.get(name))
+        else {
+            return Err(Error::invalid("a rule starts at an event"));
+        };
+        if event.outcomes.is_empty() {
+            return Err(Error::invalid(format!(
+                "event {} decides nothing: watch it with lens.watch",
+                event.name
+            )));
+        }
+        let Some(found) = event.outcomes.get(outcome) else {
+            let known = event
+                .outcomes
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::new(
+                Kind::NotFound,
+                format!(
+                    "event {} has no outcome {outcome}; its outcomes: {known}",
+                    event.name
+                ),
+            ));
+        };
+        if !may_change(&event.domain) {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                format!(
+                    "deciding at {} changes domain {}, which the plugin may not change: list it in the manifest's [lens] change",
+                    event.name, event.domain
+                ),
+            ));
+        }
+        let address = schema
+            .events
+            .get(&event.name)
+            .cloned()
+            .unwrap_or_else(|| Err("not in the schema".into()))
+            .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+        let (id, hooked) = self.decisions.point(&event.at);
+        if !hooked {
+            hook(id, &event.at, address).map_err(|reason| {
+                Error::new(
+                    Kind::Unavailable,
+                    format!("event {} cannot be decided at: {reason}", event.name),
+                )
+            })?;
+            self.decisions.hooked(id);
+        }
+        let returns = match found.returns {
+            Some(angelica_map::Number::Integer(value)) => value.cast_unsigned(),
+            Some(angelica_map::Number::Float(bits)) => bits,
+            None => 0,
+        };
+        let rule = decide::Rule::new(plugin, handle, text, permitted, prepared, returns);
+        self.decisions.add(id, rule);
+        Ok(())
+    }
+
+    /// Refuses a rule at an event whose domain the plugin may not change,
+    /// before the rule is planned, so the refusal names the change.
+    ///
+    /// # Errors
+    /// `permission-denied` for such an event.
+    pub fn may_decide(&self, text: &str, may_change: &dyn Fn(&str) -> bool) -> Result<()> {
+        let (schema, _) = self.schema();
+        let Some(event) = query::parse(text)
+            .ok()
+            .and_then(|parsed| schema.objects.events.get(&parsed.root).cloned())
+        else {
+            return Ok(());
+        };
+        if event.outcomes.is_empty() || may_change(&event.domain) {
+            return Ok(());
+        }
+        Err(Error::new(
+            Kind::PermissionDenied,
+            format!(
+                "deciding at {} changes domain {}, which the plugin may not change: list it in the manifest's [lens] change",
+                event.name, event.domain
+            ),
+        ))
+    }
+
     /// A domain of the map, for what the player is told.
     #[must_use]
     pub fn domain(&self, name: &str) -> Option<angelica_map::Domain> {
@@ -139,8 +256,16 @@ struct Held {
     text: String,
     generation: u64,
     planned: Result<Prepared>,
-    /// A watch's rows arrive as events; it is never run.
-    watch: bool,
+    kind: HeldKind,
+}
+
+/// What a held query is: one to run, a watch whose rows arrive as events,
+/// or a rule at a decision point; only the first is run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldKind {
+    Query,
+    Watch,
+    Rule,
 }
 
 /// The queries one plugin instance prepared, by handle.
@@ -162,7 +287,7 @@ impl Queries {
     ) -> Result<(u32, Prepared)> {
         let (schema, generation) = lens.schema();
         let prepared = prepare(&schema, text, permitted)?;
-        self.hold(text, generation, prepared, false)
+        self.hold(text, generation, prepared, HeldKind::Query)
     }
 
     /// Prepares a watch of `text` and keeps it under a new handle; the
@@ -178,7 +303,23 @@ impl Queries {
     ) -> Result<(u32, Prepared)> {
         let (schema, generation) = lens.schema();
         let prepared = prepare_watch(&schema, text, permitted)?;
-        self.hold(text, generation, prepared, true)
+        self.hold(text, generation, prepared, HeldKind::Watch)
+    }
+
+    /// Prepares a rule of `text` and keeps it under a new handle; the
+    /// caller starts it with [`Lens::decide`].
+    ///
+    /// # Errors
+    /// As for [`Queries::prepare`].
+    pub fn rule(
+        &mut self,
+        lens: &Lens,
+        text: &str,
+        permitted: &dyn Fn(&str) -> bool,
+    ) -> Result<(u32, Prepared)> {
+        let (schema, generation) = lens.schema();
+        let prepared = prepare_rule(&schema, text, permitted)?;
+        self.hold(text, generation, prepared, HeldKind::Rule)
     }
 
     fn hold(
@@ -186,7 +327,7 @@ impl Queries {
         text: &str,
         generation: u64,
         prepared: Prepared,
-        watch: bool,
+        kind: HeldKind,
     ) -> Result<(u32, Prepared)> {
         let slot = match self.held.iter().position(Option::is_none) {
             Some(slot) => slot,
@@ -207,7 +348,7 @@ impl Queries {
             text: text.to_owned(),
             generation,
             planned: Ok(prepared.clone()),
-            watch,
+            kind,
         });
         Ok((u32::try_from(slot).unwrap_or(u32::MAX), prepared))
     }
@@ -228,9 +369,9 @@ impl Queries {
             .and_then(|slot| self.held.get_mut(slot))
             .and_then(Option::as_mut)
             .ok_or_else(|| Error::new(Kind::NotFound, format!("no prepared query {handle}")))?;
-        if held.watch {
+        if held.kind != HeldKind::Query {
             return Err(Error::invalid(format!(
-                "query {handle} is a watch: its rows arrive as events"
+                "query {handle} is a watch or a rule: it is never run"
             )));
         }
         let (schema, generation) = lens.schema();
@@ -241,13 +382,13 @@ impl Queries {
         held.planned.clone()
     }
 
-    /// Forgets a held query; an unknown handle is ignored. True when it
-    /// was a watch, which the caller ends.
-    pub fn release(&mut self, handle: u32) -> bool {
+    /// Forgets a held query; an unknown handle is ignored. Returns what it
+    /// was, so the caller ends a watch or a rule.
+    pub fn release(&mut self, handle: u32) -> Option<HeldKind> {
         usize::try_from(handle)
             .ok()
             .and_then(|slot| self.held.get_mut(slot))
             .and_then(Option::take)
-            .is_some_and(|held| held.watch)
+            .map(|held| held.kind)
     }
 }

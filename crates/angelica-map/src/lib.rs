@@ -20,7 +20,7 @@ pub use actions::{
     ActArg, Action, Condition as ActCondition, MOST_ACT_RATE, Number, Param, Source as ActSource,
 };
 pub use error::MapError;
-pub use events::{Arg, Event, MOST_RATE, Register, Source as ArgSource};
+pub use events::{Arg, Event, MOST_RATE, Outcome, Register, Source as ArgSource};
 pub use load::{FORMAT, Map};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use objects::{

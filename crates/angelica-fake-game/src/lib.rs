@@ -62,6 +62,8 @@ pub struct ScriptedGame {
     /// What the game's functions return to actions: `1` (taken) unless a
     /// test says otherwise.
     pub act_returns: Mutex<u64>,
+    /// The map entries hooked for decision points, in order.
+    pub decided: Mutex<Vec<String>>,
 }
 
 /// An element of one of the game's own windows.
@@ -136,6 +138,7 @@ impl Default for ScriptedGame {
             windows: Mutex::new(std::collections::BTreeMap::new()),
             acted: Mutex::new(Vec::new()),
             act_returns: Mutex::new(1),
+            decided: Mutex::new(Vec::new()),
         }
     }
 }
@@ -240,6 +243,14 @@ impl Game for ScriptedGame {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .write_data(address, bytes)
+    }
+
+    fn enable_decision(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
+        self.decided
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(entry.to_owned());
+        Ok(())
     }
 
     fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
@@ -647,6 +658,33 @@ impl TestHost {
             ));
         }
         self.host.frame(FRAME);
+    }
+
+    /// The game calls the function of the decision point `event` with
+    /// `args`: what the plugins' rules make it return at once, or `None`
+    /// when it runs. Watches of the event are fired too.
+    ///
+    /// # Panics
+    /// When the event or an argument does not fit the map.
+    pub fn decide(&self, event: &str, args: &[(&str, Fire)]) -> Option<u64> {
+        let services = self.services();
+        let (schema, _) = services.lens.schema();
+        let at = schema.objects.events.get(event)?.at.clone();
+        let decided = services.lens.decisions.point_of(&at).and_then(|point| {
+            let mut objects = self
+                .game
+                .objects
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let call = objects
+                .call(event, args)
+                .unwrap_or_else(|error| panic!("{event}: {error}"));
+            services.lens.decisions.decide(point, &call, &*objects)
+        });
+        if decided.is_none() {
+            self.fire(event, args);
+        }
+        decided
     }
 
     /// The game reaches the point of `event` with `args`: every plugin's

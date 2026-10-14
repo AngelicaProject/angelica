@@ -47,8 +47,9 @@ pub enum Base {
     Object,
     /// The object an argument of the call points to.
     Pointer(ArgAt),
-    /// An argument of the call itself, read as the value.
-    Value(ArgAt),
+    /// An argument of the call itself, read as the value: the bits of
+    /// `mask`.
+    Value { at: ArgAt, mask: u64 },
 }
 
 /// How a value is read from an object.
@@ -455,7 +456,10 @@ impl<'a> Planner<'a> {
         match (&arg.shape, rest.is_empty()) {
             (Shape::Value { kind, .. }, true) => Ok((
                 Read {
-                    base: Base::Value(at),
+                    base: Base::Value {
+                        at,
+                        mask: arg.mask.unwrap_or(u64::MAX),
+                    },
                     hops: Vec::new(),
                     offset: 0,
                     stored: Stored::Value(*kind),
@@ -870,7 +874,7 @@ impl<'a> Planner<'a> {
             for selected in selected {
                 columns.push(self.column(Scope::Event(event), &selected.name, &selected.path)?);
             }
-        } else if columns.is_empty() {
+        } else if columns.is_empty() && !self.objects_only {
             let known = event.args.keys().cloned().collect::<Vec<_>>().join(", ");
             return Err(Error::invalid(format!(
                 "name the values to answer with in braces, such as {{ a, b }}; the arguments of {}: {known}",
@@ -1090,6 +1094,31 @@ pub fn prepare_objects(schema: &Schema, text: &str) -> Result<Prepared> {
         covered: BTreeSet::new(),
         depth: 0,
         watch: false,
+        objects_only: true,
+        reached: None,
+    }
+    .plan(&query)
+}
+
+/// Plans a rule: a query from an event, such as `chat_message_added[kind =
+/// 57]`, that holds when it reaches anything, without values to answer.
+///
+/// # Errors
+/// As for [`prepare_watch`].
+pub fn prepare_rule(
+    schema: &Schema,
+    text: &str,
+    permitted: &dyn Fn(&str) -> bool,
+) -> Result<Prepared> {
+    let query = query::parse(text).map_err(Error::invalid)?;
+    Planner {
+        objects: &schema.objects,
+        schema,
+        permitted,
+        domains: BTreeSet::new(),
+        covered: BTreeSet::new(),
+        depth: 0,
+        watch: true,
         objects_only: true,
         reached: None,
     }

@@ -92,6 +92,20 @@ pub trait Game: Send + Sync {
         Err("this game cannot be acted in".into())
     }
 
+    /// Makes the game ask [`crate::lens::decide::Decisions::decide`] with
+    /// `point` at the start of the function of the map entry `entry`, at
+    /// `address`, and return at once when a rule holds. Called once per
+    /// decision point; the hook stays until the process exits.
+    ///
+    /// # Errors
+    /// Why the function cannot be hooked in this build.
+    fn enable_decision(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
+        let _ = (point, address);
+        Err(format!(
+            "map entry {entry} cannot be decided at in this game"
+        ))
+    }
+
     /// Writes `bytes` at `address` of the game's data, for a Lens change;
     /// false when the range is not writable data.
     fn write(&self, address: u64, bytes: &[u8]) -> bool {

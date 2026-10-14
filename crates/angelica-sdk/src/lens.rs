@@ -46,6 +46,14 @@
 //! lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4.into())])?;
 //! ```
 //!
+//! A [`Rule`] decides at a decision point of the map: while it is kept,
+//! the host takes its outcome whenever the rule holds, without calling the
+//! plugin:
+//!
+//! ```ignore
+//! let quiet = lens::Rule::new("chat_message_added[kind = 57]", "hide")?;
+//! ```
+//!
 //! [`set`] changes a value the map marks changeable, such as the camera's
 //! zoom limit, until [`restore`] or the plugin stops:
 //!
@@ -60,7 +68,7 @@
 //! [lens]
 //! read = ["inventory"]
 //! act = ["actions"]
-//! change = ["camera"]
+//! change = ["camera", "chat"]
 //! ```
 use crate::api::lens as api;
 pub use api::{Column, FlagSet, Row, SheetRow, Value};
@@ -366,6 +374,31 @@ pub fn act(action: &str, params: &[(&str, Value)]) -> Result<(), crate::Error> {
         .map(|(name, value)| ((*name).to_owned(), value.clone()))
         .collect();
     api::act(action, &params)
+}
+
+/// A rule at a decision point; dropping it ends it.
+#[derive(Debug)]
+pub struct Rule {
+    handle: u32,
+}
+
+impl Rule {
+    /// Adds the rule `text`, a query from an event with outcomes without
+    /// braces, to take `outcome` whenever it holds.
+    ///
+    /// # Errors
+    /// See `lens.decide`.
+    pub fn new(text: &str, outcome: &str) -> Result<Self, crate::Error> {
+        Ok(Self {
+            handle: api::decide(text, outcome)?,
+        })
+    }
+}
+
+impl Drop for Rule {
+    fn drop(&mut self) {
+        api::release(self.handle);
+    }
 }
 
 /// Changes the value at `path`, a field the map marks changeable such as

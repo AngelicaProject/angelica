@@ -676,6 +676,11 @@ thread = "main"
 locator = { signature = "C3" }
 type = "struct"
 
+[function."test.print_message"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "u16", "ptr", "ptr", "i32", "u8"], ret = "u32" }
+thread = "main"
+
 [global."test.camera_manager"]
 locator = { signature = "C3" }
 type = "struct"
@@ -835,6 +840,12 @@ class = "you"
 read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
 act = { en = "Uses actions for you", ru = "Использует действия за вас" }
 
+[domains.chat]
+doc = "The chat log."
+class = "others"
+read = { en = "Sees your chat log", ru = "Видит ваш чат" }
+change = { en = "Hides messages in your chat log", ru = "Скрывает сообщения в вашем чате" }
+
 [domains.camera]
 doc = "The camera."
 class = "display"
@@ -892,6 +903,20 @@ arg = 2
 [events.action_used.args.target]
 doc = "The target."
 arg = 3
+
+[events.chat_message_added]
+doc = "The game adds a message to the chat log."
+at = "test.print_message"
+domain = "chat"
+
+[events.chat_message_added.args.kind]
+doc = "The log kind."
+arg = 1
+mask = 0x7F
+
+[events.chat_message_added.outcomes.hide]
+doc = "The message is not added."
+returns = 0
 "#,
     ),
     (
@@ -932,12 +957,62 @@ fn without_lens() -> String {
         .lines()
         .filter(|line| {
             *line != "[lens]"
+                && !line.starts_with("change = ")
                 && !line.starts_with("read = ")
                 && !line.starts_with("act = ")
                 && !line.starts_with("change = ")
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn a_rule_hides_messages_without_calling_the_plugin() {
+    use angelica_fake_game::Fire;
+    let kind = |kind: u32| [("kind", Fire::from(kind))];
+    let test = approved(MANIFEST);
+    click(&test, "quiet");
+    assert_eq!(
+        message(&test),
+        "cannot hide: the game map has no event chat_message_added"
+    );
+
+    let test = with_character(MANIFEST, &[]);
+    assert_eq!(test.decide("chat_message_added", &kind(57)), None);
+    click(&test, "quiet");
+    assert_eq!(message(&test), "system messages hidden");
+    assert_eq!(*test.game.decided.lock().unwrap(), ["test.print_message"]);
+    assert_eq!(test.decide("chat_message_added", &kind(57)), Some(0));
+    assert_eq!(
+        test.decide("chat_message_added", &kind(0x39 | 0x0880)),
+        Some(0),
+        "the mask keeps the log kind's bits"
+    );
+    assert_eq!(test.decide("chat_message_added", &kind(10)), None);
+
+    click(&test, "quiet");
+    assert_eq!(message(&test), "system messages shown");
+    assert_eq!(
+        test.decide("chat_message_added", &kind(57)),
+        None,
+        "dropping the rule ended it"
+    );
+
+    click(&test, "quiet");
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert_eq!(
+        test.decide("chat_message_added", &kind(57)),
+        None,
+        "a stopped plugin's rules end"
+    );
+
+    let test = with_character(&MANIFEST.replace("\"camera\", \"chat\"", "\"camera\""), &[]);
+    click(&test, "quiet");
+    assert_eq!(
+        message(&test),
+        "cannot hide: deciding at chat_message_added changes domain chat, which the plugin may not change: list it in the manifest's [lens] change"
+    );
 }
 
 #[test]
@@ -978,7 +1053,10 @@ fn the_zoom_limit_is_changed_and_put_back() {
         "the original is back when the plugin stops"
     );
 
-    let test = with_character(&MANIFEST.replace("change = [\"camera\"]\n", ""), &[]);
+    let test = with_character(
+        &MANIFEST.replace("change = [\"camera\", \"chat\"]\n", ""),
+        &[],
+    );
     test.game
         .set("camera.camera", &[("max_distance", Set::Float(20.0))]);
     click(&test, "zoom");
@@ -1202,7 +1280,8 @@ fn approval_names_the_domains_in_the_maps_words() {
             "location",
             "statuses",
             "actions.act",
-            "camera.change"
+            "camera.change",
+            "chat.change"
         ]
     );
 }

@@ -111,6 +111,14 @@ When the game reaches the event's point, the host reads the rows at once, on the
 - Before the call, every condition of the action must hold; one that does not is `unavailable` with the condition's words, such as "you are in combat". The host then calls the game's function on the main thread, as the game's own interface does, and the game checks the action as for the player's own press. A return value other than the map's `ok` is `unavailable`: the game refused it now. Anything the running build lacks is `unavailable` too.
 - `act` works in the main instance after the game has started, from `tick`, a command, a window event, or a game event; jobs get `wrong-context`.
 
+`decide` adds a rule at a [decision point](./game-map-v2.md#events): `decide("chat_message_added[kind = 57]", "hide")` hides the game's system messages.
+
+- The rule is a query from an event with outcomes, without braces: conditions in brackets after the event's name and paths through its arguments, as for `watch`. It holds when it reaches anything.
+- Whenever the game calls the event's function and the rule holds, the host takes the outcome itself: the function returns at once with the outcome's value and does not run. No plugin code runs at that moment, so a rule costs the game only its reads. Rules apply in the order they were added, across plugins; the first that holds decides, and a rule that cannot be read holds not.
+- The event's domain must be listed in the manifest's `[lens] change` and approved; the domains on the rule's paths in `[lens] read` or `[lens] change`.
+- `decide` returns a handle; `release` ends the rule, and every rule ends when the plugin stops. Rules count toward the 256 held queries. After the game map is reloaded, a rule is planned again, and one that no longer fits holds never until the plugin decides again.
+- A call a rule decides runs no further: watches and other tools' hooks after Angelica's at that function do not see it.
+
 `set` changes a value the map marks [changeable](./game-map-v2.md#types): `set("camera.camera.max_distance", float(40))`.
 
 - The path is a query's path without braces, ending at the field; filters on the way pick the objects. The value is changed in every object the path reaches, at most 256, and `set` returns how many: none while it reaches no object.

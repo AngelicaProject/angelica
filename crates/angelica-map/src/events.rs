@@ -82,6 +82,18 @@ pub struct Arg {
     pub shape: Shape,
     pub domain: String,
     pub forbidden: bool,
+    /// The bits of an integer value that hold it; the others are cleared.
+    pub mask: Option<u64>,
+}
+
+/// What a plugin's rule may make the game do at an event of a function:
+/// return at once with `returns`, without running the function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub name: String,
+    pub doc: String,
+    /// The value the function returns; `None` for a function without one.
+    pub returns: Option<crate::Number>,
 }
 
 /// An event: a point of the game's code and its arguments.
@@ -96,6 +108,9 @@ pub struct Event {
     /// The most firings a watch keeps between two frames.
     pub rate: u16,
     pub args: BTreeMap<String, Arg>,
+    /// What rules may decide at the event; an event with outcomes is a
+    /// decision point, at a function's start.
+    pub outcomes: BTreeMap<String, Outcome>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +128,15 @@ struct RawEvent {
     rate: Option<u16>,
     #[serde(default)]
     args: BTreeMap<String, RawArg>,
+    #[serde(default)]
+    outcomes: BTreeMap<String, RawOutcome>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOutcome {
+    doc: String,
+    returns: Option<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +155,7 @@ struct RawArg {
     domain: Option<String>,
     #[serde(default)]
     forbidden: bool,
+    mask: Option<u64>,
 }
 
 /// Parses `events.toml`; the kinds of function arguments come later, from
@@ -164,6 +189,34 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
         if args.is_empty() {
             return Err(format!("event `{name}` has no arguments"));
         }
+        let mut outcomes = BTreeMap::new();
+        for (outcome_name, outcome) in event.outcomes {
+            if !is_word(&outcome_name) {
+                return Err(format!(
+                    "event `{name}`: `{outcome_name}` is not a valid outcome name"
+                ));
+            }
+            not_blank(
+                &format!("the doc of outcome `{outcome_name}`"),
+                &outcome.doc,
+            )?;
+            let returns = outcome
+                .returns
+                .map(|value| {
+                    crate::actions::number(&value).ok_or_else(|| {
+                        format!("event `{name}`, outcome `{outcome_name}`: `returns` is a number or a boolean")
+                    })
+                })
+                .transpose()?;
+            outcomes.insert(
+                outcome_name.clone(),
+                Outcome {
+                    name: outcome_name,
+                    doc: outcome.doc,
+                    returns,
+                },
+            );
+        }
         events.insert(
             name.clone(),
             Event {
@@ -173,6 +226,7 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
                 domain: event.domain,
                 rate,
                 args,
+                outcomes,
             },
         );
     }
@@ -234,6 +288,12 @@ fn parse_arg(name: &str, raw: RawArg, domain: &str) -> Result<Arg, String> {
     if !matches!(shape, Shape::Value { .. }) && meanings > 0 {
         return Err("sheet, enum, and flags belong to values".into());
     }
+    if raw.mask == Some(0) {
+        return Err("a mask keeps at least one bit".into());
+    }
+    if raw.mask.is_some() && !matches!(shape, Shape::Value { .. }) {
+        return Err("a mask belongs to values".into());
+    }
     Ok(Arg {
         name: name.to_owned(),
         doc: raw.doc,
@@ -242,6 +302,7 @@ fn parse_arg(name: &str, raw: RawArg, domain: &str) -> Result<Arg, String> {
         shape,
         domain: raw.domain.unwrap_or_else(|| domain.to_owned()),
         forbidden: raw.forbidden,
+        mask: raw.mask,
     })
 }
 
@@ -280,6 +341,7 @@ fn check_event(
         Some(_) => return Err(format!("`{}` is not a function or a location", event.at)),
         None => return Err(format!("`{}` is not an entry", event.at)),
     };
+    check_outcomes(objects, event, abi)?;
     for arg in event.args.values_mut() {
         let wrong = |message: String| format!("argument `{}`: {message}", arg.name);
         match (arg.source, abi) {
@@ -341,6 +403,9 @@ fn check_event(
                     return Err(wrong("a sheet row, enum, or flags is an integer".into()));
                 }
                 *value = kind;
+                if arg.mask.is_some() && !is_integer(kind) {
+                    return Err(wrong("a mask belongs to integers".into()));
+                }
             }
             Shape::Text(_) | Shape::Ref(_) if kind != ValueKind::Ptr => {
                 return Err(wrong(
@@ -352,6 +417,50 @@ fn check_event(
             }
             Shape::Text(_) | Shape::Ref(_) => {}
             Shape::Embed(_) | Shape::Array { .. } => unreachable!("arguments are not parsed so"),
+        }
+    }
+    Ok(())
+}
+
+/// Checks a decision point: a function's start, a domain with `change`
+/// wording, and outcomes that return a value of the function's kind in
+/// `rax`, or nothing for a function without one.
+fn check_outcomes(
+    objects: &Objects,
+    event: &Event,
+    abi: Option<&crate::Abi>,
+) -> Result<(), String> {
+    if event.outcomes.is_empty() {
+        return Ok(());
+    }
+    let Some(abi) = abi else {
+        return Err(format!(
+            "`{}` is a location: a decision point is a function's start",
+            event.at
+        ));
+    };
+    if objects
+        .domains
+        .get(&event.domain)
+        .is_none_or(|domain| domain.change.is_none())
+    {
+        return Err(format!(
+            "domain `{}` has no `change` wording for the player",
+            event.domain
+        ));
+    }
+    for outcome in event.outcomes.values() {
+        // A decision returns in `rax`, never in `xmm0`.
+        let fits = match (abi.ret, outcome.returns) {
+            (ValueKind::Void, None) => true,
+            (kind, Some(crate::Number::Integer(_))) => is_integer(kind) || kind == ValueKind::Bool,
+            _ => false,
+        };
+        if !fits {
+            return Err(format!(
+                "outcome `{}`: `returns` gives an integer or a boolean of the function's return kind, and only when it has one",
+                outcome.name
+            ));
         }
     }
     Ok(())
@@ -436,6 +545,96 @@ at = "x"
         let seen = &events["action_seen"];
         assert_eq!(seen.rate, 8);
         assert_eq!(seen.args["id"].source, ArgSource::Register(Register::R8));
+    }
+
+    #[test]
+    fn decision_points_have_outcomes_of_their_return_kind() {
+        let changing = DOMAINS.replace(
+            "read = { en = \"Sees the actions you use\", ru = \"Видит действия, которые вы используете\" }",
+            "read = { en = \"Sees the actions you use\", ru = \"Видит действия, которые вы используете\" }
+change = { en = \"Stops actions\", ru = \"Отменяет действия\" }",
+        );
+        let decided = |domains: &str, extra: &str| {
+            Map::from_sources(
+                "format = 2",
+                &[
+                    ("entries/action.toml".into(), ENTRIES.into()),
+                    ("domains.toml".into(), domains.into()),
+                    (
+                        "enums/action.kind.toml".into(),
+                        "doc = \"Kinds.\"
+values = { action = 1, item = 2 }
+"
+                        .into(),
+                    ),
+                    (
+                        "events.toml".into(),
+                        format!(
+                            "[events.used]
+doc = \"Used.\"
+at = \"action.manager.use\"
+domain = \"actions\"
+
+[events.used.args.kind]
+doc = \"The kind.\"
+arg = 1
+mask = 0x7F
+
+{extra}"
+                        ),
+                    ),
+                ],
+            )
+        };
+        let refuse = "[events.used.outcomes.refuse]
+doc = \"Not used.\"
+returns = false
+";
+        let map = decided(&changing, refuse).unwrap();
+        let used = &map.objects().events["used"];
+        assert_eq!(used.args["kind"].mask, Some(0x7F));
+        assert_eq!(
+            used.outcomes["refuse"].returns,
+            Some(crate::Number::Integer(0))
+        );
+        assert!(decided(DOMAINS, refuse).is_err(), "no change wording");
+        for wrong in [
+            "[events.used.outcomes.refuse]
+doc = \"Not used.\"
+",
+            "[events.used.outcomes.refuse]
+doc = \"Not used.\"
+returns = 1.5
+",
+            "[events.used.outcomes.Refuse]
+doc = \"Not used.\"
+returns = 0
+",
+            "[events.used.args.speed]
+doc = \"A float.\"
+arg = 5
+mask = 1
+",
+        ] {
+            assert!(decided(&changing, wrong).is_err(), "{wrong}");
+        }
+        let at_a_location = "[events.seen]
+doc = \"Seen.\"
+at = \"action.manager.used\"
+domain = \"actions\"
+
+[events.seen.args.value]
+doc = \"A value.\"
+register = \"rcx\"
+kind = \"u32\"
+
+[events.seen.outcomes.skip]
+doc = \"Skipped.\"
+";
+        assert!(
+            decided(&changing, at_a_location).is_err(),
+            "a location decides nothing"
+        );
     }
 
     #[test]

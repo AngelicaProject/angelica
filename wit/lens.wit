@@ -111,7 +111,7 @@ interface lens {
     /// host cannot hook the event's point in this build.
     watch: func(query: string) -> result<prepared, error>;
 
-    /// Forgets a prepared query, and ends a watch.
+    /// Forgets a prepared query, and ends a watch or a rule.
     release: func(query: u32);
 
     /// Takes the map's action `action` for the player now, with each
@@ -146,4 +146,21 @@ interface lens {
 
     /// Puts back the originals of what `set` changed through `path`.
     restore: func(path: string) -> result<_, error>;
+
+    /// Adds a rule at a decision point: an event of the map with outcomes,
+    /// such as `chat_message_added`. `rule` is a query from the event
+    /// without braces, with conditions in brackets and paths through its
+    /// arguments as for `watch`; whenever it reaches anything, the host
+    /// takes `outcome`, such as `hide`, itself: the game's function returns
+    /// at once with the outcome's value and does not run. Rules apply in
+    /// the order they were added, across plugins; the first that holds
+    /// decides. Returns the handle `release` ends it with. The event's
+    /// domain must be listed in the manifest's `[lens] change` and
+    /// approved; domains on the rule's paths in `[lens] read` or
+    /// `[lens] change`. An event without outcomes or a rule that breaks the
+    /// syntax returns `invalid-argument`; an unknown event or outcome,
+    /// `not-found`; a domain the plugin may not change, `permission-denied`;
+    /// an event the build lacks or cannot hook, `unavailable`. Rules count
+    /// toward the 256 held queries.
+    decide: func(rule: string, outcome: string) -> result<u32, error>;
 }

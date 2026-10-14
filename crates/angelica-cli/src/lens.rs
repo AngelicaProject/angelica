@@ -221,10 +221,13 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
         forbidden: arg.forbidden,
         set: None,
     };
-    let held = match &arg.shape {
+    let mut held = match &arg.shape {
         Shape::Text(length) => format!("text of at most {length} bytes, behind a pointer"),
         _ => shape(objects, &field),
     };
+    if let Some(mask) = arg.mask {
+        let _ = write!(held, ", the bits {mask:#x}");
+    }
     match arg.source {
         angelica_map::ArgSource::Argument(position) => format!("argument {position}, {held}"),
         angelica_map::ArgSource::Register(register) => {
@@ -810,10 +813,24 @@ fn show_event(objects: &Objects, schema: Option<&Schema>, event: &Event) -> (Jso
         );
         args.push(json!({"name": arg.name, "doc": arg.doc, "domain": arg.domain, "shape": arg_shape(objects, arg)}));
     }
+    let mut outcomes = Vec::new();
+    for outcome in event.outcomes.values() {
+        let returns = match outcome.returns {
+            Some(angelica_map::Number::Integer(value)) => format!("returns {value}"),
+            Some(number) => format!("returns {}", number.float()),
+            None => "returns".to_owned(),
+        };
+        let _ = writeln!(
+            text,
+            "  outcome {}: the function {returns} without running; {}",
+            outcome.name, outcome.doc
+        );
+        outcomes.push(json!({"name": outcome.name, "doc": outcome.doc, "returns": returns}));
+    }
     (
         json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
                "rate": event.rate, "available": available.as_ref().map(Result::is_ok),
-               "reason": available.and_then(Result::err), "args": args}),
+               "reason": available.and_then(Result::err), "args": args, "outcomes": outcomes}),
         text,
     )
 }
