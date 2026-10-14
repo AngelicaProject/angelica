@@ -14,7 +14,6 @@ You decide what the plugin may do, which requests go to the Angelica developers,
 
 ## What you need
 
-- A coding agent that can run commands in a terminal on your computer.
 - A GitHub account. The agent asks you to install the GitHub command `gh` and sign in.
 - To try the plugin in the game: the game and [Angelica](install.md).
 
