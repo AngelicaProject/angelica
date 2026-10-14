@@ -69,6 +69,9 @@ pub enum Permission {
     /// Keep a cache of files of the size `[storage] cache` names.
     #[serde(rename = "storage.cache")]
     StorageCache,
+    /// Keep WebSocket connections to the hosts the manifest lists.
+    #[serde(rename = "http.websocket")]
+    HttpWebsocket,
 }
 
 impl Permission {
@@ -91,6 +94,7 @@ impl Permission {
             Self::Notifications => "notifications",
             Self::SoundPlay => "sound.play",
             Self::StorageCache => "storage.cache",
+            Self::HttpWebsocket => "http.websocket",
         }
     }
 
@@ -114,6 +118,7 @@ impl Permission {
             Self::Notifications => "Shows notifications and flashes the game on the taskbar",
             Self::SoundPlay => "Plays sounds",
             Self::StorageCache => "Keeps a cache of files on your disk",
+            Self::HttpWebsocket => "Keeps live connections to these internet hosts",
         }
     }
 
@@ -121,7 +126,7 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
-            Self::HttpGet | Self::HttpSend => Class::Network,
+            Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
             Self::ChatRead => Class::OtherPlayers,
             Self::ExcelText
             | Self::TextCase
@@ -561,6 +566,10 @@ impl Manifest {
         }
         if declared.contains(&Permission::HttpSend) && !declared.contains(&Permission::HttpGet) {
             return fail("http.send comes with http.get and its http.hosts".into());
+        }
+        if declared.contains(&Permission::HttpWebsocket) && !declared.contains(&Permission::HttpGet)
+        {
+            return fail("http.websocket comes with http.get and its http.hosts".into());
         }
         let receivers = self
             .messages

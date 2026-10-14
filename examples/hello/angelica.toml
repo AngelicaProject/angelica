@@ -15,6 +15,7 @@ authors = ["AngelicaProject contributors"]
 "chat.commands" = true
 "chat.print" = true
 "http.get" = true
+"http.websocket" = true
 "chat.read" = true
 "gameui.hide" = true
 "gameui.text" = true

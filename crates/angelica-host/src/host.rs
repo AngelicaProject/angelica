@@ -635,6 +635,7 @@ impl Host {
         self.services.lens.decisions.remove_plugin(id);
         self.services.draw.remove_plugin(id);
         self.services.notifications.remove_plugin(id);
+        self.services.sockets.remove_plugin(id);
         self.services.messages.remove_plugin(id);
         self.services
             .lens
@@ -838,6 +839,52 @@ impl Host {
         None
     }
 
+    /// What happened on the plugin's connections since the last frame,
+    /// delivered to `on-game-event`; the reason to fault it, if any.
+    fn deliver_sockets(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use crate::sockets::{Happened, Message};
+        use sandbox::bindings::angelica::plugin::{
+            events::GameEvent,
+            websocket::{Data, SocketClosed, SocketMessage, SocketOpened},
+        };
+        for happened in self.services.sockets.take(id) {
+            let event = match happened {
+                Happened::Opened { socket, protocol } => {
+                    GameEvent::SocketOpened(SocketOpened { socket, protocol })
+                }
+                Happened::Received { socket, message } => GameEvent::SocketMessage(SocketMessage {
+                    socket,
+                    data: match message {
+                        Message::Text(text) => Data::Text(text),
+                        Message::Binary(bytes) => Data::Binary(bytes),
+                    },
+                }),
+                Happened::Closed {
+                    socket,
+                    code,
+                    reason,
+                } => GameEvent::SocketClosed(SocketClosed {
+                    socket,
+                    code,
+                    reason,
+                }),
+            };
+            if let Err(trap) = sandbox::call(store, |store| guest.call_on_game_event(store, &event))
+            {
+                return Some(format!(
+                    "on-game-event trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        None
+    }
+
     /// What the plugin's watches received since the last frame, delivered to
     /// `on-game-event`; the reason to fault it, if any.
     fn deliver_watched(
@@ -967,6 +1014,9 @@ impl Host {
             return Some(fault);
         }
         if let Some(fault) = self.deliver_messages(id, guest, store) {
+            return Some(fault);
+        }
+        if let Some(fault) = self.deliver_sockets(id, guest, store) {
             return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {

@@ -58,5 +58,6 @@ world plugin {
     import clipboard;
     import notifications;
     import sound;
+    import websocket;
     export guest;
 }

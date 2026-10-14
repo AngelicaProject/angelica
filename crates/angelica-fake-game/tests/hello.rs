@@ -81,7 +81,7 @@ fn without_permissions(names: &[&str]) -> String {
 
 /// The example's manifest without `http.get` and its hosts.
 fn without_http() -> String {
-    without_permissions(&["http.get"])
+    without_permissions(&["http.get", "http.websocket"])
         .lines()
         .filter(|line| *line != "[http]" && !line.starts_with("hosts ="))
         .collect::<Vec<_>>()
@@ -1239,6 +1239,95 @@ cache = 1
     assert_eq!(
         message(&test),
         "cannot cache: cache/ is the plugin's cache, which needs storage.cache"
+    );
+}
+
+/// A WebSocket server on this computer that answers one message with the
+/// same text and then reports how the connection ended.
+fn echo_once() -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        let first = socket.read().unwrap();
+        socket.send(first).unwrap();
+        loop {
+            match socket.read() {
+                Ok(tungstenite::Message::Close(frame)) => {
+                    return format!("closed {:?}", frame.map(|frame| u16::from(frame.code)));
+                }
+                Ok(_) => {}
+                Err(error) => return format!("ended: {error}"),
+            }
+        }
+    });
+    (address, server)
+}
+
+/// Runs frames until the example's message is `expected`, for at most five
+/// seconds; the message it shows then.
+fn frames_until(test: &TestHost, expected: &str) -> String {
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_secs(5) && message(test) != expected {
+        test.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    message(test)
+}
+
+#[test]
+fn a_socket_echoes_and_closes_through_the_scripted_server() {
+    let (address, server) = echo_once();
+    let test = approved(MANIFEST);
+    *test.game.socket_server.lock().unwrap() = Some(address);
+    click(&test, "socket");
+    assert_eq!(message(&test), "connecting");
+    assert_eq!(
+        frames_until(&test, "socket said hello"),
+        "socket said hello"
+    );
+    assert_eq!(server.join().unwrap(), "closed Some(1000)");
+
+    // A stopped plugin's connections close: this server keeps the
+    // connection until the host closes it.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    *test.game.socket_server.lock().unwrap() = Some(listener.local_addr().unwrap());
+    let (greeted, heard) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        loop {
+            match socket.read() {
+                Ok(tungstenite::Message::Text(_)) => greeted.send(()).unwrap(),
+                Ok(tungstenite::Message::Close(frame)) => {
+                    return frame.map(|frame| u16::from(frame.code));
+                }
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+    });
+    click(&test, "socket");
+    let started = std::time::Instant::now();
+    while heard.try_recv().is_err() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        test.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert_eq!(server.join().unwrap(), Some(1001), "going away");
+
+    let test = approved(&MANIFEST.replace(
+        "\"http.websocket\" = true
+",
+        "",
+    ));
+    click(&test, "socket");
+    assert_eq!(
+        message(&test),
+        "cannot connect: the plugin does not hold http.websocket"
     );
 }
 

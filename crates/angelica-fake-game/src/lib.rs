@@ -69,6 +69,9 @@ pub struct ScriptedGame {
     pub view_projection: Mutex<Option<[f32; 16]>>,
     /// Every sound played, as the host re-encoded it.
     pub played: Mutex<Vec<Vec<u8>>>,
+    /// The server on this computer that plugins' WebSocket connections
+    /// reach, whatever their URL; none unless a test starts one.
+    pub socket_server: Mutex<Option<std::net::SocketAddr>>,
 }
 
 /// An element of one of the game's own windows.
@@ -146,6 +149,7 @@ impl Default for ScriptedGame {
             decided: Mutex::new(Vec::new()),
             view_projection: Mutex::new(None),
             played: Mutex::new(Vec::new()),
+            socket_server: Mutex::new(None),
         }
     }
 }
@@ -471,6 +475,29 @@ impl TestHost {
             clipboard: Arc::new(runtime::clipboard::Clipboard::default()),
             notifications: Arc::new(runtime::notifications::Notifications::default()),
             sounds: Arc::new(runtime::sound::Sounds::default()),
+            sockets: Arc::new(runtime::sockets::Sockets::dialing({
+                let game = game.clone();
+                Arc::new(move |_client: &runtime::http::Client, _url: &str| {
+                    let server = game
+                        .socket_server
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .ok_or_else(|| {
+                            runtime::error::Error::new(
+                                runtime::error::Kind::Network,
+                                "no server in the scripted game",
+                            )
+                        })?;
+                    let stream: Box<dyn runtime::sockets::Stream> =
+                        Box::new(std::net::TcpStream::connect(server).map_err(|error| {
+                            runtime::error::Error::new(
+                                runtime::error::Kind::Network,
+                                error.to_string(),
+                            )
+                        })?);
+                    Ok(stream)
+                })
+            })),
             game: game.clone(),
             starting: AtomicBool::new(false),
             russian: AtomicBool::new(false),

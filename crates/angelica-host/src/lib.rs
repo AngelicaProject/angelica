@@ -43,6 +43,7 @@ pub mod plugin_installer;
 pub mod sandbox;
 pub mod self_update;
 pub mod sheets;
+pub mod sockets;
 pub mod sound;
 pub mod storage;
 pub mod text_case;

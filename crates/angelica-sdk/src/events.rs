@@ -13,6 +13,7 @@
 //! }
 //! ```
 use crate::api::events as api;
+pub use crate::api::websocket::{Data, SocketClosed, SocketMessage, SocketOpened};
 pub use api::{ChatMessage, EventKind, GameEvent, PluginMessage, WatchDropped, Watched};
 
 /// Replaces the plugin's subscriptions; an empty slice ends them.

@@ -171,6 +171,8 @@ pub struct Services {
     pub notifications: Arc<crate::notifications::Notifications>,
     /// When plugins last played a sound.
     pub sounds: Arc<crate::sound::Sounds>,
+    /// Plugins' WebSocket connections.
+    pub sockets: Arc<crate::sockets::Sockets>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -1456,6 +1458,55 @@ impl api::messages::Host for State {
             )
         })
         .map_err(Into::into)
+    }
+}
+
+impl api::websocket::Host for State {
+    fn open(
+        &mut self,
+        url: String,
+        protocols: Vec<String>,
+        authorization: Option<String>,
+    ) -> ApiResult<u32> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::HttpWebsocket))?;
+        let client = api(self
+            .context
+            .http
+            .clone()
+            .ok_or_else(|| Error::new(Kind::PermissionDenied, "the plugin lists no hosts")))?;
+        api(client.check_socket(&url))?;
+        let context = self.context.clone();
+        let dial = context.services.sockets.dial();
+        let target = url.clone();
+        self.host(|_| {
+            context.services.sockets.open(
+                &context.id,
+                &url,
+                &protocols,
+                authorization.as_deref(),
+                Box::new(move || dial(&client, &target)),
+            )
+        })
+        .map_err(Into::into)
+    }
+
+    fn send(&mut self, socket: u32, data: api::websocket::Data) -> ApiResult<()> {
+        api(self.main_only())?;
+        let message = match data {
+            api::websocket::Data::Text(text) => crate::sockets::Message::Text(text),
+            api::websocket::Data::Binary(bytes) => crate::sockets::Message::Binary(bytes),
+        };
+        let context = self.context.clone();
+        self.host(|_| context.services.sockets.send(&context.id, socket, message))
+            .map_err(Into::into)
+    }
+
+    fn close(&mut self, socket: u32) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        self.host(|_| context.services.sockets.close(&context.id, socket))
+            .map_err(Into::into)
     }
 }
 

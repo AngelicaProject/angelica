@@ -229,6 +229,15 @@ Fetch data from the plugin's own servers, and send data to them.
 - Data from the internet is untrusted: parse it in the job and handle malformed input as an error.
 - Contract: [HTTP](../formats/plugin-api-v1.md#http).
 
+## Staying connected
+
+Keep a live connection to the plugin's own service, which pushes data as it happens: a party's state, a synchronization server.
+
+- SDK: `websocket::Socket::open("wss://sync.example.org/live")?`, then in `Plugin::game_event`: `GameEvent::SocketOpened`, `GameEvent::SocketMessage` with `Data::Text` or `Data::Binary`, and `GameEvent::SocketClosed`; `socket.send_text(..)`, `socket.send_binary(..)`, `socket.close()`.
+- Permission: `http.websocket`, with `http.get` and the host in `[http] hosts`. Instance: main.
+- `open` returns at once; nothing can be sent before `SocketOpened`. Messages are at most 16 MiB; at most 4 connections. A closed connection does not reopen by itself: open a new one, waiting a little longer after each failure.
+- Contract: [WebSocket](../formats/plugin-api-v1.md#websocket).
+
 ## Talking to other plugins
 
 Exchange data with another plugin, such as asking an appearance plugin for a character's state.

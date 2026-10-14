@@ -60,6 +60,29 @@ struct ExperienceBar {
 }
 
 impl Hello {
+    /// Greets the echo server once the connection opens, shows its answer,
+    /// and closes.
+    fn socket_event(&mut self, event: &GameEvent) {
+        use angelica_sdk::api::websocket::{self, Data};
+        match event {
+            GameEvent::SocketOpened(opened) => {
+                if let Err(error) = websocket::send(opened.socket, &Data::Text("hello".into())) {
+                    self.say(format!("cannot greet: {}", error.message));
+                }
+            }
+            GameEvent::SocketMessage(message) => {
+                if let Data::Text(text) = &message.data {
+                    self.say(format!("socket said {text}"));
+                }
+                let _ = websocket::close(message.socket);
+            }
+            GameEvent::SocketClosed(closed) if closed.code != 1000 => {
+                self.say(format!("socket closed: {}", closed.reason));
+            }
+            _ => {}
+        }
+    }
+
     fn say(&mut self, message: impl Into<String>) {
         self.message = message.into();
         angelica_sdk::info(&self.message);
@@ -265,7 +288,7 @@ fn replace_texture() -> String {
 }
 
 /// What the buttons of the host's services beside Lens say: drawing,
-/// messages, the clipboard, notifications, and sound.
+/// messages, the clipboard, notifications, sound, and sockets.
 fn around_lens(id: &str) -> Option<String> {
     match id {
         "mark" => Some(mark_where_i_am()),
@@ -289,6 +312,11 @@ fn around_lens(id: &str) -> Option<String> {
             files::write("cache/hello.txt", b"fetched again when gone"),
             "cached",
             "cannot cache",
+        )),
+        "socket" => Some(said(
+            angelica_sdk::websocket::Socket::open("wss://example.com/echo"),
+            "connecting",
+            "cannot connect",
         )),
         "beep" => Some(said(
             files::write("beep.wav", &beep())
@@ -630,6 +658,7 @@ impl Plugin for Hello {
                                 .button("notify", "Notify me")
                                 .button("beep", "Beep")
                                 .button("cache", "Fill the cache")
+                                .button("socket", "Echo over a socket")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {
@@ -719,6 +748,7 @@ impl Plugin for Hello {
                 self.say(format!("cannot answer: {}", error.message));
             }
         }
+        self.socket_event(&event);
         if let GameEvent::ChatMessage(message) = event {
             self.heard = Some(format!(
                 "{} ({}): {}",

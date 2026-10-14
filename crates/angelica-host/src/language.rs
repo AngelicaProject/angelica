@@ -284,6 +284,7 @@ impl Language {
                 }
                 Permission::SoundPlay => "Проигрывает звуки",
                 Permission::StorageCache => "Хранит кеш файлов на вашем диске",
+                Permission::HttpWebsocket => "Держит постоянные соединения с этими сайтами",
             },
         }
     }
@@ -449,6 +450,7 @@ mod tests {
             Permission::Notifications,
             Permission::SoundPlay,
             Permission::StorageCache,
+            Permission::HttpWebsocket,
         ];
         for permission in permissions {
             assert_ne!(

@@ -133,6 +133,7 @@ mod tests {
             Permission::Notifications,
             Permission::SoundPlay,
             Permission::StorageCache,
+            Permission::HttpWebsocket,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

@@ -347,6 +347,7 @@ fn services(
         clipboard: Arc::new(crate::clipboard::Clipboard::default()),
         notifications: Arc::new(crate::notifications::Notifications::default()),
         sounds: Arc::new(crate::sound::Sounds::default()),
+        sockets: Arc::new(crate::sockets::Sockets::default()),
         game,
         starting: AtomicBool::new(false),
         russian: AtomicBool::new(false),

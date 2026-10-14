@@ -10,6 +10,7 @@ package angelica:plugin@1.0.0;
 interface events {
     use types.{error};
     use lens.{row};
+    use websocket.{socket-opened, socket-message, socket-closed};
 
     enum event-kind {
         /// A message added to the chat log. Requires `chat.read`.
@@ -70,6 +71,13 @@ interface events {
         /// The host kept at most 256 messages for the plugin between two
         /// frames; this many more were left out.
         messages-dropped(u32),
+        /// A connection of the `websocket` interface opened; needs no
+        /// subscription.
+        socket-opened(socket-opened),
+        /// A message on a connection; needs no subscription.
+        socket-message(socket-message),
+        /// A connection ended; needs no subscription.
+        socket-closed(socket-closed),
         /// The host kept at most 256 events between two frames; this many
         /// more were left out since the last delivery.
         dropped(u32),

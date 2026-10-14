@@ -6,12 +6,13 @@
 //! proxy Windows uses for their URL when one is set ([`set_proxy_finder`]),
 //! as the browser's do. TLS is the operating system's (`native-tls`:
 //! `SChannel` and the system's certificate store on Windows), with the
-//! certificate checked for the requested host.
+//! certificate checked for the requested host. [`Client::connect`] opens a
+//! TLS connection under the same rules for a plugin's WebSocket.
 #![forbid(unsafe_code)]
 use crate::error::{Error, Kind, Result};
 use std::{
-    io::{Read, Write},
-    net::{IpAddr, Ipv4Addr},
+    io::{BufRead, Read, Write},
+    net::{IpAddr, Ipv4Addr, TcpStream, ToSocketAddrs},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -463,6 +464,7 @@ pub struct Client {
     agent: ureq::Agent,
     hosts: Arc<Vec<String>>,
     any_host: bool,
+    addresses: Addresses,
 }
 
 impl Client {
@@ -538,6 +540,7 @@ impl Client {
             agent,
             hosts,
             any_host,
+            addresses,
         }
     }
 
@@ -766,6 +769,84 @@ impl Client {
         Ok((head, received))
     }
 
+    /// Checks the `wss://` URL `url` as [`Client::connect`] does, before
+    /// anything is sent.
+    ///
+    /// # Errors
+    /// An invalid URL and an unlisted host.
+    pub fn check_socket(&self, url: &str) -> Result<()> {
+        let https = url
+            .strip_prefix("wss://")
+            .map(|rest| format!("https://{rest}"))
+            .ok_or_else(|| Error::invalid(format!("{url} is not a wss URL")))?;
+        self.check(
+            &Request {
+                url: https,
+                headers: Vec::new(),
+            },
+            false,
+        )
+    }
+
+    /// A TLS connection for the `wss://` URL `url`, under the rules of
+    /// requests: a listed host on port 443, reached directly at an address
+    /// the client may reach or through the proxy Windows names for it, with
+    /// its certificate checked.
+    ///
+    /// # Errors
+    /// An invalid URL, an unlisted host or private address, and a
+    /// connection or TLS failure (`network`).
+    pub fn connect(&self, url: &str) -> Result<native_tls::TlsStream<TcpStream>> {
+        self.check_socket(url)?;
+        let request = Request {
+            url: url.replacen("wss://", "https://", 1),
+            headers: Vec::new(),
+        };
+        let uri: Uri = request
+            .url
+            .parse()
+            .map_err(|e| Error::invalid(format!("{url}: {e}")))?;
+        let host = uri.host().unwrap_or_default().to_owned();
+        let network = |what: &str, error: &dyn std::fmt::Display| {
+            Error::new(Kind::Network, format!("{what}: {error}"))
+        };
+        let tcp = if let Some(proxy) = PROXY.get().and_then(|finder| finder(&request.url)) {
+            // The proxy comes from Windows' settings and is reached as it
+            // resolves; the host is resolved by the proxy.
+            let addresses: Vec<_> = proxy
+                .to_socket_addrs()
+                .map_err(|e| network("the proxy", &e))?
+                .collect();
+            let tcp = connect_any(&addresses).map_err(|e| network("the proxy", &e))?;
+            tunnel(&tcp, &host).map_err(|e| network("the proxy", &e))?;
+            tcp
+        } else {
+            let addresses: Vec<_> = (host.as_str(), 443)
+                .to_socket_addrs()
+                .map_err(|e| network(&host, &e))?
+                .filter(|address| self.addresses.allow(address.ip()))
+                .collect();
+            if addresses.is_empty() {
+                return Err(Error::new(
+                    Kind::PermissionDenied,
+                    format!("{host} resolves only to local or private addresses"),
+                ));
+            }
+            connect_any(&addresses).map_err(|e| network(&host, &e))?
+        };
+        tcp.set_read_timeout(Some(RESPONSE_TIME))
+            .and_then(|()| tcp.set_write_timeout(Some(RESPONSE_TIME)))
+            .map_err(|e| network(&host, &e))?;
+        let connector = native_tls::TlsConnector::builder()
+            .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
+            .build()
+            .map_err(|e| network("TLS", &e))?;
+        connector.connect(&host, tcp).map_err(|e| match e {
+            native_tls::HandshakeError::Failure(e) => network("TLS", &e),
+            native_tls::HandshakeError::WouldBlock(_) => network("TLS", &"the handshake stalled"),
+        })
+    }
+
     /// Sends the request and reads the whole body, at most [`MAX_BODY`].
     ///
     /// # Errors
@@ -808,6 +889,48 @@ fn received(
         cancelled: Box::new(cancelled),
     };
     (head, reader)
+}
+
+/// A connection to the first of `addresses` that answers within
+/// [`CONNECT_TIME`].
+fn connect_any(addresses: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    for address in addresses {
+        match TcpStream::connect_timeout(address, CONNECT_TIME) {
+            Ok(tcp) => return Ok(tcp),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
+}
+
+/// Asks the proxy on `tcp` for a tunnel to `host` on port 443.
+fn tunnel(tcp: &TcpStream, host: &str) -> std::io::Result<()> {
+    tcp.set_read_timeout(Some(RESPONSE_TIME))?;
+    let mut writer = tcp;
+    write!(
+        writer,
+        "CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n"
+    )?;
+    let mut reader = std::io::BufReader::new(tcp);
+    let mut status = String::new();
+    reader.read_line(&mut status)?;
+    if status.split(' ').nth(1) != Some("200") {
+        return Err(std::io::Error::other(format!(
+            "no tunnel: {}",
+            status.trim()
+        )));
+    }
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? <= 2 {
+            break;
+        }
+    }
+    // The proxy answers before the tunnel carries anything, so nothing of
+    // the host's is left in the reader.
+    Ok(())
 }
 
 /// A file being sent, which stops when its job is cancelled.
