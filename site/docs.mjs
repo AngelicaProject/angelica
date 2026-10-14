@@ -60,6 +60,8 @@ export function page({ front, md, title }, file, pages) {
     },
     code(code, info) {
       const lang = (info || "").trim();
+      // Words to give a coding agent: wrapped like text, with a copy button.
+      if (lang === "prompt") return `<figure class="code prompt"><figcaption><span>Prompt</span><button type="button" class="copy">Copy</button></figcaption><pre><code>${esc(code)}</code></pre></figure>`;
       if (lang === "plaintext") return `<figure class="output"><figcaption>Output</figcaption><pre><code>${esc(code)}</code></pre></figure>`;
       const label = { shell: "Terminal", rust: "Rust", toml: "TOML" }[lang] || lang;
       return `<figure class="code"><figcaption><span>${label}</span><button type="button" class="copy">Copy</button></figcaption><pre><code>${paint(code, lang)}</code></pre></figure>`;
@@ -189,6 +191,7 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono);
 .code .a { color: var(--c-n); }
 .code .c { color: var(--ink-2); font-style: italic; }
 /* What the computer answers: no box, a rule on the left, so it never looks like something to type. */
+.prompt pre { white-space: pre-wrap; font-size: 14px; }
 .output { border-left: 2px solid var(--line-2); padding-left: 2px; }
 .output figcaption { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); padding: 0 14px; }
 .output pre { color: var(--ink-2); padding-top: 4px; padding-bottom: 4px; }
