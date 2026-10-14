@@ -269,6 +269,7 @@ impl Language {
                 Permission::GameUiText => "Вписывает свой текст в окна игры",
                 Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
                 Permission::MessagesSend => "Отправляет сообщения этим плагинам",
+                Permission::ClipboardWrite => "Копирует текст в буфер обмена, когда вы просите",
             },
         }
     }
@@ -430,6 +431,7 @@ mod tests {
             Permission::GameUiText,
             Permission::DrawWorld,
             Permission::MessagesSend,
+            Permission::ClipboardWrite,
         ];
         for permission in permissions {
             assert_ne!(

@@ -344,6 +344,7 @@ fn services(
         ui,
         draw: Arc::new(crate::draw::Drawings::default()),
         messages: Arc::new(crate::messages::Messages::default()),
+        clipboard: Arc::new(crate::clipboard::Clipboard::default()),
         game,
         starting: AtomicBool::new(false),
         russian: AtomicBool::new(false),

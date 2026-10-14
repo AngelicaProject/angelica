@@ -9,6 +9,7 @@ pub mod author;
 pub mod catalog;
 pub mod catalog_index;
 pub mod chat;
+pub mod clipboard;
 pub mod commands;
 pub mod config;
 pub mod draw;

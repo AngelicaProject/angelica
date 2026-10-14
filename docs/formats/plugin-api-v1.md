@@ -25,6 +25,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
+| `clipboard` | text put on the player's clipboard for the player's action | `clipboard.write` |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -200,6 +201,10 @@ The same rules hold for every connection, including each of at most 5 redirects:
 `messages.send` sends a payload of at most 1 MiB under a name of 1 to 64 ASCII letters, digits, dots, underscores, and hyphens to another plugin, and returns the message's id. In the next frame the receiver gets it in `on-game-event` as `message`, with the sender's plugin id, the name, the payload, and the id; it keeps at most 256 messages between two frames and is told how many more were left out with `messages-dropped`. No plugin runs another's code: each reads its messages in its own calls, and what a payload means is between the two plugins.
 
 A plugin sends to the plugins its manifest lists in `[messages] to`, which the player approves with `messages.send`; another receiver is `permission-denied`. Any plugin answers a message it received by naming it in `in-reply-to`: the answer goes to the message's sender, listed or not, and needs no permission; naming a message the plugin did not receive from that plugin is `invalid-argument`. A receiver that does not run is `unavailable`. Main instance only.
+
+## Clipboard
+
+`clipboard.copy` puts text of at most 64 KiB without NUL characters on the player's clipboard at the end of the frame, replacing what was there; the last text of a frame wins. A plugin copies only for an action of the player: from the main instance while it handles `ui-event` or `command`, and `wrong-context` anywhere else, so no plugin changes the clipboard on its own. No plugin reads the clipboard; the player pastes into a plugin's text fields as anywhere else.
 
 ## Drawing over the world
 

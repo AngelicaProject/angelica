@@ -20,6 +20,7 @@ authors = ["AngelicaProject contributors"]
 "gameui.text" = true
 "draw.world" = true
 "messages.send" = true
+"clipboard.write" = true
 
 [http]
 hosts = ["example.com"]

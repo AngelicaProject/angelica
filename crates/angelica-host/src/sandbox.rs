@@ -165,6 +165,8 @@ pub struct Services {
     pub draw: Arc<crate::draw::Drawings>,
     /// Messages between plugins.
     pub messages: Arc<crate::messages::Messages>,
+    /// Text plugins put on the clipboard this frame.
+    pub clipboard: Arc<crate::clipboard::Clipboard>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -308,6 +310,8 @@ pub struct State {
     exceeded: Option<Exceeded>,
     /// The Lens queries this instance prepared.
     queries: crate::lens::Queries,
+    /// True while the instance handles an action of the player.
+    player_action: bool,
 }
 
 /// A store with its instance's state.
@@ -329,6 +333,7 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
             budget: Budget::new(Duration::ZERO, Duration::ZERO),
             exceeded: None,
             queries: crate::lens::Queries::default(),
+            player_action: false,
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -371,6 +376,18 @@ pub fn call<T>(store: &mut Store<State>, work: impl FnOnce(&mut Store<State>) ->
     budget.wall_before = budget.wall();
     budget.started = Instant::now();
     budget.host = Duration::ZERO;
+    result
+}
+
+/// [`call`] for a call that handles an action of the player: a
+/// `ui-event` or a `command`.
+pub fn call_for_player<T>(
+    store: &mut Store<State>,
+    work: impl FnOnce(&mut Store<State>) -> T,
+) -> T {
+    store.data_mut().player_action = true;
+    let result = call(store, work);
+    store.data_mut().player_action = false;
     result
 }
 
@@ -1411,6 +1428,23 @@ impl api::messages::Host for State {
             )
         })
         .map_err(Into::into)
+    }
+}
+
+impl api::clipboard::Host for State {
+    fn copy(&mut self, text: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::ClipboardWrite))?;
+        if !self.player_action {
+            return Err(Error::new(
+                Kind::WrongContext,
+                "text is copied only for the player's action: in ui-event or command",
+            )
+            .into());
+        }
+        let context = self.context.clone();
+        self.host(|_| context.services.clipboard.copy(&text))
+            .map_err(Into::into)
     }
 }
 

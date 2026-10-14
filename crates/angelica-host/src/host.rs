@@ -867,6 +867,38 @@ impl Host {
         None
     }
 
+    /// The plugin's commands of a frame; the reason to fault it, if any.
+    fn run_commands(
+        &self,
+        id: &str,
+        commands: &[(String, Outcome)],
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
+            let invocation = match outcome {
+                Outcome::Reply(spans) => {
+                    self.reply(store.data().context(), spans);
+                    continue;
+                }
+                Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
+            };
+            match sandbox::call_for_player(store, |store| guest.call_command(store, &invocation)) {
+                Ok(Ok(())) => {}
+                Ok(Err(reason)) => {
+                    self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
+                }
+                Err(trap) => {
+                    return Some(format!(
+                        "command trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// The plugin's calls of a frame; the reason to fault it, if any.
     fn frame_calls(
         &self,
@@ -893,26 +925,8 @@ impl Host {
                 ));
             }
         }
-        for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
-            let invocation = match outcome {
-                Outcome::Reply(spans) => {
-                    self.reply(store.data().context(), spans);
-                    continue;
-                }
-                Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
-            };
-            match sandbox::call(store, |store| guest.call_command(store, &invocation)) {
-                Ok(Ok(())) => {}
-                Ok(Err(reason)) => {
-                    self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
-                }
-                Err(trap) => {
-                    return Some(format!(
-                        "command trapped: {}",
-                        sandbox::describe_trap(store, &trap)
-                    ));
-                }
-            }
+        if let Some(fault) = self.run_commands(id, commands, guest, store) {
+            return Some(fault);
         }
         let subscribed = self.services.events.subscribed(id);
         if !subscribed.is_empty() {
@@ -948,7 +962,9 @@ impl Host {
             return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {
-            if let Err(trap) = sandbox::call(store, |store| guest.call_ui_event(store, event)) {
+            if let Err(trap) =
+                sandbox::call_for_player(store, |store| guest.call_ui_event(store, event))
+            {
                 return Some(format!(
                     "ui-event trapped: {}",
                     sandbox::describe_trap(store, &trap)

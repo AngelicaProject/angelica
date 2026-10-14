@@ -237,6 +237,15 @@ Exchange data with another plugin, such as asking an appearance plugin for a cha
 - Delivery is in the next frame, never inside the sender's call. Agree on names and payloads with the other plugin's author, and treat a payload as untrusted input.
 - Contract: [messages](../formats/plugin-api-v1.md#messages-between-plugins).
 
+## Copying to the clipboard
+
+Give the player text to paste elsewhere: a position, a link, a macro.
+
+- SDK: `clipboard::copy("text")?` in `Plugin::ui_event` or `Plugin::command`.
+- Permission: `clipboard.write`. Instance: main, while handling the player's click or command; anywhere else the call is refused.
+- The text reaches the clipboard at the end of the frame, at most 64 KiB.
+- Contract: [clipboard](../formats/plugin-api-v1.md#clipboard).
+
 ## Drawing over the world
 
 Mark places in the game world: a circle on the ground, a line between two places, a label above a spot.

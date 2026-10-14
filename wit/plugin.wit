@@ -55,5 +55,6 @@ world plugin {
     import game-ui;
     import draw;
     import messages;
+    import clipboard;
     export guest;
 }

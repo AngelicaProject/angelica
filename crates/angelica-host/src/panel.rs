@@ -205,6 +205,9 @@ impl Panel {
     pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {
         self.icons.begin_frame();
         draw_world(host, context);
+        if let Some(text) = host.services().clipboard.take() {
+            context.copy_text(text);
+        }
         let keep = self.menu.draw(host, context, &self.map_status, menu);
         let raised = self.menu.take_raised();
         // Plugin windows are drawn with the menu open too; one opened from

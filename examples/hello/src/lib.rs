@@ -160,11 +160,8 @@ impl Hello {
                 self.say(text);
             }
             "mark" => self.say(mark_where_i_am()),
-            // The example sends to itself; a plugin lists the others it talks to.
-            "ping" => match angelica_sdk::messages::send("hello", "ping", b"ping") {
-                Ok(_) => self.say("ping sent"),
-                Err(error) => self.say(format!("cannot send: {}", error.message)),
-            },
+            "ping" => self.say(ping_myself()),
+            "copy" => self.say(copy_greeting()),
             "yes" => self.say(answer_yes()),
             "quiet" => {
                 if self.quiet.take().is_some() {
@@ -263,6 +260,23 @@ fn replace_texture() -> String {
     match result {
         Ok(()) => "texture replaced".to_owned(),
         Err(error) => format!("texture refused: {}", error.message),
+    }
+}
+
+/// Sends a message to the example itself; a plugin lists the others it
+/// talks to.
+fn ping_myself() -> String {
+    match angelica_sdk::messages::send("hello", "ping", b"ping") {
+        Ok(_) => "ping sent".to_owned(),
+        Err(error) => format!("cannot send: {}", error.message),
+    }
+}
+
+/// Puts a greeting on the clipboard, for the player's click.
+fn copy_greeting() -> String {
+    match angelica_sdk::clipboard::copy("Hello from Angelica") {
+        Ok(()) => "copied".to_owned(),
+        Err(error) => format!("cannot copy: {}", error.message),
     }
 }
 
@@ -555,6 +569,7 @@ impl Plugin for Hello {
                                 .button("yes", "Say yes")
                                 .button("mark", "Mark where I am")
                                 .button("ping", "Ping myself")
+                                .button("copy", "Copy a greeting")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

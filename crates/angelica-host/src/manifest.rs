@@ -57,6 +57,9 @@ pub enum Permission {
     /// Send messages to the plugins the manifest lists.
     #[serde(rename = "messages.send")]
     MessagesSend,
+    /// Put text on the player's clipboard for the player's action.
+    #[serde(rename = "clipboard.write")]
+    ClipboardWrite,
 }
 
 impl Permission {
@@ -75,6 +78,7 @@ impl Permission {
             Self::GameUiText => "gameui.text",
             Self::DrawWorld => "draw.world",
             Self::MessagesSend => "messages.send",
+            Self::ClipboardWrite => "clipboard.write",
         }
     }
 
@@ -94,6 +98,7 @@ impl Permission {
             Self::GameUiText => "Puts its own text in the game's windows",
             Self::DrawWorld => "Draws marks, lines, and text over the game world",
             Self::MessagesSend => "Sends messages to these plugins",
+            Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
         }
     }
 
@@ -109,7 +114,9 @@ impl Permission {
             | Self::GameUiHide
             | Self::GameUiText
             | Self::DrawWorld => Class::WhatYouSee,
-            Self::ChatCommands | Self::ChatPrint | Self::MessagesSend => Class::YoursOnly,
+            Self::ChatCommands | Self::ChatPrint | Self::MessagesSend | Self::ClipboardWrite => {
+                Class::YoursOnly
+            }
         }
     }
 }

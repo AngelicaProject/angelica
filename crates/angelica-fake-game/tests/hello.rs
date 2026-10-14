@@ -1109,6 +1109,29 @@ fn a_message_is_delivered_and_answered_in_the_next_frames() {
 }
 
 #[test]
+fn a_greeting_is_copied_for_the_players_click() {
+    let test = approved(MANIFEST);
+    click(&test, "copy");
+    assert_eq!(message(&test), "copied");
+    assert_eq!(
+        test.host.services().clipboard.take().as_deref(),
+        Some("Hello from Angelica")
+    );
+
+    let test = approved(&MANIFEST.replace(
+        "\"clipboard.write\" = true
+",
+        "",
+    ));
+    click(&test, "copy");
+    assert_eq!(
+        message(&test),
+        "cannot copy: the plugin does not hold clipboard.write"
+    );
+    assert_eq!(test.host.services().clipboard.take(), None);
+}
+
+#[test]
 fn a_mark_is_drawn_around_the_character() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);
