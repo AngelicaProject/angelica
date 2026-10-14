@@ -24,6 +24,8 @@ Put a rule in the document that owns it and link to that document elsewhere. Dup
 
 A contract shared by several Angelica repositories is owned by exactly one of them, and the others link to it. The game map format, the plugin manifest, and the plugin API are owned by the [`angelica`](https://github.com/AngelicaProject/angelica) repository.
 
+Documentation written for people, such as tutorials and player guides, lives in `site/pages/` and links to the canonical documents here instead of restating them ([website](./website.md)).
+
 Root files such as `README.md`, `CONTRIBUTING.md`, and `AGENTS.md` orient readers and route them to canonical documentation rather than restating it. Files under `.ai/` contain task-specific execution guidance and link back to durable rules here.
 
 ## Update documentation with behavior

@@ -12,6 +12,7 @@ Load the instruction modules that match the task before planning, implementing, 
 - Code review or review feedback: `.ai/code-review.md`
 - CI or workflow failures: `.ai/ci.md`
 - Documentation changes: `docs/AGENTS.md`
+- The website or its documentation pages: `docs/development/website.md`
 
 Then load the canonical project documentation for the affected area:
 
