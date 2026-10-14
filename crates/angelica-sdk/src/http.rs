@@ -1,4 +1,5 @@
-//! HTTPS GET requests from a job to the hosts the manifest lists.
+//! HTTPS requests from a job to the hosts the manifest lists: GET, and
+//! with `http.send` data sent with POST, PUT, PATCH, or DELETE.
 //!
 //! ```ignore
 //! use angelica_sdk::http;
@@ -11,11 +12,14 @@
 //! let (head, bytes) = http::Request::new("https://example.com/big.zip")
 //!     .header("accept", "application/zip")
 //!     .download("big.zip")?;
+//! let posted = http::Request::new("https://example.com/api/notes")
+//!     .header("content-type", "application/json")
+//!     .send(http::Method::Post, br#"{"text":"hi"}"#)?;
 //! ```
 use serde::de::DeserializeOwned;
 
 use crate::api::http as api;
-pub use api::{Head, Header, Request, Response};
+pub use api::{Head, Header, Method, Request, Response};
 
 /// Sends a GET request to `url` without headers. Called from a job.
 ///
@@ -46,7 +50,8 @@ impl Request {
     }
 
     /// Adds a header: only `accept`, `accept-language`, `if-none-match`,
-    /// `if-modified-since`, and `range`, each once.
+    /// `if-modified-since`, and `range`, and for [`Request::send`] also
+    /// `authorization` and `content-type`, each once.
     #[must_use]
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push(Header {
@@ -62,6 +67,16 @@ impl Request {
     /// See `http.get`.
     pub fn get(&self) -> Result<Response, crate::Error> {
         api::get(self)
+    }
+
+    /// Sends `body` with `method` and returns the response, whatever its
+    /// status; set `content-type` with [`Request::header`]. Called from a
+    /// job; needs `http.send`.
+    ///
+    /// # Errors
+    /// See `http.send`.
+    pub fn send(&self, method: Method, body: &[u8]) -> Result<Response, crate::Error> {
+        api::send(method, self, body)
     }
 
     /// Sends the request and writes a 2xx body to `path`; see [`download`].

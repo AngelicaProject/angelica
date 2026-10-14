@@ -12,6 +12,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | only for you | Adds its own chat commands |
 | `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | only for you | Prints its messages in your chat log |
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the hosts the manifest lists in `http.hosts` | internet | Downloads from these internet hosts, followed by the list |
+| `http.send` | sending data with POST, PUT, PATCH, and DELETE [requests](../formats/plugin-api-v1.md#http) to the same hosts; needs `http.get` | internet | Sends data to these internet hosts |
 | `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | other players | Reads the messages in your chat log, including other players' |
 | `gameui.hide` | keeping named elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) hidden | what you see | Hides parts of the game's interface |
 | `gameui.text` | putting text in named text elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) | what you see | Puts its own text in the game's windows |

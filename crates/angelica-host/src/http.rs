@@ -44,6 +44,10 @@ pub const REQUEST_HEADERS: [&str; 5] = [
     "if-modified-since",
     "range",
 ];
+/// The headers a plugin may set too when it sends data.
+pub const SEND_HEADERS: [&str; 2] = ["authorization", "content-type"];
+/// Bytes of a body a plugin sends.
+pub const MAX_SENT: usize = 16 * 1024 * 1024;
 pub const GET_TIME: Duration = Duration::from_secs(60);
 pub const DOWNLOAD_TIME: Duration = Duration::from_mins(15);
 const CONNECT_TIME: Duration = Duration::from_secs(15);
@@ -436,6 +440,15 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
 }
 
+/// How a plugin sends data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Head {
     pub status: u16,
@@ -526,8 +539,9 @@ impl Client {
         }
     }
 
-    /// Checks a request before anything is sent.
-    fn check(&self, request: &Request) -> Result<()> {
+    /// Checks a request before anything is sent; `sending` allows the
+    /// headers of data sent too.
+    fn check(&self, request: &Request, sending: bool) -> Result<()> {
         if request.url.len() > MAX_URL {
             return Err(Error::invalid(format!("a URL has at most {MAX_URL} bytes")));
         }
@@ -567,10 +581,16 @@ impl Client {
         }
         let mut seen = Vec::new();
         for (name, value) in &request.headers {
-            if !REQUEST_HEADERS.contains(&name.as_str()) {
+            let allowed = REQUEST_HEADERS.contains(&name.as_str())
+                || (sending && SEND_HEADERS.contains(&name.as_str()));
+            if !allowed {
+                let mut names = REQUEST_HEADERS.to_vec();
+                if sending {
+                    names.extend(SEND_HEADERS);
+                }
                 return Err(Error::invalid(format!(
                     "the header {name:?} is not one a plugin sets: {}",
-                    REQUEST_HEADERS.join(", ")
+                    names.join(", ")
                 )));
             }
             if seen.contains(name) {
@@ -612,7 +632,7 @@ impl Client {
         cancelled: impl Fn() -> bool + Send + 'static,
         proxy: Option<ureq::Proxy>,
     ) -> Result<(Head, BodyReader)> {
-        self.check(request)?;
+        self.check(request, false)?;
         if cancelled() {
             return Err(cancelled_error());
         }
@@ -627,25 +647,66 @@ impl Client {
             .build()
             .call()
             .map_err(failure)?;
-        let (parts, body) = response.into_parts();
-        let head = Head {
-            status: parts.status.as_u16(),
-            headers: parts
-                .headers
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        name.as_str().to_owned(),
-                        String::from_utf8_lossy(value.as_bytes()).into_owned(),
-                    )
-                })
-                .collect(),
-        };
-        let reader = BodyReader {
-            inner: body.into_with_config().limit(limit).reader(),
-            cancelled: Box::new(cancelled),
-        };
-        Ok((head, reader))
+        Ok(received(response, limit, cancelled))
+    }
+
+    /// Sends `body` with `method` and reads the whole response's body, at
+    /// most [`MAX_BODY`]. A `DELETE` sends no body.
+    ///
+    /// # Errors
+    /// See [`Client::send`]; a body over [`MAX_SENT`] or a larger response
+    /// is `limit-exceeded`.
+    pub fn send_data(
+        &self,
+        method: Method,
+        request: &Request,
+        body: &[u8],
+        cancelled: impl Fn() -> bool + Send + 'static,
+    ) -> Result<(Head, Vec<u8>)> {
+        self.check(request, true)?;
+        if body.len() > MAX_SENT {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("a request sends at most {MAX_SENT} bytes"),
+            ));
+        }
+        if cancelled() {
+            return Err(cancelled_error());
+        }
+        let proxy = proxy_for(&request.url);
+        let url = request.url.as_str();
+        let response = if method == Method::Delete {
+            let mut builder = self.agent.delete(url);
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            builder
+                .config()
+                .timeout_global(Some(GET_TIME))
+                .proxy(proxy)
+                .build()
+                .call()
+        } else {
+            let mut builder = match method {
+                Method::Post => self.agent.post(url),
+                Method::Put => self.agent.put(url),
+                _ => self.agent.patch(url),
+            };
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            builder
+                .config()
+                .timeout_global(Some(GET_TIME))
+                .proxy(proxy)
+                .build()
+                .send(body)
+        }
+        .map_err(failure)?;
+        let (head, mut reader) = received(response, MAX_BODY, cancelled);
+        let mut received = Vec::new();
+        reader.read_to_end(&mut received).map_err(read_failure)?;
+        Ok((head, received))
     }
 
     /// Sends the request and reads the whole body, at most [`MAX_BODY`].
@@ -662,6 +723,34 @@ impl Client {
         reader.read_to_end(&mut body).map_err(read_failure)?;
         Ok((head, body))
     }
+}
+
+/// The head of a response and a reader of at most `limit` bytes of its
+/// body, which stops when `cancelled` turns true.
+fn received(
+    response: ureq::http::Response<ureq::Body>,
+    limit: u64,
+    cancelled: impl Fn() -> bool + Send + 'static,
+) -> (Head, BodyReader) {
+    let (parts, body) = response.into_parts();
+    let head = Head {
+        status: parts.status.as_u16(),
+        headers: parts
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect(),
+    };
+    let reader = BodyReader {
+        inner: body.into_with_config().limit(limit).reader(),
+        cancelled: Box::new(cancelled),
+    };
+    (head, reader)
 }
 
 /// The body of a response.
@@ -945,18 +1034,18 @@ mod tests {
     fn requests_are_checked_before_anything_is_sent() {
         let client = client();
         let refused = |request: Request, kind: Kind, problem: &str| {
-            let error = client.check(&request).unwrap_err();
+            let error = client.check(&request, false).unwrap_err();
             assert_eq!(error.kind, kind, "{}", error.message);
             assert!(error.message.contains(problem), "{}", error.message);
         };
         assert!(
             client
-                .check(&request("https://example.com/feed.json"))
+                .check(&request("https://example.com/feed.json"), false)
                 .is_ok()
         );
         assert!(
             client
-                .check(&request("https://a.cdn.example.org:443/x"))
+                .check(&request("https://a.cdn.example.org:443/x"), false)
                 .is_ok()
         );
         refused(
@@ -993,7 +1082,22 @@ mod tests {
             url: "https://example.com/".into(),
             headers: vec![(name.into(), value.into())],
         };
-        assert!(client.check(&with("if-none-match", "\"abc\"")).is_ok());
+        assert!(
+            client
+                .check(&with("if-none-match", "\"abc\""), false)
+                .is_ok()
+        );
+        assert!(
+            client
+                .check(&with("authorization", "Bearer x"), true)
+                .is_ok(),
+            "data sent may carry the plugin's own authorization"
+        );
+        assert!(
+            client
+                .check(&with("authorization", "Bearer x"), false)
+                .is_err()
+        );
         refused(
             with("cookie", "a=b"),
             Kind::InvalidArgument,
@@ -1068,7 +1172,11 @@ mod tests {
                 .unwrap();
             assert_eq!(error.kind, kind, "{url}: {}", error.message);
         }
-        assert!(client.check(&request("https://any.example.org/")).is_ok());
+        assert!(
+            client
+                .check(&request("https://any.example.org/"), false)
+                .is_ok()
+        );
     }
 
     #[test]

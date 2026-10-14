@@ -1107,6 +1107,29 @@ impl api::http::Host for State {
         })
     }
 
+    fn send(
+        &mut self,
+        method: api::http::Method,
+        request: api::http::Request,
+        body: Vec<u8>,
+    ) -> ApiResult<api::http::Response> {
+        let (client, slot) = api(self.http())?;
+        api(self.permitted(Permission::HttpSend))?;
+        let method = match method {
+            api::http::Method::Post => crate::http::Method::Post,
+            api::http::Method::Put => crate::http::Method::Put,
+            api::http::Method::Patch => crate::http::Method::Patch,
+            api::http::Method::Delete => crate::http::Method::Delete,
+        };
+        let request = http_request(request);
+        let (head, body) = self
+            .host(|_| api(client.send_data(method, &request, &body, move || slot.cancelled())))?;
+        Ok(api::http::Response {
+            head: http_head(head),
+            body,
+        })
+    }
+
     fn download(
         &mut self,
         request: api::http::Request,

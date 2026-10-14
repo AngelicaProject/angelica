@@ -39,6 +39,9 @@ pub enum Permission {
     /// Send HTTPS GET requests to the hosts the manifest lists.
     #[serde(rename = "http.get")]
     HttpGet,
+    /// Send data to the hosts the manifest lists: POST, PUT, PATCH, DELETE.
+    #[serde(rename = "http.send")]
+    HttpSend,
     /// Receive the messages added to the chat log.
     #[serde(rename = "chat.read")]
     ChatRead,
@@ -60,6 +63,7 @@ impl Permission {
             Self::ChatCommands => "chat.commands",
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
+            Self::HttpSend => "http.send",
             Self::ChatRead => "chat.read",
             Self::GameUiHide => "gameui.hide",
             Self::GameUiText => "gameui.text",
@@ -76,6 +80,7 @@ impl Permission {
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
+            Self::HttpSend => "Sends data to these internet hosts",
             Self::ChatRead => "Reads the messages in your chat log, including other players'",
             Self::GameUiHide => "Hides parts of the game's interface",
             Self::GameUiText => "Puts its own text in the game's windows",
@@ -86,7 +91,7 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
-            Self::HttpGet => Class::Network,
+            Self::HttpGet | Self::HttpSend => Class::Network,
             Self::ChatRead => Class::OtherPlayers,
             Self::ExcelText
             | Self::TextCase
@@ -290,6 +295,7 @@ pub fn requests(
         let (covered, hosts) = match &asked {
             Asked::Permission(permission) => {
                 let hosts: Vec<String> = if *permission == Permission::HttpGet {
+                    // The hosts are listed once, with http.get.
                     manifest
                         .http_hosts()
                         .into_iter()
@@ -469,6 +475,9 @@ impl Manifest {
             .map_or(&[][..], |http| &http.hosts[..]);
         if declared.contains(&Permission::HttpGet) == hosts.is_empty() {
             return fail("http.get and a non-empty http.hosts come together".into());
+        }
+        if declared.contains(&Permission::HttpSend) && !declared.contains(&Permission::HttpGet) {
+            return fail("http.send comes with http.get and its http.hosts".into());
         }
         if hosts.len() > MAX_HOSTS {
             return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
