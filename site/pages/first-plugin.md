@@ -3,7 +3,7 @@ order: 1
 section: Build
 meta: About 20 minutes · No game needed · Rust
 prev: 
-next: 
+next: Run your plugin in the game
 ---
 
 # Tutorial: Write your first plugin
@@ -277,7 +277,7 @@ You changed a plugin and proved the change works, without starting the game.
 
 ## Next steps
 
-- [Run your plugin in the game](https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/authoring.md#5-run-it-in-the-game)
+- [Run your plugin in the game](run-in-the-game.md)
 - [Read the game's sheets](https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md#sheets)
 - [Do long work in a job](https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md#jobs)
 - [Publish your plugin](https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/authoring.md#6-publish)

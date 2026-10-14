@@ -87,12 +87,15 @@ cargo fmt --check
 
 ## 5. Run it in the game
 
-Build the component and install it into a [development installation](../formats/host-installation-v1.md#development-installations):
+Build the component, sign it with your author key, and install the file into the installation the game runs with (`%LOCALAPPDATA%\Angelica` for an installed Angelica):
 
 ```text
 cargo build --release --target wasm32-wasip2
-angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/<crate>.wasm
+angelica plugin pack --component target/wasm32-wasip2/release/<crate>.wasm
+angelica plugin install <id>-<version>.angelica --installation <installation>
 ```
+
+The first `pack` creates the author key ([plugin file](../formats/plugin-file-v1.md#the-author)); the installation then accepts that plugin id only from that key. A [development installation](../formats/host-installation-v1.md#development-installations), whose runtime is built with a development key, takes a component directly: `angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/<crate>.wasm`.
 
 While the game runs, the host loads the new version within a second ([reload](../architecture/plugins.md#lifecycle)). The Angelica menu (`Insert` by default) shows the plugin and its approval; Settings → For developers shows its log, a fault's reason, and the host's diagnostics. A player who meets a problem sends you the plugin's report (**Copy report** in the menu): the game build, the map, the plugin's state and permissions, and its last 200 log lines, so log what the plugin did and why something failed. Check in the game what the tests cannot: how the windows look, the game's own data and messages, and behavior across a zone change or log-out.
 
