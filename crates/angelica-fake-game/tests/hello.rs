@@ -215,7 +215,7 @@ fn jobs_run_in_their_own_instance() {
 
 #[test]
 fn text_tables_change_rows_the_game_builds_until_the_plugin_stops() {
-    let test = approved(MANIFEST);
+    let test = with_character(MANIFEST, &[]);
     let excel = &test.services().excel;
     let columns = item().columns;
     let potion = || row_buffer(4, &columns, &[b"Potion"]);
@@ -237,10 +237,7 @@ fn text_tables_change_rows_the_game_builds_until_the_plugin_stops() {
     );
 
     click(&test, "status");
-    assert_eq!(
-        message(&test),
-        "table: 1 rows changed, 1 cells, 1 mismatches"
-    );
+    assert_eq!(message(&test), "table: 1 cells, 1 stale");
 
     test.host.queue(Action::Disable("hello".into()));
     test.frames(1);
@@ -253,7 +250,7 @@ fn text_tables_change_rows_the_game_builds_until_the_plugin_stops() {
 
 #[test]
 fn letters_apply_until_the_plugin_stops() {
-    let test = approved(MANIFEST);
+    let test = with_character(MANIFEST, &[]);
     click(&test, "letters");
     assert_eq!(message(&test), "letters added");
     let mut name = "паладин".as_bytes().to_vec();
@@ -262,6 +259,9 @@ fn letters_apply_until_the_plugin_stops() {
         .letters()
         .to_upper(&mut name, true, false, |_| false);
     assert_eq!(name, "Паладин".as_bytes());
+    let mut shout = "ПАЛАДИН".as_bytes().to_vec();
+    test.services().case.letters().to_lower(&mut shout);
+    assert_eq!(shout, "паладин".as_bytes());
 
     test.host.queue(Action::Disable("hello".into()));
     test.frames(1);
@@ -270,20 +270,31 @@ fn letters_apply_until_the_plugin_stops() {
 
 #[test]
 fn operations_need_their_permission_and_the_game_entries() {
-    let without = without_permissions(&["excel.text", "text.case"]);
-    let test = approved(&without);
+    let without = MANIFEST.replace(
+        "change = [\"camera\", \"chat\", \"text\", \"windows\"]",
+        "change = [\"camera\", \"chat\", \"windows\"]",
+    );
+    let test = with_character(&without, &[]);
     click(&test, "table");
     assert_eq!(
         message(&test),
-        "table refused: the plugin does not hold excel.text"
+        "table refused: deciding at sheet_text changes domain text, which the plugin may not change: list it in the manifest's [lens] change"
     );
     click(&test, "letters");
     assert_eq!(
         message(&test),
-        "letters refused: the plugin does not hold text.case"
+        "letters refused: deciding at letter_upper changes domain text, which the plugin may not change: list it in the manifest's [lens] change"
     );
 
+    // Without the map, the events are unknown.
     let test = approved(MANIFEST);
+    click(&test, "table");
+    assert_eq!(
+        message(&test),
+        "table refused: the game map has no event sheet_text"
+    );
+
+    let test = with_character(MANIFEST, &[]);
     test.game
         .excel_available
         .store(false, std::sync::atomic::Ordering::Release);
@@ -575,7 +586,30 @@ fn jobs_fetch_from_the_listed_hosts() {
 
 /// The player's character, zone, and statuses, shaped like the game
 /// map's, with constant offsets.
-const CHARACTER_MAP: [(&str, &str); 10] = [
+const CHARACTER_MAP: [(&str, &str); 12] = [
+    (
+        "entries/excel.toml",
+        r#"
+[function."excel.hash_table_page_row_resolver.store_row"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "ptr"], ret = "ptr" }
+thread = "any"
+"#,
+    ),
+    (
+        "entries/text.toml",
+        r#"
+[function."text.utf8_string.to_upper"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "u8", "u8", "u8", "ptr"], ret = "ptr" }
+thread = "any"
+
+[function."text.utf8_string.to_lower"]
+locator = { signature = "C3" }
+abi = { args = ["ptr"], ret = "ptr" }
+thread = "any"
+"#,
+    ),
     (
         "entries/test.toml",
         r#"
@@ -1055,6 +1089,12 @@ class = "others"
 read = { en = "Sees your chat log", ru = "Видит ваш чат" }
 change = { en = "Hides messages in your chat log", ru = "Скрывает сообщения в вашем чате" }
 
+[domains.text]
+doc = "The game's text."
+class = "display"
+read = { en = "Sees the game's text", ru = "Видит тексты игры" }
+change = { en = "Changes the game's text", ru = "Меняет тексты игры" }
+
 [domains.camera]
 doc = "The camera."
 class = "display"
@@ -1151,6 +1191,67 @@ ref = "test.utf8_string"
 [events.chat_message_added.outcomes.hide]
 doc = "The message is not added."
 returns = 0
+
+[events.sheet_text]
+doc = "A text cell of a sheet row the game builds."
+at = "excel.hash_table_page_row_resolver.store_row"
+derived = "sheet_cell"
+domain = "text"
+rules = "text-table-v1"
+
+[events.sheet_text.args.sheet]
+doc = "The sheet."
+from = "sheet"
+text = 256
+
+[events.sheet_text.args.row]
+doc = "The row."
+from = "row"
+
+[events.sheet_text.args.column]
+doc = "The column."
+from = "column"
+
+[events.sheet_text.args.text]
+doc = "The game's text."
+from = "text"
+text = 4096
+
+[events.sheet_text.outcomes.replace]
+doc = "The cell shows the rule's text."
+text = 65535
+
+[events.letter_upper]
+doc = "A letter the conversion to capitals meets."
+at = "text.utf8_string.to_upper"
+derived = "case_letter"
+domain = "text"
+
+[events.letter_upper.args.letter]
+doc = "The letter."
+from = "letter"
+text = 4
+
+[events.letter_upper.outcomes.becomes]
+doc = "The conversion gives the rule's letter."
+text = 4
+same_length = "letter"
+
+[events.letter_lower]
+doc = "A letter the conversion to small letters meets."
+at = "text.utf8_string.to_lower"
+derived = "case_letter"
+domain = "text"
+
+[events.letter_lower.args.letter]
+doc = "The letter."
+from = "letter"
+text = 4
+
+[events.letter_lower.outcomes.becomes]
+doc = "The conversion gives the rule's letter."
+text = 4
+same_length = "letter"
 "#,
     ),
     (
@@ -1620,7 +1721,10 @@ fn the_zoom_limit_is_changed_and_put_back() {
     );
 
     let test = with_character(
-        &MANIFEST.replace("change = [\"camera\", \"chat\", \"windows\"]\n", ""),
+        &MANIFEST.replace(
+            "change = [\"camera\", \"chat\", \"text\", \"windows\"]\n",
+            "",
+        ),
         &[],
     );
     test.game
@@ -1858,6 +1962,7 @@ fn approval_names_the_domains_in_the_maps_words() {
             "windows.act",
             "camera.change",
             "chat.change",
+            "text.change",
             "windows.change"
         ]
     );
@@ -2162,8 +2267,8 @@ fn text_in_the_games_windows_is_held_against_the_game_until_the_plugin_stops() {
 #[test]
 fn changes_to_the_games_windows_need_the_domain_and_the_names() {
     let without = MANIFEST.replace(
-        "change = [\"camera\", \"chat\", \"windows\"]",
-        "change = [\"camera\", \"chat\"]",
+        "change = [\"camera\", \"chat\", \"text\", \"windows\"]",
+        "change = [\"camera\", \"chat\", \"text\"]",
     );
     let test = over_experience_bar(&without);
     build_experience_bar(&test, "EXP 10/20");

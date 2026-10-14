@@ -9,8 +9,6 @@ description = "An example that uses every interface of the plugin API."
 authors = ["AngelicaProject contributors"]
 
 [permissions]
-"excel.text" = true
-"text.case" = true
 "files.replace" = true
 "chat.commands" = true
 "chat.print" = true
@@ -35,4 +33,4 @@ to = ["hello"]
 [lens]
 read = ["actions", "character", "chat", "location", "statuses", "windows"]
 act = ["actions", "windows"]
-change = ["camera", "chat", "windows"]
+change = ["camera", "chat", "text", "windows"]

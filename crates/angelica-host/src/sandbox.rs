@@ -802,127 +802,6 @@ impl api::file_replacements::Host for State {
     }
 }
 
-/// Table names are 1 to 64 ASCII letters, digits, hyphens, and underscores.
-fn valid_table_name(name: &str) -> bool {
-    (1..=64).contains(&name.len())
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-impl api::excel_text::Host for State {
-    fn activate(
-        &mut self,
-        name: String,
-        path: String,
-        priority: i32,
-    ) -> ApiResult<api::excel_text::TableInfo> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        if !valid_table_name(&name) {
-            return Err(Error::invalid(format!("{name:?} is not a valid table name")).into());
-        }
-        self.host(|state| {
-            let services = &state.context.services;
-            services
-                .game
-                .enable_excel_text()
-                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            let size = state.context.storage.size(&path)?;
-            if size > crate::excel_text::MAX_TABLE_SIZE {
-                return Err(Error::new(
-                    Kind::LimitExceeded,
-                    format!(
-                        "{path}: a table has at most {} bytes",
-                        crate::excel_text::MAX_TABLE_SIZE
-                    ),
-                ));
-            }
-            let bytes = state.context.storage.read_unbounded(&path)?;
-            let info = services
-                .excel
-                .activate(&state.context.id, &name, priority, bytes)
-                .map_err(|reason| Error::invalid(format!("{path}: {reason}")))?;
-            Ok(api::excel_text::TableInfo {
-                sheets: info.sheets,
-                cells: info.cells,
-            })
-        })
-        .map_err(|error: Error| error.into())
-    }
-
-    fn deactivate(&mut self, name: String) -> ApiResult<()> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        if self
-            .context
-            .services
-            .excel
-            .deactivate(&self.context.id, &name)
-        {
-            Ok(())
-        } else {
-            Err(Error::new(Kind::NotFound, format!("no active table {name}")).into())
-        }
-    }
-
-    fn status(&mut self, name: String) -> ApiResult<api::excel_text::TableStatus> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        let status = self
-            .context
-            .services
-            .excel
-            .status(&self.context.id, &name)
-            .ok_or_else(|| Error::new(Kind::NotFound, format!("no active table {name}")))?;
-        Ok(api::excel_text::TableStatus {
-            rows_changed: status.rows_changed,
-            cells_replaced: status.cells_replaced,
-            guard_mismatches: status.guard_mismatches,
-            rows_refused: status.rows_refused,
-            sheets_mismatched: status
-                .sheets_mismatched
-                .into_iter()
-                .map(|(sheet, reason)| api::excel_text::SheetMismatch {
-                    sheet,
-                    reason: match reason {
-                        crate::excel_text::Mismatch::Layout => api::excel_text::Mismatch::Layout,
-                        crate::excel_text::Mismatch::Variant => api::excel_text::Mismatch::Variant,
-                        crate::excel_text::Mismatch::Language => {
-                            api::excel_text::Mismatch::Language
-                        }
-                    },
-                })
-                .collect(),
-        })
-    }
-}
-
-impl api::text_case::Host for State {
-    fn set_letters(&mut self, letters: Vec<api::text_case::Letter>) -> ApiResult<()> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::TextCase))?;
-        self.host(|state| {
-            let pairs: Vec<_> = letters.iter().map(|l| (l.lower, l.upper)).collect();
-            if !pairs.is_empty() {
-                state
-                    .context
-                    .services
-                    .game
-                    .enable_text_case()
-                    .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            }
-            state
-                .context
-                .services
-                .case
-                .set(&state.context.id, &pairs)
-                .map_err(Error::invalid)
-        })
-        .map_err(Into::into)
-    }
-}
-
 impl api::commands::Host for State {
     fn define(&mut self, commands: Vec<api::commands::Command>) -> ApiResult<()> {
         api(self.main_only())?;
@@ -1273,8 +1152,21 @@ impl api::lens::Host for State {
         Ok(())
     }
 
-    fn decide(&mut self, rule: String, outcome: String) -> ApiResult<u32> {
+    fn decide(
+        &mut self,
+        rule: String,
+        outcome: String,
+        value: Option<api::lens::Value>,
+    ) -> ApiResult<u32> {
         api(self.main_only())?;
+        let (schema, _) = self.context.services.lens.schema();
+        if crate::lens::derived::event(&schema, &rule).is_some() {
+            let value = value.map(value_from_api);
+            return self.decide_derived(&rule, &outcome, value.as_ref());
+        }
+        if value.is_some() {
+            return Err(Error::invalid(format!("outcome {outcome} takes no value")).into());
+        }
         let context = self.context.clone();
         let services = &context.services;
         let permitted: BTreeSet<String> = context
@@ -1315,14 +1207,218 @@ impl api::lens::Host for State {
         Ok(handle)
     }
 
+    fn decide_file(&mut self, event: String, path: String) -> ApiResult<api::lens::RuleFile> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        let (schema, _) = services.lens.schema();
+        let Some(found) = schema.objects.events.get(&event) else {
+            return Err(
+                Error::new(Kind::NotFound, format!("the game map has no event {event}")).into(),
+            );
+        };
+        if found.rules.as_deref() != Some("text-table-v1") {
+            return Err(Error::invalid(format!("event {event} takes no rule files")).into());
+        }
+        if !context.lens_change.contains(&found.domain) {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                format!(
+                    "deciding at {event} changes domain {}, which the plugin may not change: list it in the manifest's [lens] change",
+                    found.domain
+                ),
+            )
+            .into());
+        }
+        let bytes = self.host(|state| {
+            services
+                .game
+                .enable_excel_text()
+                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            let size = state.context.storage.size(&path)?;
+            if size > crate::excel_text::MAX_TABLE_SIZE {
+                return Err(Error::new(
+                    Kind::LimitExceeded,
+                    format!(
+                        "{path}: a rule file has at most {} bytes",
+                        crate::excel_text::MAX_TABLE_SIZE
+                    ),
+                ));
+            }
+            state.context.storage.read_unbounded(&path)
+        })?;
+        let handle = self.queries.derived(&format!("{event} {path}"))?;
+        let info = services
+            .excel
+            .add_table(&context.id, handle, bytes)
+            .map_err(|reason| Error::invalid(format!("{path}: {reason}")));
+        match info {
+            Ok(info) => Ok(api::lens::RuleFile {
+                handle,
+                parts: info.sheets,
+                rules: info.cells,
+            }),
+            Err(error) => {
+                self.queries.release(handle);
+                Err(error.into())
+            }
+        }
+    }
+
+    fn decisions(&mut self, handle: u32) -> ApiResult<api::lens::DecisionStatus> {
+        api(self.main_only())?;
+        if self.queries.kind(handle) != Some(crate::lens::HeldKind::Derived) {
+            return Err(Error::new(
+                Kind::NotFound,
+                format!("{handle} is not a rule at a derived event"),
+            )
+            .into());
+        }
+        let status = self
+            .context
+            .services
+            .excel
+            .status(&self.context.id, handle)
+            .unwrap_or_default();
+        Ok(api::lens::DecisionStatus {
+            taken: status.cells_replaced,
+            stale: status.guard_mismatches,
+            refused: status.rows_refused,
+            mismatched: status
+                .sheets_mismatched
+                .into_iter()
+                .map(|(sheet, reason)| format!("{sheet}: {}", reason.reason()))
+                .collect(),
+        })
+    }
+
     fn release(&mut self, query: u32) {
         use crate::lens::HeldKind;
-        let lens = &self.context.services.lens;
+        let services = &self.context.services;
         match self.queries.release(query) {
-            Some(HeldKind::Watch) => lens.watches.unsubscribe(&self.context.id, query),
-            Some(HeldKind::Rule) => lens.decisions.remove(&self.context.id, query),
+            Some(HeldKind::Watch) => services.lens.watches.unsubscribe(&self.context.id, query),
+            Some(HeldKind::Rule) => services.lens.decisions.remove(&self.context.id, query),
+            Some(HeldKind::Derived) => {
+                services.excel.remove(&self.context.id, query);
+                services.case.remove(&self.context.id, query);
+            }
             Some(HeldKind::Query) | None => {}
         }
+    }
+}
+
+impl State {
+    /// A rule at a derived decision point, handed to the adapter of its
+    /// derivation under a new handle.
+    fn decide_derived(
+        &mut self,
+        rule: &str,
+        outcome: &str,
+        value: Option<&crate::lens::Value>,
+    ) -> ApiResult<u32> {
+        let context = self.context.clone();
+        let (schema, _) = context.services.lens.schema();
+        let derived = crate::lens::derived::prepare(
+            &schema,
+            rule,
+            outcome,
+            value,
+            &|domain| context.lens_read.contains(domain),
+            &|domain| context.lens_change.contains(domain),
+        )?;
+        let handle = self.queries.derived(rule)?;
+        if let Err(error) = self.host(|_| add_derived(&context, handle, &derived)) {
+            self.queries.release(handle);
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+}
+
+/// Hands a checked rule at a derived decision point to the adapter of its
+/// derivation.
+fn add_derived(
+    context: &Context,
+    handle: u32,
+    rule: &crate::lens::derived::Rule,
+) -> crate::error::Result<()> {
+    use crate::lens::derived::{integer, text};
+    let services = &context.services;
+    let unavailable = |reason: String| Error::new(Kind::Unavailable, reason);
+    let fits = |from: &str| -> crate::error::Result<Option<u64>> {
+        integer(rule, from)
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    Error::invalid(format!(
+                        "{}: {from} {value} is never a value of it",
+                        rule.event
+                    ))
+                })
+            })
+            .transpose()
+    };
+    let narrow = |from: &str, most: u64| -> crate::error::Result<Option<u64>> {
+        match fits(from)? {
+            Some(value) if value > most => Err(Error::invalid(format!(
+                "{}: {from} {value} is never a value of it",
+                rule.event
+            ))),
+            other => Ok(other),
+        }
+    };
+    match rule.derivation.as_str() {
+        "sheet_cell" => {
+            services.game.enable_excel_text().map_err(unavailable)?;
+            let cell = crate::excel_text::CellRule {
+                sheet: text(rule, "sheet").map(|name| String::from_utf8_lossy(name).into_owned()),
+                language: narrow("language", u64::from(u8::MAX))?
+                    .and_then(|value| u8::try_from(value).ok()),
+                row: narrow("row", u64::from(u32::MAX))?
+                    .and_then(|value| u32::try_from(value).ok()),
+                subrow: narrow("subrow", u64::from(u16::MAX))?
+                    .and_then(|value| u16::try_from(value).ok()),
+                column: narrow("column", u64::from(u16::MAX))?
+                    .and_then(|value| u16::try_from(value).ok()),
+                original: text(rule, "text").map(<[u8]>::to_vec),
+                text: rule.text.clone(),
+            };
+            services.excel.add_rule(&context.id, handle, cell);
+            Ok(())
+        }
+        "case_letter" => {
+            use crate::text_case::{Direction, LOWER_ENTRY, UPPER_ENTRY};
+            let direction = match rule.at.as_str() {
+                UPPER_ENTRY => Direction::Upper,
+                LOWER_ENTRY => Direction::Lower,
+                other => {
+                    return Err(unavailable(format!(
+                        "the host converts letters only at {UPPER_ENTRY} and {LOWER_ENTRY}, not at {other}"
+                    )));
+                }
+            };
+            let single = |bytes: &[u8]| {
+                let text = std::str::from_utf8(bytes).ok()?;
+                let mut chars = text.chars();
+                let first = chars.next()?;
+                chars.next().is_none().then_some(first)
+            };
+            let (Some(letter), Some(becomes)) =
+                (text(rule, "letter").and_then(single), single(&rule.text))
+            else {
+                return Err(Error::invalid(format!(
+                    "a rule at {} gives one letter for one letter",
+                    rule.event
+                )));
+            };
+            services.game.enable_text_case().map_err(unavailable)?;
+            services
+                .case
+                .add(&context.id, handle, direction, letter, becomes)
+                .map_err(Error::invalid)
+        }
+        other => Err(unavailable(format!(
+            "this host does not derive {other} events"
+        ))),
     }
 }
 

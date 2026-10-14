@@ -8,6 +8,8 @@ api = "1.0"
 description = "A test plugin that tries to break every boundary of the host."
 
 [permissions]
-"excel.text" = true
 "chat.print" = true
 "files.replace" = true
+
+[lens]
+change = ["text"]

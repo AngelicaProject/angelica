@@ -3241,7 +3241,7 @@ mod tests {
             classes_of(
                 [
                     Permission::ChatPrint,
-                    Permission::ExcelText,
+                    Permission::DrawWorld,
                     Permission::HttpGet,
                     Permission::FilesReplace,
                 ]

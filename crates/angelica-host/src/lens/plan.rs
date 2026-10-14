@@ -890,6 +890,12 @@ impl<'a> Planner<'a> {
         steps: &mut Vec<Step>,
         columns: &mut Vec<Column>,
     ) -> Result<Option<String>> {
+        if event.derived.is_some() {
+            return Err(Error::invalid(format!(
+                "{} is derived by the host: give rules there with lens.decide or lens.decide-file; it is never watched",
+                event.name
+            )));
+        }
         self.domain(&event.domain)?;
         if let Err(reason) = self
             .schema
@@ -1184,16 +1190,18 @@ fn described(field: &Field, name: String) -> Described {
 pub fn arg_at(arg: &angelica_map::Arg) -> ArgAt {
     use angelica_map::{ArgSource, Register};
     let float = matches!(arg.kind, ValueKind::F32 | ValueKind::F64);
-    match arg.source {
-        ArgSource::Argument(position) if position < 4 => {
+    match &arg.source {
+        // The planner never plans a derived event, which has no registers.
+        ArgSource::Derived(_) => ArgAt::Integer(0),
+        &ArgSource::Argument(position) if position < 4 => {
             if float {
                 ArgAt::Float(position)
             } else {
                 ArgAt::Integer([2, 3, 7, 8][usize::from(position)])
             }
         }
-        ArgSource::Argument(position) => ArgAt::Stack(8 + 8 * u32::from(position)),
-        ArgSource::Register(register) => match register {
+        &ArgSource::Argument(position) => ArgAt::Stack(8 + 8 * u32::from(position)),
+        &ArgSource::Register(register) => match register {
             Register::Xmm(index) => ArgAt::Float(index),
             Register::Rax => ArgAt::Integer(0),
             Register::Rbx => ArgAt::Integer(1),

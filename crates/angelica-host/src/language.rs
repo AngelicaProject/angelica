@@ -266,8 +266,6 @@ impl Language {
         match self {
             Self::English => permission.description(),
             Self::Russian => match permission {
-                Permission::ExcelText => "Заменяет тексты, которые игра берёт из своих таблиц",
-                Permission::TextCase => "Меняет, как игра пишет заглавные буквы",
                 Permission::FilesReplace => {
                     "Заменяет файлы игры: шрифты, текстуры, материалы и модели"
                 }
@@ -433,8 +431,6 @@ mod tests {
     #[test]
     fn every_permission_and_class_has_both_languages() {
         let permissions = [
-            Permission::ExcelText,
-            Permission::TextCase,
             Permission::FilesReplace,
             Permission::ChatCommands,
             Permission::ChatPrint,

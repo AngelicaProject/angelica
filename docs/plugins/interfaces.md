@@ -140,18 +140,19 @@ Read a file from the game's archives, such as a font or a texture.
 
 Replace text cells of the game's sheets, for translations or annotations.
 
-- SDK: `text::table::Writer` builds a [text table](../formats/text-table-v1.md); write it with `api::storage::write` and activate it with `api::excel_text::activate(name, path, priority)`.
-- Permission: `excel.text`. Instance: main; build large tables in a job.
-- Each cell has a guard of the game's original text, so a patched text is left alone. Activate in `start` while the game starts to cover everything it loads; `api::excel_text::status` reports what applied.
-- Contract: [text tables](../formats/plugin-api-v1.md#text-tables).
+- SDK: one cell, `lens::Rule::with("sheet_text[sheet = \"Item\" and row = 4 and column = 9 and text = \"Potion\"]", "replace", "Зелье")?`; many, `text::table::Writer` builds a [text table](../formats/text-table-v1.md), write it with `api::storage::write`, and `lens::RuleFile::new("sheet_text", path)?` adds its rules. Keep the rule or file in the plugin; dropping it ends the rules.
+- Permission: the `text` domain, `[lens] change = ["text"]`. Instance: main; build large tables in a job.
+- A table's cell has a guard of the game's original text, and a rule may compare `text`, so a patched text is left alone. Decide in `start` while the game starts to cover everything it loads; `decisions()` reports what applied and what is stale.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens), [text table](../formats/text-table-v1.md).
 
 ## Letter case
 
 Teach the game's capitalization letters it does not know.
 
-- SDK: `api::text_case::set_letters(&[Letter { lower, upper }])`.
-- Permission: `text.case`. Instance: main.
-- Contract: [letter case](../formats/plugin-api-v1.md#letter-case).
+- SDK: `lens::Rule::with("letter_upper[letter = \"я\"]", "becomes", "Я")?` for the conversion to capitals, `letter_lower` for small letters; keep the rules.
+- Permission: the `text` domain, `[lens] change = ["text"]`. Instance: main.
+- Letters beyond ASCII, one for one of the same UTF-8 length; the game's own rule decides where it converts.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
 ## The game's own windows
 

@@ -565,8 +565,7 @@ mod tests {
         writer
             .cell("Item", 5, 0, 2, guard(b"T", b"Potion"), "Зелье".as_bytes())
             .unwrap();
-        text.activate("test", "table", 0, writer.finish().unwrap())
-            .unwrap();
+        text.add_table("test", 1, writer.finish().unwrap()).unwrap();
         install_resolved(layout, &hash_table, &ring_buffer, text.clone()).unwrap();
 
         let sheet = synthetic_sheet();
@@ -605,9 +604,9 @@ mod tests {
             "a row the table does not list"
         );
         assert_eq!(ALLOCATED.lock().unwrap().len(), 1);
-        assert_eq!(text.status("test", "table").unwrap().guard_mismatches, 1);
+        assert_eq!(text.status("test", 1).unwrap().guard_mismatches, 1);
 
-        text.deactivate("test", "table");
+        text.remove("test", 1);
         let (_, removed, _) = store(5, row_buffer(b"Name", b"Potion"));
         assert_eq!(
             removed,

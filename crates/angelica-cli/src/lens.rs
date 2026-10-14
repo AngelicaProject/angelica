@@ -244,11 +244,12 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
     if let Some(mask) = arg.mask {
         let _ = write!(held, ", the bits {mask:#x}");
     }
-    match arg.source {
+    match &arg.source {
         angelica_map::ArgSource::Argument(position) => format!("argument {position}, {held}"),
         angelica_map::ArgSource::Register(register) => {
             format!("{}, {held}", format!("{register:?}").to_lowercase())
         }
+        angelica_map::ArgSource::Derived(from) => format!("the host's {from}, {held}"),
     }
 }
 

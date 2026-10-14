@@ -57,7 +57,7 @@ A vtable slot is one aligned pointer, replaced with a single store; no thread is
 
 ## Chaining
 
-The host installs at most one hook per function. When several plugins' rules apply to the same calls, the adapter combines them in its own defined order (for text tables, by priority).
+The host installs at most one hook per function. When several plugins' rules apply to the same calls, the adapter combines them in its own defined order (for rules, the order they were added).
 
 Other tools in the process may hook the same function. A detour installed over another tool's jump moves that jump into its trampoline, so calling the original runs the other tool's hook. A tool that installs its hook over Angelica's does the same, and Angelica's detour is then removed only after that tool removes its own; until then it stays installed.
 

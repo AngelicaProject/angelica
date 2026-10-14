@@ -12,8 +12,8 @@ use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
-const TO_UPPER: &str = "text.utf8_string.to_upper";
-const TO_LOWER: &str = "text.utf8_string.to_lower";
+const TO_UPPER: &str = crate::text_case::UPPER_ENTRY;
+const TO_LOWER: &str = crate::text_case::LOWER_ENTRY;
 /// Bytes of an exclusion list record (`docs/formats/game-structures.md`
 /// describes the text structures the host reads).
 const EXCLUSION_RECORD: usize = 16;
@@ -278,8 +278,27 @@ mod tests {
         unsafe { to_upper(std::ptr::from_ref(&unchanged.object) as usize, 1, 1, 0, 0) };
         assert_eq!(read_back(&unchanged), "меч и щит", "no letters added yet");
 
-        case.set("plugin", &[('м', 'М'), ('и', 'И'), ('щ', 'Щ')])
+        for (handle, (small, capital)) in
+            [('м', 'М'), ('и', 'И'), ('щ', 'Щ')].into_iter().enumerate()
+        {
+            let handle = u32::try_from(handle).unwrap();
+            case.add(
+                "plugin",
+                handle,
+                crate::text_case::Direction::Upper,
+                small,
+                capital,
+            )
             .unwrap();
+            case.add(
+                "plugin",
+                handle + 10,
+                crate::text_case::Direction::Lower,
+                capital,
+                small,
+            )
+            .unwrap();
+        }
         let word = "и ".as_bytes();
         let exclusions: [usize; 4] = [word.as_ptr() as usize, 3, 0, 0];
         let words = text("меч и щит");

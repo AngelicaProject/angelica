@@ -14,7 +14,7 @@ An operation is as narrow as its verified contract. A game structure the map doe
 
 | Kind | Example | Rule |
 | --- | --- | --- |
-| Declarative game rules | text tables, letter case, replacement files | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
+| Declarative game rules | replacement files, rules at the game map's decision points: the game's sheet text, letter case, hidden chat messages | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
 | Game objects | the player, the inventory, the game's own windows | the plugin reads the game's objects through [Lens](./lens.md), by paths through the game map's object model, under a read permission for each domain it reads; reads happen on the main thread between frames and never write; values the map marks changeable, such as what a window shows, are changed under a change permission and put back when the plugin stops |
 | Live connections | a synchronization server pushing other players' state | the plugin opens a WebSocket connection to a host its manifest lists under `http.websocket`; the host runs it on a thread of its own and delivers what arrives in the next frames as game events, holding the connection back rather than dropping messages when the plugin falls behind |
 | Messages between plugins | asking another plugin for its state | the plugin sends bytes to a plugin its manifest lists; the host delivers them in the next frame as a game event, and answers go back the same way; no plugin runs another's code |

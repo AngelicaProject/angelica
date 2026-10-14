@@ -21,12 +21,6 @@ pub const MAX_DOMAINS: usize = 64;
 /// What a plugin may do beyond its own windows, storage, and jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Permission {
-    /// Replace text of the game's Excel sheets with text tables.
-    #[serde(rename = "excel.text")]
-    ExcelText,
-    /// Add letters to the game's letter case conversion.
-    #[serde(rename = "text.case")]
-    TextCase,
     /// Serve replacement game files.
     #[serde(rename = "files.replace")]
     FilesReplace,
@@ -69,8 +63,6 @@ impl Permission {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::ExcelText => "excel.text",
-            Self::TextCase => "text.case",
             Self::FilesReplace => "files.replace",
             Self::ChatCommands => "chat.commands",
             Self::ChatPrint => "chat.print",
@@ -90,8 +82,6 @@ impl Permission {
     #[must_use]
     pub fn description(self) -> &'static str {
         match self {
-            Self::ExcelText => "Replaces text the game shows from its data sheets",
-            Self::TextCase => "Changes how the game capitalizes letters",
             Self::FilesReplace => "Replaces game files: fonts, textures, materials, and models",
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
@@ -112,9 +102,7 @@ impl Permission {
     pub fn class(self) -> Class {
         match self {
             Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
-            Self::ExcelText | Self::TextCase | Self::FilesReplace | Self::DrawWorld => {
-                Class::WhatYouSee
-            }
+            Self::FilesReplace | Self::DrawWorld => Class::WhatYouSee,
             Self::ChatCommands
             | Self::ChatPrint
             | Self::MessagesSend
@@ -771,8 +759,8 @@ version = "0.2.0"
 api = "1.0"
 description = "Community translations."
 [permissions]
-"excel.text" = true
-"text.case" = true
+"files.replace" = true
+"draw.world" = true
 "#;
 
     fn none(_: &str) -> Option<angelica_map::Domain> {
@@ -860,12 +848,12 @@ description = "Community translations."
         assert_eq!(manifest.id(), "harmonia");
         assert_eq!(
             manifest.permissions().iter().copied().collect::<Vec<_>>(),
-            [Permission::ExcelText, Permission::TextCase]
+            [Permission::FilesReplace, Permission::DrawWorld]
         );
         let grants = Grants::for_manifest(&manifest, &none);
         assert!(grants.cover(&manifest, &none));
         let mut fewer = grants.clone();
-        fewer.permissions.remove(&Permission::TextCase);
+        fewer.permissions.remove(&Permission::DrawWorld);
         assert!(!fewer.cover(&manifest, &none));
     }
 
@@ -939,9 +927,9 @@ hosts = [\"example.com\"]
         assert_eq!(classes, [Class::Network, Class::WhatYouSee]);
         assert_eq!(all[0].1[0].hosts.len(), 2);
 
-        // An earlier approval without one host and without letter case.
+        // An earlier approval without one host and without drawing.
         let mut granted = Grants::for_manifest(&manifest, &none);
-        granted.permissions.remove(&Permission::TextCase);
+        granted.permissions.remove(&Permission::DrawWorld);
         let first = granted.http_hosts.iter().next().unwrap().clone();
         granted.http_hosts.remove(&first);
         let new = requests(&manifest, Some(&granted), &none);
@@ -958,7 +946,7 @@ hosts = [\"example.com\"]
                 (
                     Class::WhatYouSee,
                     vec![Request {
-                        asked: Asked::Permission(Permission::TextCase),
+                        asked: Asked::Permission(Permission::DrawWorld),
                         hosts: Vec::new(),
                     }]
                 ),
@@ -984,8 +972,8 @@ hosts = [\"example.com\"]
             ("id = \"harmonia\"", "id = \"Harmonia\""),
             ("api = \"1.0\"", "api = \"1.5\""),
             ("version = \"0.2.0\"", "version = \"two\""),
-            ("\"text.case\" = true", "\"game.memory\" = true"),
-            ("\"text.case\" = true", "\"text.case\" = [\"x\"]"),
+            ("\"draw.world\" = true", "\"game.memory\" = true"),
+            ("\"draw.world\" = true", "\"text.case\" = [\"x\"]"),
             (
                 "description = \"Community translations.\"",
                 "description = \" \"",
@@ -1000,10 +988,10 @@ hosts = [\"example.com\"]
     fn a_cache_names_its_size_and_a_larger_one_asks_again() {
         let with = |gib: &str| {
             VALID.replace(
-                "\"text.case\" = true
+                "\"draw.world\" = true
 ",
                 &format!(
-                    "\"text.case\" = true
+                    "\"draw.world\" = true
 \"storage.cache\" = true
 [storage]
 cache = {gib}
@@ -1038,9 +1026,9 @@ cache = 1
         );
         assert!(
             Manifest::parse(&VALID.replace(
-                "\"text.case\" = true
+                "\"draw.world\" = true
 ",
-                "\"text.case\" = true
+                "\"draw.world\" = true
 \"storage.cache\" = true
 "
             ))

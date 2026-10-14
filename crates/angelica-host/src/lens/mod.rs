@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 pub mod act;
 pub mod decide;
+pub mod derived;
 pub mod plan;
 pub mod query;
 pub mod read;
@@ -262,12 +263,14 @@ struct Held {
 }
 
 /// What a held query is: one to run, a watch whose rows arrive as events,
-/// or a rule at a decision point; only the first is run.
+/// a rule at a decision point, or a rule or rule file at a derived one;
+/// only the first is run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeldKind {
     Query,
     Watch,
     Rule,
+    Derived,
 }
 
 /// The queries one plugin instance prepared, by handle.
@@ -324,6 +327,22 @@ impl Queries {
         self.hold(text, generation, prepared, HeldKind::Rule)
     }
 
+    /// Keeps a rule or rule file at a derived decision point, which the
+    /// derivation's adapter applies, under a new handle.
+    ///
+    /// # Errors
+    /// `limit-exceeded` with [`MOST_QUERIES`] held.
+    pub fn derived(&mut self, text: &str) -> Result<u32> {
+        let slot = self.free_slot()?;
+        self.held[slot] = Some(Held {
+            text: text.to_owned(),
+            generation: 0,
+            planned: Err(Error::invalid("a rule at a derived event is never run")),
+            kind: HeldKind::Derived,
+        });
+        Ok(u32::try_from(slot).unwrap_or(u32::MAX))
+    }
+
     fn hold(
         &mut self,
         text: &str,
@@ -331,6 +350,27 @@ impl Queries {
         prepared: Prepared,
         kind: HeldKind,
     ) -> Result<(u32, Prepared)> {
+        let slot = self.free_slot()?;
+        self.held[slot] = Some(Held {
+            text: text.to_owned(),
+            generation,
+            planned: Ok(prepared.clone()),
+            kind,
+        });
+        Ok((u32::try_from(slot).unwrap_or(u32::MAX), prepared))
+    }
+
+    /// The kind of a held handle, if it is held.
+    #[must_use]
+    pub fn kind(&self, handle: u32) -> Option<HeldKind> {
+        usize::try_from(handle)
+            .ok()
+            .and_then(|slot| self.held.get(slot))
+            .and_then(Option::as_ref)
+            .map(|held| held.kind)
+    }
+
+    fn free_slot(&mut self) -> Result<usize> {
         let slot = match self.held.iter().position(Option::is_none) {
             Some(slot) => slot,
             None if self.held.len() < MOST_QUERIES => {
@@ -346,13 +386,7 @@ impl Queries {
                 ));
             }
         };
-        self.held[slot] = Some(Held {
-            text: text.to_owned(),
-            generation,
-            planned: Ok(prepared.clone()),
-            kind,
-        });
-        Ok((u32::try_from(slot).unwrap_or(u32::MAX), prepared))
+        Ok(slot)
     }
 
     /// The plan of a held query for the current schema.

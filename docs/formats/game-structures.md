@@ -4,7 +4,7 @@ The host changes game data only through the adapters described here. Each one na
 
 ## Excel rows, version 3
 
-The game builds a row with its row parser and immediately hands it to the sheet's row resolver through `StoreRow`; no other code sees the row before that call. The adapter detours both implementations and, for rows of sheets a [text table](./text-table-v1.md) lists, replaces the row buffer before calling the original.
+The game builds a row with its row parser and immediately hands it to the sheet's row resolver through `StoreRow`; no other code sees the row before that call. The adapter detours both implementations and derives the map's `sheet_cell` events there: for rows that plugins' rules at `sheet_text` name, single rules or [text tables](./text-table-v1.md), it replaces the row buffer before calling the original.
 
 ### Entries
 
@@ -54,7 +54,7 @@ A texture is the exception to the game's disk reader: the texture load takes a t
 
 ## Letter case
 
-`Utf8String::ToUpper` and `ToLower` convert a string in place. The adapter detours both, calls the original, then applies the plugins' letters to the same string with the same rule.
+`Utf8String::ToUpper` and `ToLower` convert a string in place. The adapter detours both and derives the map's `case_letter` events there: it calls the original, then gives each letter beyond ASCII that the same rule converts the letter that plugins' rules at the event of that function (`letter_upper`, `letter_lower`) give it.
 
 | Entry | Kind | Use |
 | --- | --- | --- |

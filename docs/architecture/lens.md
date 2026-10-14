@@ -47,7 +47,9 @@ Values read in a hook belong to the moment of the call, on whatever thread made 
 
 ## Decisions
 
-A decision point is an event of a function with outcomes. A plugin's rule there is a query from the event that holds when it reaches anything, and an outcome. The host installs one returning hook at the function's start the first time a rule needs it and keeps it until the process exits; while no rule is there, the hook decides nothing. On every call it runs each rule's plan over the call's arguments, in the order the rules were added, and the first that holds makes the function return its outcome's value at once. The rules are data the host applies, as text tables are: no plugin code runs in the hook, and the game waits only for the reads, at most 64 pages and 256 rows per rule.
+A decision point is an event of a function with outcomes. A plugin's rule there is a query from the event that holds when it reaches anything, and an outcome. The host installs one returning hook at the function's start the first time a rule needs it and keeps it until the process exits; while no rule is there, the hook decides nothing. On every call it runs each rule's plan over the call's arguments, in the order the rules were added, and the first that holds makes the function return its outcome's value at once. The rules are data the host applies: no plugin code runs in the hook, and the game waits only for the reads, at most 64 pages and 256 rows per rule.
+
+A derived decision point is an event whose arguments the host's adapter derives at the function it hooks, such as each text cell of a row the game stores. A rule there is equalities on the arguments, checked once by `lens::derived`, and the adapter of the derivation keeps the rules in the order they were added and looks them up by their values; a rule file, such as a text table, is many such rules at once, already sorted for the lookup. The outcome's text takes the place of what the adapter derived.
 
 ## Changes
 

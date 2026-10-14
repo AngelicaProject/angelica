@@ -11,9 +11,9 @@ interface guest {
     /// shown in the Angelica menu.
     start: func() -> result<_, string>;
 
-    /// Called once before the plugin is disabled, also at game exit. Tables,
-    /// letters, and rules for the game's windows the plugin activated are
-    /// removed afterwards in any case.
+    /// Called once before the plugin is disabled, also at game exit. Rules,
+    /// watches, and changes the plugin made are removed afterwards in any
+    /// case.
     stop: func();
 
     /// Called every frame with the seconds since the previous call.
@@ -46,9 +46,7 @@ world plugin {
     import jobs;
     import game-files;
     import excel;
-    import excel-text;
     import file-replacements;
-    import text-case;
     import commands;
     import chat;
     import http;

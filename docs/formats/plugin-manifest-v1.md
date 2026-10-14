@@ -15,8 +15,7 @@ authors = ["pokeda"]
 memory_bytes = 1073741824
 
 [permissions]
-"excel.text" = true
-"text.case" = true
+"files.replace" = true
 "http.get" = true
 
 [http]

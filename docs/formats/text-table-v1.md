@@ -1,6 +1,6 @@
 # Text table v1
 
-A text table holds replacement text for cells of the game's Excel sheets, each tied to the original text it replaces by a guard. A plugin writes one to its storage and activates it with [`excel-text.activate`](./plugin-api-v1.md#text-tables). [`angelica-text`](../../crates/angelica-text) reads and writes the format; the SDK re-exports its `Writer`.
+A text table holds replacement text for cells of the game's Excel sheets, each tied to the original text it replaces by a guard. It is the rule file of the `sheet_text` event: a plugin writes one to its storage and adds its rules with [`lens.decide-file`](./plugin-api-v1.md#lens), each cell a rule that the cell holds the table's text when the game's original text has the cell's guard. [`angelica-text`](../../crates/angelica-text) reads and writes the format; the SDK re-exports its `Writer`.
 
 All integers are little-endian. A file is the header followed by five sections with nothing between or after them:
 

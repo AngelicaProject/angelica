@@ -8,7 +8,7 @@
 //! tests drive it through its window and its commands.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, file_replacements, game_files, runtime, storage as files, text_case},
+    api::{file_replacements, game_files, runtime, storage as files},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
     events::GameEvent,
@@ -45,6 +45,10 @@ struct Hello {
     last_used: Option<String>,
     /// The rule hiding system messages while the player wants them hidden.
     quiet: Option<lens::Rule>,
+    /// The example table's rules for the game's sheet text.
+    table: Option<lens::RuleFile>,
+    /// The rules that give the game's case conversion Cyrillic letters.
+    letters: Vec<lens::Rule>,
     /// The selected tab of the widgets section.
     tab: u32,
     volume: f64,
@@ -96,6 +100,26 @@ impl Hello {
     fn say(&mut self, message: impl Into<String>) {
         self.message = message.into();
         angelica_sdk::info(&self.message);
+    }
+
+    /// Writes the example table and adds its rules for the game's sheet
+    /// text.
+    fn add_table(&mut self) {
+        let added = write_table().and_then(|()| {
+            lens::RuleFile::new("sheet_text", "example.table").map_err(|e| e.message)
+        });
+        match added {
+            Ok(table) => {
+                let text = format!(
+                    "table active: {} sheets, {} cells",
+                    table.info().parts,
+                    table.info().rules
+                );
+                self.table = Some(table);
+                self.say(text);
+            }
+            Err(error) => self.say(format!("table refused: {error}")),
+        }
     }
 
     /// Shows the clicks in place of the game's experience text, or puts the
@@ -164,10 +188,7 @@ impl Hello {
                 Ok(job) => self.job = Some(job),
                 Err(error) => self.say(format!("job refused: {}", error.message)),
             },
-            "table" => {
-                let text = activate_table();
-                self.say(text);
-            }
+            "table" => self.add_table(),
             "read" => {
                 let text = read_item_and_font();
                 self.say(text);
@@ -225,36 +246,43 @@ impl Hello {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the statuses: {error}")),
             },
-            "status" => match excel_text::status("example") {
-                Ok(status) => self.say(format!(
-                    "table: {} rows changed, {} cells, {} mismatches",
-                    status.rows_changed, status.cells_replaced, status.guard_mismatches
+            "status" => match self.table.as_ref().map(lens::RuleFile::decisions) {
+                Some(Ok(status)) => self.say(format!(
+                    "table: {} cells, {} stale",
+                    status.taken, status.stale
                 )),
-                Err(error) => self.say(format!("no status: {}", error.message)),
+                Some(Err(error)) => self.say(format!("no status: {}", error.message)),
+                None => self.say("no status: the table is not active"),
             },
-            "letters" => {
-                let letters: Vec<_> = ('а'..='я')
-                    .zip('А'..='Я')
-                    .map(|(lower, upper)| text_case::Letter { lower, upper })
-                    .collect();
-                match text_case::set_letters(&letters) {
-                    Ok(()) => self.say("letters added"),
-                    Err(error) => self.say(format!("letters refused: {}", error.message)),
+            "letters" => match cyrillic_letters() {
+                Ok(rules) => {
+                    self.letters = rules;
+                    self.say("letters added");
                 }
-            }
+                Err(error) => self.say(format!("letters refused: {}", error.message)),
+            },
             _ => {}
         }
     }
 }
 
-/// Writes the example table and turns it on.
-fn activate_table() -> String {
-    let result = write_table()
-        .and_then(|()| excel_text::activate("example", "example.table", 0).map_err(|e| e.message));
-    match result {
-        Ok(info) => format!("table active: {} sheets, {} cells", info.sheets, info.cells),
-        Err(error) => format!("table refused: {error}"),
+/// Rules that give the game's case conversion the Cyrillic letters а to я,
+/// both ways.
+fn cyrillic_letters() -> Result<Vec<lens::Rule>, angelica_sdk::Error> {
+    let mut rules = Vec::new();
+    for (small, capital) in ('а'..='я').zip('А'..='Я') {
+        rules.push(lens::Rule::with(
+            &format!("letter_upper[letter = \"{small}\"]"),
+            "becomes",
+            capital.to_string(),
+        )?);
+        rules.push(lens::Rule::with(
+            &format!("letter_lower[letter = \"{capital}\"]"),
+            "becomes",
+            small.to_string(),
+        )?);
     }
+    Ok(rules)
 }
 
 /// Item 1's name and the size of a font file, read from the game's files.
@@ -586,6 +614,8 @@ impl Plugin for Hello {
                 .map_err(|error| error.message),
             last_used: None,
             quiet: None,
+            table: None,
+            letters: Vec::new(),
             tab: 0,
             volume: 0.5,
             bar: ExperienceBar::default(),

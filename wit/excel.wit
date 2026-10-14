@@ -110,9 +110,9 @@ interface excel {
     row: func(name: string, language: u8, columns: list<string>, key: row-key) -> result<option<sheet-row>, error>;
 
     /// The text of the text column `column` in one row as the game shows
-    /// it now: the text an active text table of any plugin puts there,
-    /// such as a translation, or the game's own text when no table has
-    /// the cell. `none` when the sheet has no such row. `row` and `rows`
+    /// it now: the text a rule of any plugin at `sheet_text` puts there,
+    /// such as a translation, or the game's own text when no rule holds
+    /// for the cell. `none` when the sheet has no such row. `row` and `rows`
     /// always return the game's own text; a plugin asks for the shown
     /// text only to show it to the player, never to find something by it.
     shown: func(name: string, language: u8, column: string, key: row-key) -> result<option<list<u8>>, error>;

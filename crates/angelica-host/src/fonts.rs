@@ -117,8 +117,6 @@ mod tests {
             "Insert Esc".into(),
         ];
         let permissions = [
-            Permission::ExcelText,
-            Permission::TextCase,
             Permission::FilesReplace,
             Permission::ChatCommands,
             Permission::ChatPrint,

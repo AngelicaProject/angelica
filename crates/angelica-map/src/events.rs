@@ -12,6 +12,45 @@ use crate::{Entry, EntryKind, ValueKind};
 
 /// The most firings of an event a watch keeps between two frames.
 pub const MOST_RATE: u16 = 1024;
+/// The most bytes of text an outcome takes.
+pub const MOST_OUTCOME_TEXT: u32 = 65535;
+
+/// A value the host's adapter gives a derived event: an integer of a kind,
+/// or text of at most this many bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivedValue {
+    Integer(ValueKind),
+    Text(u16),
+}
+
+/// The events the host derives at a function it hooks, instead of reading
+/// the function's arguments: their names and the values each gives.
+pub const DERIVATIONS: &[(&str, &[(&str, DerivedValue)])] = &[
+    (
+        "sheet_cell",
+        &[
+            ("sheet", DerivedValue::Text(256)),
+            ("language", DerivedValue::Integer(ValueKind::U8)),
+            ("row", DerivedValue::Integer(ValueKind::U32)),
+            ("subrow", DerivedValue::Integer(ValueKind::U16)),
+            ("column", DerivedValue::Integer(ValueKind::U16)),
+            ("text", DerivedValue::Text(4096)),
+        ],
+    ),
+    ("case_letter", &[("letter", DerivedValue::Text(4))]),
+];
+
+/// The formats of rule files each derivation takes.
+pub const RULE_FORMATS: &[(&str, &str)] = &[("sheet_cell", "text-table-v1")];
+
+/// The values a derivation gives, by name.
+#[must_use]
+pub fn derivation(name: &str) -> Option<&'static [(&'static str, DerivedValue)]> {
+    DERIVATIONS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, values)| *values)
+}
 
 /// A register at a location.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,12 +101,14 @@ impl Register {
 }
 
 /// Where an argument's value is when the event fires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// The function's argument at this position, from 0, by its ABI.
     Argument(u8),
     /// A register at the location.
     Register(Register),
+    /// A value the host's adapter derives, by its name in the derivation.
+    Derived(String),
 }
 
 /// One argument of an event.
@@ -87,13 +128,19 @@ pub struct Arg {
 }
 
 /// What a plugin's rule may make the game do at an event of a function:
-/// return at once with `returns`, without running the function.
+/// return at once with `returns`, without running the function; or, at a
+/// derived event, take the rule's text in place of what the host derived.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub name: String,
     pub doc: String,
     /// The value the function returns; `None` for a function without one.
     pub returns: Option<crate::Number>,
+    /// For a derived event: the rule gives text of at most this many bytes.
+    pub text: Option<u32>,
+    /// For a derived event: an argument whose value in the rule's equality
+    /// condition has as many bytes as the rule's text must.
+    pub same_length: Option<String>,
 }
 
 /// An event: a point of the game's code and its arguments.
@@ -111,6 +158,10 @@ pub struct Event {
     /// What rules may decide at the event; an event with outcomes is a
     /// decision point, at a function's start.
     pub outcomes: BTreeMap<String, Outcome>,
+    /// For an event the host derives at `at`: the derivation's name.
+    pub derived: Option<String>,
+    /// The format of rule files the event takes, besides single rules.
+    pub rules: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +177,8 @@ struct RawEvent {
     at: String,
     domain: String,
     rate: Option<u16>,
+    derived: Option<String>,
+    rules: Option<String>,
     #[serde(default)]
     args: BTreeMap<String, RawArg>,
     #[serde(default)]
@@ -137,6 +190,8 @@ struct RawEvent {
 struct RawOutcome {
     doc: String,
     returns: Option<toml::Value>,
+    text: Option<u32>,
+    same_length: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +200,7 @@ struct RawArg {
     doc: String,
     arg: Option<u8>,
     register: Option<String>,
+    from: Option<String>,
     kind: Option<String>,
     text: Option<u16>,
     r#ref: Option<String>,
@@ -208,12 +264,22 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
                     })
                 })
                 .transpose()?;
+            if outcome
+                .text
+                .is_some_and(|most| !(1..=MOST_OUTCOME_TEXT).contains(&most))
+            {
+                return Err(format!(
+                    "event `{name}`, outcome `{outcome_name}`: `text` is 1 to {MOST_OUTCOME_TEXT} bytes"
+                ));
+            }
             outcomes.insert(
                 outcome_name.clone(),
                 Outcome {
                     name: outcome_name,
                     doc: outcome.doc,
                     returns,
+                    text: outcome.text,
+                    same_length: outcome.same_length,
                 },
             );
         }
@@ -227,6 +293,8 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
                 rate,
                 args,
                 outcomes,
+                derived: event.derived,
+                rules: event.rules,
             },
         );
     }
@@ -235,15 +303,19 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
 
 fn parse_arg(name: &str, raw: RawArg, domain: &str) -> Result<Arg, String> {
     not_blank("doc", &raw.doc)?;
-    let source = match (raw.arg, &raw.register) {
-        (Some(position), None) => Source::Argument(position),
-        (None, Some(register)) => Source::Register(
+    let source = match (raw.arg, &raw.register, &raw.from) {
+        (Some(position), None, None) => Source::Argument(position),
+        (None, Some(register), None) => Source::Register(
             Register::parse(register).ok_or_else(|| format!("`{register}` is not a register"))?,
         ),
-        _ => return Err("an argument has either `arg` or `register`".into()),
+        (None, None, Some(from)) => Source::Derived(from.clone()),
+        _ => return Err("an argument has one of `arg`, `register`, and `from`".into()),
     };
     let kind = match (&source, &raw.kind) {
-        (Source::Argument(_), None) => ValueKind::Void,
+        (Source::Derived(_) | Source::Argument(_), None) => ValueKind::Void,
+        (Source::Derived(_), Some(_)) => {
+            return Err("a derived value takes its kind from the derivation".into());
+        }
         (Source::Argument(_), Some(_)) => {
             return Err("a function's argument takes its kind from the function's ABI".into());
         }
@@ -341,10 +413,19 @@ fn check_event(
         Some(_) => return Err(format!("`{}` is not a function or a location", event.at)),
         None => return Err(format!("`{}` is not an entry", event.at)),
     };
+    if let Some(derivation) = event.derived.clone() {
+        return check_derived(objects, event, &derivation, abi.is_some());
+    }
+    if event.rules.is_some() {
+        return Err("only a derived event takes rule files".into());
+    }
     check_outcomes(objects, event, abi)?;
     for arg in event.args.values_mut() {
         let wrong = |message: String| format!("argument `{}`: {message}", arg.name);
-        match (arg.source, abi) {
+        match (arg.source.clone(), abi) {
+            (Source::Derived(_), _) => {
+                return Err(wrong("only a derived event has `from`".into()));
+            }
             (Source::Argument(position), Some(abi)) => {
                 arg.kind = *abi.args.get(usize::from(position)).ok_or_else(|| {
                     wrong(format!("`{}` has {} arguments", event.at, abi.args.len()))
@@ -371,8 +452,8 @@ fn check_event(
             )));
         }
         let float = matches!(arg.kind, ValueKind::F32 | ValueKind::F64);
-        if let Source::Register(register) = arg.source
-            && float != matches!(register, Register::Xmm(_))
+        if let Source::Register(register) = &arg.source
+            && float != matches!(*register, Register::Xmm(_))
         {
             return Err(wrong(
                 "a float is in an xmm register, and only a float".into(),
@@ -422,6 +503,117 @@ fn check_event(
     Ok(())
 }
 
+/// Checks an event the host derives at a function: every argument a value
+/// of the derivation, of its kind; outcomes that take text, at a domain
+/// with `change` wording; rule files of a format the derivation takes.
+fn check_derived(
+    objects: &Objects,
+    event: &mut Event,
+    derivation: &str,
+    function: bool,
+) -> Result<(), String> {
+    let Some(values) = crate::events::derivation(derivation) else {
+        let known = DERIVATIONS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "`{derivation}` is not a derivation of the host: {known}"
+        ));
+    };
+    if !function {
+        return Err(format!(
+            "`{}` is a location: a derived event is at a function",
+            event.at
+        ));
+    }
+    if let Some(format) = &event.rules
+        && !RULE_FORMATS.contains(&(derivation, format.as_str()))
+    {
+        return Err(format!("`{derivation}` takes no rule files of `{format}`"));
+    }
+    for arg in event.args.values_mut() {
+        let wrong = |message: String| format!("argument `{}`: {message}", arg.name);
+        let Source::Derived(from) = &arg.source else {
+            return Err(wrong("an argument of a derived event has `from`".into()));
+        };
+        let Some((_, given)) = values.iter().find(|(name, _)| name == from) else {
+            return Err(wrong(format!("`{derivation}` gives no `{from}`")));
+        };
+        if !objects.domains.contains_key(&arg.domain) {
+            return Err(wrong(format!(
+                "domain `{}` is not in domains.toml",
+                arg.domain
+            )));
+        }
+        match (given, &mut arg.shape) {
+            (
+                DerivedValue::Integer(kind),
+                Shape::Value {
+                    kind: value,
+                    meaning,
+                    ..
+                },
+            ) => {
+                if let Meaning::Enum(name) | Meaning::Flags(name) = &*meaning
+                    && !objects.enums.contains_key(name)
+                {
+                    return Err(wrong(format!("`{name}` is not an enum")));
+                }
+                if matches!(meaning, Meaning::Element(_)) {
+                    return Err(wrong("a derived value names no window element".into()));
+                }
+                *value = *kind;
+                arg.kind = *kind;
+            }
+            (DerivedValue::Text(most), Shape::Text(length)) if *length <= *most => {
+                arg.kind = ValueKind::Ptr;
+            }
+            (DerivedValue::Text(most), _) => {
+                return Err(wrong(format!("`{from}` is text of at most {most} bytes")));
+            }
+            (DerivedValue::Integer(_), _) => {
+                return Err(wrong(format!("`{from}` is an integer")));
+            }
+        }
+        if arg.mask.is_some() {
+            return Err(wrong("a derived value has no mask".into()));
+        }
+    }
+    if objects
+        .domains
+        .get(&event.domain)
+        .is_none_or(|domain| domain.change.is_none())
+        && !event.outcomes.is_empty()
+    {
+        return Err(format!(
+            "domain `{}` has no `change` wording for the player",
+            event.domain
+        ));
+    }
+    for outcome in event.outcomes.values() {
+        if outcome.returns.is_some() || outcome.text.is_none() {
+            return Err(format!(
+                "outcome `{}`: at a derived event an outcome takes `text`, and returns nothing",
+                outcome.name
+            ));
+        }
+        if let Some(arg) = &outcome.same_length
+            && !matches!(
+                event.args.get(arg).map(|arg| &arg.shape),
+                Some(Shape::Text(_))
+            )
+        {
+            return Err(format!(
+                "outcome `{}`: `same_length` names `{arg}`, which is not a text argument",
+                outcome.name
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Checks a decision point: a function's start, a domain with `change`
 /// wording, and outcomes that return a value of the function's kind in
 /// `rax`, or nothing for a function without one.
@@ -450,6 +642,12 @@ fn check_outcomes(
         ));
     }
     for outcome in event.outcomes.values() {
+        if outcome.text.is_some() || outcome.same_length.is_some() {
+            return Err(format!(
+                "outcome `{}`: only a derived event's outcome takes text",
+                outcome.name
+            ));
+        }
         // A decision returns in `rax`, never in `xmm0`.
         let fits = match (abi.ret, outcome.returns) {
             (ValueKind::Void, None) => true,
@@ -677,5 +875,105 @@ doc = \"Skipped.\"
         ] {
             assert!(map(&register(name, kind)).is_err(), "{name} {kind}");
         }
+    }
+
+    #[test]
+    fn derived_events_take_the_hosts_values_and_outcomes_with_text() {
+        let derived = |events: &str| {
+            Map::from_sources(
+                "format = 2",
+                &[
+                    (
+                        "entries/text.toml".into(),
+                        r#"
+[function."text.store_row"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "ptr"], ret = "ptr" }
+thread = "any"
+
+[location."text.stored"]
+locator = { signature = "C3 90" }
+thread = "any"
+"#
+                        .into(),
+                    ),
+                    (
+                        "domains.toml".into(),
+                        r#"
+[domains.text]
+doc = "Text."
+class = "display"
+read = { en = "Sees text", ru = "Видит тексты" }
+change = { en = "Changes text", ru = "Меняет тексты" }
+"#
+                        .into(),
+                    ),
+                    ("events.toml".into(), events.into()),
+                ],
+            )
+        };
+        let valid = r#"
+[events.sheet_text]
+doc = "A cell."
+at = "text.store_row"
+derived = "sheet_cell"
+domain = "text"
+rules = "text-table-v1"
+
+[events.sheet_text.args.row]
+doc = "The row."
+from = "row"
+
+[events.sheet_text.args.text]
+doc = "The game's text."
+from = "text"
+text = 4096
+
+[events.sheet_text.outcomes.replace]
+doc = "The rule's text."
+text = 65535
+same_length = "text"
+"#;
+        let map = derived(valid).unwrap();
+        let event = &map.objects().events["sheet_text"];
+        assert_eq!(event.derived.as_deref(), Some("sheet_cell"));
+        assert_eq!(event.rules.as_deref(), Some("text-table-v1"));
+        assert_eq!(event.args["row"].kind, ValueKind::U32);
+        assert_eq!(event.args["row"].source, ArgSource::Derived("row".into()));
+        assert_eq!(event.outcomes["replace"].text, Some(65535));
+        assert_eq!(
+            event.outcomes["replace"].same_length.as_deref(),
+            Some("text")
+        );
+
+        for (old, new) in [
+            ("derived = \"sheet_cell\"", "derived = \"sheet_rows\""),
+            ("from = \"row\"", "from = \"page\""),
+            ("from = \"row\"", "arg = 1"),
+            (
+                "from = \"text\"\ntext = 4096",
+                "from = \"text\"\ntext = 8192",
+            ),
+            ("from = \"row\"", "from = \"text\""),
+            ("from = \"text\"\ntext = 4096", "from = \"row\"\ntext = 16"),
+            ("rules = \"text-table-v1\"", "rules = \"csv\""),
+            ("text = 65535\n", "returns = 0\n"),
+            ("text = 65535\n", "text = 70000\n"),
+            ("same_length = \"text\"", "same_length = \"row\""),
+            ("at = \"text.store_row\"", "at = \"text.stored\""),
+        ] {
+            let events = valid.replace(old, new);
+            assert!(derived(&events).is_err(), "{old} -> {new}");
+        }
+        // An event the game calls has no `from` and takes no rule files.
+        let called = valid.replace("derived = \"sheet_cell\"\n", "");
+        assert!(derived(&called).is_err());
+        let called = called
+            .replace("rules = \"text-table-v1\"\n", "")
+            .replace("from = \"row\"", "arg = 1");
+        assert!(
+            derived(&called).is_err(),
+            "an outcome with text at a called event"
+        );
     }
 }

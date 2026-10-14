@@ -54,6 +54,20 @@
 //! let quiet = lens::Rule::new("chat_message_added[kind = 57]", "hide")?;
 //! ```
 //!
+//! At an event the host derives, such as a text cell of a sheet row, a rule
+//! is equality conditions and an outcome that takes text, and a
+//! [`RuleFile`] adds a whole file of rules, such as a text table written
+//! with [`crate::text::table::Writer`]:
+//!
+//! ```ignore
+//! let potion = lens::Rule::with(
+//!     "sheet_text[sheet = \"Item\" and row = 4 and column = 9]",
+//!     "replace",
+//!     "Зелье",
+//! )?;
+//! let translation = lens::RuleFile::new("sheet_text", "translation.table")?;
+//! ```
+//!
 //! [`set`] changes a value the map marks changeable, such as the camera's
 //! zoom limit, until [`restore`] or the plugin stops:
 //!
@@ -390,14 +404,74 @@ impl Rule {
     /// See `lens.decide`.
     pub fn new(text: &str, outcome: &str) -> Result<Self, crate::Error> {
         Ok(Self {
-            handle: api::decide(text, outcome)?,
+            handle: api::decide(text, outcome, None)?,
         })
+    }
+
+    /// Adds the rule `text` to take `outcome` with `value`, such as the
+    /// text that replaces a sheet's cell at a derived event.
+    ///
+    /// # Errors
+    /// See `lens.decide`.
+    pub fn with(text: &str, outcome: &str, value: impl Into<Value>) -> Result<Self, crate::Error> {
+        Ok(Self {
+            handle: api::decide(text, outcome, Some(&value.into()))?,
+        })
+    }
+
+    /// What the rule did, at a derived event.
+    ///
+    /// # Errors
+    /// See `lens.decisions`.
+    pub fn decisions(&self) -> Result<DecisionStatus, crate::Error> {
+        api::decisions(self.handle)
     }
 }
 
 impl Drop for Rule {
     fn drop(&mut self) {
         api::release(self.handle);
+    }
+}
+
+pub use api::{DecisionStatus, RuleFile as RuleFileInfo};
+
+/// The rules of a file in the plugin's storage at a derived event; dropping
+/// it ends them.
+#[derive(Debug)]
+pub struct RuleFile {
+    info: RuleFileInfo,
+}
+
+impl RuleFile {
+    /// Adds the rules of the file at `path` at `event`.
+    ///
+    /// # Errors
+    /// See `lens.decide-file`.
+    pub fn new(event: &str, path: &str) -> Result<Self, crate::Error> {
+        Ok(Self {
+            info: api::decide_file(event, path)?,
+        })
+    }
+
+    /// How many parts of the game, such as sheets, and rules the file has.
+    #[must_use]
+    pub fn info(&self) -> &RuleFileInfo {
+        &self.info
+    }
+
+    /// What the file's rules did.
+    ///
+    /// # Errors
+    /// See `lens.decisions`.
+    pub fn decisions(&self) -> Result<DecisionStatus, crate::Error> {
+        api::decisions(self.info.handle)
+    }
+}
+
+impl Drop for RuleFile {
+    fn drop(&mut self) {
+        api::release(self.info.handle);
     }
 }
 

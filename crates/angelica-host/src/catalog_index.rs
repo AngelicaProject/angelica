@@ -211,7 +211,7 @@ mod tests {
   "published": "2026-10-20T12:00:00Z",
   "plugins": [{
     "id": "harmonia", "name": "Harmonia", "description": "Translations.", "version": "0.2.0",
-    "authors": ["pokeda"], "permissions": ["excel.text", "http.get", "something.new"],
+    "authors": ["pokeda"], "permissions": ["files.replace", "http.get", "something.new"],
     "hosts": ["github.com"],
     "link": "https://github.com/AngelicaProject/angelica-registry/releases/download/harmonia/harmonia.angelica",
     "sha256": "00", "source": "https://github.com/AngelicaProject/harmonia-angelica/tree/v0.2.0"
@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(index.plugins[0].name, "Harmonia");
         assert_eq!(
             index.plugins[0].known_permissions(),
-            vec![Permission::ExcelText, Permission::HttpGet],
+            vec![Permission::FilesReplace, Permission::HttpGet],
             "a permission this Angelica does not know is left out of the words"
         );
         assert_eq!(index.withdrawn("timers", "1.2.0"), Some("Reads chat."));

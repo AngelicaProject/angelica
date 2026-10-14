@@ -3,7 +3,7 @@
 //! plugin or refuses the operation while the game and other plugins go on.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, http, jobs, lens, storage},
+    api::{http, jobs, lens, storage},
     commands::{self, Command},
     ui::{Event, Window},
 };
@@ -76,7 +76,7 @@ impl Hostile {
                 .collect::<Vec<_>>()
                 .join("; ");
             }
-            "table" => self.report = outcome(excel_text::activate("big", "big.table", 0)),
+            "table" => self.report = outcome(lens::decide_file("sheet_text", "big.table")),
             "replace" => {
                 self.report = outcome(angelica_sdk::api::file_replacements::replace(
                     "common/font/font1.tex",

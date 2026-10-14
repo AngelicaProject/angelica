@@ -1,31 +1,57 @@
-//! Letter pairs plugins add to the game's case conversion (the `text-case`
-//! interface) and the conversion itself, applied after the game's own.
-//! Platform independent: the Windows adapter passes the string the game just
+//! Letters the game's case conversion gives as plugins' rules decide them,
+//! at the map's derived decision points of the `case_letter` derivation,
+//! and the conversion itself, applied after the game's own. Platform
+//! independent: the Windows adapter passes the string the game just
 //! converted.
 #![forbid(unsafe_code)]
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::{Arc, PoisonError, RwLock},
 };
 
-/// Letters one plugin can add.
+/// Letter rules one plugin can keep.
 pub const MAX_LETTERS: usize = 4096;
+/// The game's conversion to capital letters, whose event's rules are for
+/// [`Direction::Upper`].
+pub const UPPER_ENTRY: &str = "text.utf8_string.to_upper";
+/// The game's conversion to small letters.
+pub const LOWER_ENTRY: &str = "text.utf8_string.to_lower";
 
 const STX: u8 = 0x02;
 const ETX: u8 = 0x03;
 const SPACE: u8 = b' ';
 
-/// The letters of every plugin, as the conversion uses them.
+/// Which conversion of the game a rule is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// To capital letters.
+    Upper,
+    /// To small letters.
+    Lower,
+}
+
+/// The letters of every plugin's rules, as the conversion uses them.
 #[derive(Debug, Default)]
 pub struct Letters {
-    /// UTF-8 of a lower-case letter to its upper case, and the reverse.
+    /// UTF-8 of a letter to the one the conversion to capitals gives, and
+    /// to small letters.
     upper: HashMap<Vec<u8>, Vec<u8>>,
     lower: HashMap<Vec<u8>, Vec<u8>>,
 }
 
+/// One plugin's rule: the letter a conversion gives for another.
+struct Rule {
+    plugin: String,
+    handle: u32,
+    direction: Direction,
+    letter: char,
+    becomes: char,
+}
+
 #[derive(Default)]
 struct State {
-    owners: BTreeMap<String, Vec<(char, char)>>,
+    /// In the order the plugins added them.
+    rules: Vec<Rule>,
     letters: Arc<Letters>,
 }
 
@@ -35,42 +61,71 @@ pub struct TextCase {
 }
 
 impl TextCase {
-    /// Replaces the plugin's letters.
+    /// Adds the plugin's rule under `handle`: the conversion `direction`
+    /// gives `becomes` for `letter`. Of rules for one letter and
+    /// direction, the first added applies.
     ///
     /// # Errors
-    /// Refuses ASCII letters, a pair whose letters differ in UTF-8 length or
-    /// are equal, a repeated letter, and a letter another plugin paired
-    /// differently.
-    pub fn set(&self, plugin: &str, pairs: &[(char, char)]) -> Result<(), String> {
-        if pairs.len() > MAX_LETTERS {
-            return Err(format!("at most {MAX_LETTERS} letters"));
+    /// Refuses ASCII letters, which the game converts itself, letters that
+    /// are equal or differ in UTF-8 length, so text never changes length,
+    /// and more than [`MAX_LETTERS`] rules of a plugin.
+    pub fn add(
+        &self,
+        plugin: &str,
+        handle: u32,
+        direction: Direction,
+        letter: char,
+        becomes: char,
+    ) -> Result<(), String> {
+        if letter.is_ascii() || becomes.is_ascii() {
+            return Err(format!(
+                "{letter}/{becomes}: the game converts ASCII letters itself"
+            ));
         }
-        for &(lower, upper) in pairs {
-            if lower.is_ascii() || upper.is_ascii() {
-                return Err(format!(
-                    "{lower}/{upper}: the game converts ASCII letters itself"
-                ));
-            }
-            if lower == upper || lower.len_utf8() != upper.len_utf8() {
-                return Err(format!(
-                    "{lower}/{upper}: the letters must differ and have the same UTF-8 length"
-                ));
-            }
+        if letter == becomes || letter.len_utf8() != becomes.len_utf8() {
+            return Err(format!(
+                "{letter}/{becomes}: the letters must differ and have the same UTF-8 length"
+            ));
         }
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
-        let mut owners = state.owners.clone();
-        owners.remove(plugin);
-        if !pairs.is_empty() {
-            owners.insert(plugin.into(), pairs.to_vec());
+        if state
+            .rules
+            .iter()
+            .filter(|rule| rule.plugin == plugin)
+            .count()
+            >= MAX_LETTERS
+        {
+            return Err(format!("a plugin keeps at most {MAX_LETTERS} letter rules"));
         }
-        let letters = combine(&owners)?;
-        state.owners = owners;
-        state.letters = Arc::new(letters);
+        state.rules.push(Rule {
+            plugin: plugin.to_owned(),
+            handle,
+            direction,
+            letter,
+            becomes,
+        });
+        state.letters = Arc::new(combine(&state.rules));
         Ok(())
     }
 
+    /// Removes the plugin's rule under `handle`; false when it has none.
+    pub fn remove(&self, plugin: &str, handle: u32) -> bool {
+        self.retain(|rule| rule.plugin != plugin || rule.handle != handle)
+    }
+
     pub fn remove_plugin(&self, plugin: &str) {
-        let _ = self.set(plugin, &[]);
+        self.retain(|rule| rule.plugin != plugin);
+    }
+
+    fn retain(&self, keep: impl Fn(&Rule) -> bool) -> bool {
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        let before = state.rules.len();
+        state.rules.retain(keep);
+        if state.rules.len() == before {
+            return false;
+        }
+        state.letters = Arc::new(combine(&state.rules));
+        true
     }
 
     #[must_use]
@@ -83,42 +138,25 @@ impl TextCase {
     }
 }
 
-fn combine(owners: &BTreeMap<String, Vec<(char, char)>>) -> Result<Letters, String> {
-    let mut upper: HashMap<char, (char, &str)> = HashMap::new();
-    let mut lower: HashMap<char, (char, &str)> = HashMap::new();
-    for (plugin, pairs) in owners {
-        for &(small, capital) in pairs {
-            for (map, from, to) in [(&mut upper, small, capital), (&mut lower, capital, small)] {
-                if let Some(&(known, owner)) = map.get(&from) {
-                    if known != to {
-                        return Err(format!("{from} is already paired with {known} by {owner}"));
-                    }
-                    if owner == plugin.as_str() {
-                        return Err(format!("{from} is listed twice"));
-                    }
-                }
-                map.insert(from, (to, plugin));
-            }
-            if upper.contains_key(&capital) || lower.contains_key(&small) {
-                return Err(format!("{small}/{capital}: a letter cannot be both cases"));
-            }
-        }
+/// The letters of the rules: for each letter and direction, the first
+/// rule's.
+fn combine(rules: &[Rule]) -> Letters {
+    let mut letters = Letters::default();
+    for rule in rules {
+        let map = match rule.direction {
+            Direction::Upper => &mut letters.upper,
+            Direction::Lower => &mut letters.lower,
+        };
+        map.entry(rule.letter.to_string().into_bytes())
+            .or_insert_with(|| rule.becomes.to_string().into_bytes());
     }
-    let encode = |map: HashMap<char, (char, &str)>| {
-        map.into_iter()
-            .map(|(from, (to, _))| (from.to_string().into_bytes(), to.to_string().into_bytes()))
-            .collect()
-    };
-    Ok(Letters {
-        upper: encode(upper),
-        lower: encode(lower),
-    })
+    letters
 }
 
 impl Letters {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.upper.is_empty()
+        self.upper.is_empty() && self.lower.is_empty()
     }
 
     /// The game's upper-case rule: with `first_only` and not `every_word`
@@ -250,6 +288,18 @@ mod tests {
             .collect()
     }
 
+    /// The rules of the Cyrillic pairs, both ways, under handles from 0.
+    fn with_cyrillic(case: &TextCase, plugin: &str) {
+        let mut handle = 0;
+        for (small, capital) in cyrillic() {
+            case.add(plugin, handle, Direction::Upper, small, capital)
+                .unwrap();
+            case.add(plugin, handle + 1, Direction::Lower, capital, small)
+                .unwrap();
+            handle += 2;
+        }
+    }
+
     fn upper(letters: &Letters, text: &str, first_only: bool, every_word: bool) -> String {
         let mut bytes = text.as_bytes().to_vec();
         letters.to_upper(&mut bytes, first_only, every_word, |_| false);
@@ -259,7 +309,7 @@ mod tests {
     #[test]
     fn follows_the_game_rules_for_added_letters() {
         let case = TextCase::default();
-        case.set("p", &cyrillic()).unwrap();
+        with_cyrillic(&case, "p");
         let letters = case.letters();
         assert_eq!(upper(&letters, "паладин тьмы", true, false), "Паладин тьмы");
         assert_eq!(upper(&letters, "паладин тьмы", true, true), "Паладин Тьмы");
@@ -277,7 +327,7 @@ mod tests {
     #[test]
     fn skips_macros_and_excluded_words() {
         let case = TextCase::default();
-        case.set("p", &cyrillic()).unwrap();
+        with_cyrillic(&case, "p");
         let letters = case.letters();
         // A macro whose body holds Cyrillic bytes stays as it is.
         let mut text = vec![0x02, 0x10, 0x05];
@@ -296,19 +346,20 @@ mod tests {
     }
 
     #[test]
-    fn refuses_conflicts_and_invalid_pairs() {
+    fn the_first_rule_of_a_letter_applies_and_invalid_ones_are_refused() {
         let case = TextCase::default();
-        assert!(case.set("p", &[('a', 'A')]).is_err());
-        assert!(case.set("p", &[('я', 'я')]).is_err());
+        assert!(case.add("p", 0, Direction::Upper, 'a', 'A').is_err());
+        assert!(case.add("p", 0, Direction::Upper, 'я', 'я').is_err());
         assert!(
-            case.set("p", &[('я', 'ꙗ')]).is_err(),
+            case.add("p", 0, Direction::Upper, 'я', 'ꙗ').is_err(),
             "different UTF-8 length"
         );
-        case.set("p", &[('я', 'Я')]).unwrap();
-        assert!(case.set("q", &[('я', 'Ѣ')]).is_err());
-        case.set("q", &[('я', 'Я')]).unwrap();
-        assert!(case.set("r", &[('ё', 'Ё'), ('ё', 'Ё')]).is_err());
-        case.remove_plugin("p");
+        case.add("p", 1, Direction::Upper, 'я', 'Я').unwrap();
+        case.add("q", 1, Direction::Upper, 'я', 'Ѣ').unwrap();
+        assert_eq!(upper(&case.letters(), "я", false, false), "Я");
+        assert!(case.remove("p", 1));
+        assert!(!case.remove("p", 1));
+        assert_eq!(upper(&case.letters(), "я", false, false), "Ѣ");
         case.remove_plugin("q");
         assert!(case.letters().is_empty());
     }

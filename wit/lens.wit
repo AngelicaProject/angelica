@@ -157,15 +157,58 @@ interface lens {
     /// without braces, with conditions in brackets and paths through its
     /// arguments as for `watch`; whenever it reaches anything, the host
     /// takes `outcome`, such as `hide`, itself: the game's function returns
-    /// at once with the outcome's value and does not run. Rules apply in
-    /// the order they were added, across plugins; the first that holds
-    /// decides. Returns the handle `release` ends it with. The event's
-    /// domain must be listed in the manifest's `[lens] change` and
+    /// at once with the outcome's value and does not run.
+    ///
+    /// At an event the host derives, such as each text cell of a sheet row
+    /// the game builds, the rule is equality conditions on the event's
+    /// arguments joined by `and`, and the outcome takes `value`, text of
+    /// the game: `decide("sheet_text[sheet = \"Item\" and row = 4 and
+    /// column = 9]", "replace", some(text(...)))`. Such rules are looked up
+    /// by their values. Other outcomes take no value.
+    ///
+    /// Rules apply in the order they were added, across plugins; the first
+    /// that holds decides. Returns the handle `release` ends it with. The
+    /// event's domain must be listed in the manifest's `[lens] change` and
     /// approved; domains on the rule's paths in `[lens] read` or
-    /// `[lens] change`. An event without outcomes or a rule that breaks the
-    /// syntax returns `invalid-argument`; an unknown event or outcome,
-    /// `not-found`; a domain the plugin may not change, `permission-denied`;
-    /// an event the build lacks or cannot hook, `unavailable`. Rules count
-    /// toward the 256 held queries.
-    decide: func(rule: string, outcome: string) -> result<u32, error>;
+    /// `[lens] change`. An event without outcomes, a rule that breaks the
+    /// syntax, or a value that does not fit returns `invalid-argument`; an
+    /// unknown event or outcome, `not-found`; a domain the plugin may not
+    /// change, `permission-denied`; an event the build lacks or cannot
+    /// hook, `unavailable`. Rules count toward the 256 held queries.
+    decide: func(rule: string, outcome: string, value: option<value>) -> result<u32, error>;
+
+    /// What a file of rules holds.
+    record rule-file {
+        /// The handle `release` ends the file's rules with.
+        handle: u32,
+        /// The parts of the game it names, such as sheets.
+        parts: u32,
+        rules: u64,
+    }
+
+    /// Adds the rules of a file in the plugin's storage at a derived event
+    /// that takes rule files, in the format the map names for it, such as
+    /// a text table for `sheet_text`. The file's rules apply as one rule
+    /// added now. The file is read whole and checked; a file of at most
+    /// 512 MiB, at most 8 files and 1 GiB of a plugin together. Errors as
+    /// for `decide`, and `invalid-argument` for a file that is not valid.
+    decide-file: func(event: string, path: string) -> result<rule-file, error>;
+
+    /// What a rule or a file of rules did since it was added.
+    record decision-status {
+        /// How often its outcome was taken.
+        taken: u64,
+        /// How often a rule of a file held for a place but not for the
+        /// game's text there, which changed since the file was made.
+        stale: u64,
+        /// How often the host could not take the outcome, such as a row
+        /// whose layout it did not expect.
+        refused: u64,
+        /// Parts of the game the file does not fit, each with why.
+        mismatched: list<string>,
+    }
+
+    /// What the rule or file under `handle` did; `not-found` for a handle
+    /// that is not a rule at a derived event.
+    decisions: func(handle: u32) -> result<decision-status, error>;
 }

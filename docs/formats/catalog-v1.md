@@ -50,7 +50,7 @@ reason = "Reads chat it did not declare."
       "description": "Shows the game in another language with community translation packs.",
       "version": "0.2.0",
       "authors": ["pokeda"],
-      "permissions": ["excel.text", "files.replace", "http.get", "text.case"],
+      "permissions": ["files.replace", "http.get"],
       "hosts": ["*.github.io", "github.com", "*.githubusercontent.com"],
       "link": "https://github.com/AngelicaProject/angelica-registry/releases/download/harmonia/harmonia.angelica",
       "sha256": "<lowercase SHA-256 of the plugin file>",
