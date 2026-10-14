@@ -62,17 +62,17 @@ Angelica's look applies to the menu and to plugin windows alike; plugin authors 
 
 | Role | Light | Dark |
 |---|---|---|
-| Window, 96–97% opaque | `#F6F3ED` | `#2E3138` |
-| Section column in Settings | `#7A5C2E` at 8% over the window | `#282A30` |
-| Chosen item | white at 75% | `#3C3F47` |
-| Text | `#24211C` | `#DCDDE0` |
-| Secondary text | text at 60% | `#A3A6AD` |
-| Muted text | text at 42% | `#80838B` |
-| Lines and borders | `#3C2D14` at 12–22% | white at 8–13% |
-| Action words, focus | `#7A5C2E` | `#B4ABD6` |
+| Window, 96–97% opaque | `#F6F3ED` | `#1E1B19` |
+| Section column in Settings | `#7A5C2E` at 8% over the window | `#181614` |
+| Chosen item | white at 75% | `#2E2A26` |
+| Text | `#24211C` | `#ECE6DC` |
+| Secondary text | text at 60% | `#A8A094` |
+| Muted text | text at 42% | `#80796F` |
+| Lines and borders | `#3C2D14` at 12–22% | `#ECE6DC` at 8–13% |
+| Action words, focus | `#7A5C2E` | `#E8735A` |
 | Needs attention | `#B76E00` | `#E0A84E` |
 | On | `#2E7D46` | `#7CC48E` |
-| Danger | `#B23A3A` | `#E58A8A` |
+| Danger | `#B23A3A` | `#EF8FA8` |
 
 Color carries meaning only: the action color for what can be pressed or changed, and the attention, on, and danger colors for states. Everything else uses the text and line colors. There are no gradients, glows, or decorative animations.
 
