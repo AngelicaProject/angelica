@@ -23,7 +23,6 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `websocket` | live connections to the hosts the manifest lists, their messages delivered as game events | `http.websocket`, with `http.get` |
 | `lens` | the game's objects read by path, events watched, rules at decision points, values changed, and actions taken, through the game map's object model | one per domain and verb, in `[lens] read`, `change`, and `act` |
 | `events` | what reaches `on-game-event`: firings of Lens watches, messages from other plugins, and what happened on the plugin's connections | — |
-| `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
 | `clipboard` | text put on the player's clipboard for the player's action | `clipboard.write` |
@@ -46,7 +45,7 @@ The calls of one frame — `tick`, the commands, the events, the window events, 
 
 A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, watches, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
-`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `lens`, `events`, `game-ui`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
+`run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `lens`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
@@ -130,9 +129,11 @@ When the game reaches the event's point, the host reads the rows at once, on the
 `set` changes a value the map marks [changeable](./game-map-v2.md#types): `set("camera.camera.max_distance", float(40))`.
 
 - The path is a query's path without braces, ending at the field; filters on the way pick the objects. The value is changed in every object the path reaches, at most 256, and `set` returns how many: none while it reaches no object.
-- The value takes the forms an action's parameters take, within the map's range; outside it is `invalid-argument`.
+- The value takes the forms an action's parameters take, within the map's range; outside it is `invalid-argument`. A text field takes `text`: UTF-8 shorter than the map's length (longer is `limit-exceeded`), without control characters, so it never carries the game's macros; it replaces the game's whole text.
 - The field's domain must be listed in the manifest's `[lens] change` and approved; the domains on the way in `[lens] read` or `[lens] change`. A field the map does not mark is `permission-denied`.
 - A value another plugin changed is `unavailable` until that plugin restores it or stops; so is memory that cannot be written now. A plugin keeps at most 64 paths changed.
+- A field the map changes through a function of the game is handed to that function, which changes it as the game itself does, such as showing an element of a window; a setting function the build lacks is `unavailable`.
+- A field the map marks held is one the game sets again itself, such as what its windows show. The path stays the plugin's: every frame the host applies the value again wherever the path reaches, also in objects the game makes later, and takes what the game wrote meanwhile as the original to put back.
 - The host keeps each value's original and puts it back on `restore` with the same path and when the plugin stops, only where the path still reaches the same place and the value is still the one written: a value the game changed meanwhile, or an object the game made again, is left as the game has it.
 
 ## Events
@@ -147,14 +148,17 @@ Messages added to the chat log are watched like any event: `chat_message_added {
 
 ## Game windows
 
-`game-ui` changes the game's own windows through rules the host applies. A rule names a window as the game names it and an element by the name the [game map](./game-map-v2.md#window-schemas) gives it for the window's layout in the running game build. An element the map does not name cannot be changed. `elements(window)` lists the names of a window with whether each shows text, and returns `unavailable` when the map names none or does not know the build's layout of the window.
+The game's own windows are objects of the map's `windows` domain: a query reads them and `set` changes what the map marks changeable, as for any [Lens](#lens) value.
 
-- `set-hidden` (`gameui.hide`) replaces the elements the plugin keeps hidden, at most 256. The host hides an element again whenever the game shows it.
-- `set-texts` (`gameui.text`) replaces the texts the plugin puts in text elements, at most 64, one per element: after the game's text, before it, or instead of it. A text has at most 256 bytes and no control characters. The host writes the text again whenever the game writes its own, and a plugin whose value changes calls `set-texts` again. An element that does not show text is refused.
+```text
+windows.unit_manager.windows[name = "_Exp"].layout.elements[name = window].visible   set to boolean(false): the experience bar is hidden
+windows.unit_manager.windows[name = "_Exp"].layout.elements[name = text].text        set to text: the plugin's text instead of the game's
+```
 
-Both return the elements that are not available in the running game build: those rules wait, and the others apply. Rules are applied on the game's main thread once per frame, after the plugins' calls of the frame, so a change is visible in the next frame the game draws; a window the game has not built is left alone until it is. When several plugins hide one element, it is hidden while any of them does. When several put text in one element, their texts are joined in the order of plugin ids, and the first `instead` replaces the game's text; an element's text with the plugins' texts has at most 4096 bytes, and longer text is left as the game wrote it.
-
-An empty list, and disabling the plugin, remove the rules: in the next frame the host shows the elements it hid and writes back the game's text where its own is still there. An element the host hid is shown again even when the game would have hidden it meanwhile for its own reasons; the game shows or hides it as it wants from its next update. A game build that lacks the [window entries](./game-structures.md#game-windows) returns `unavailable`.
+- An element is named by the [window schema](./game-map-v2.md#window-schemas) of its window, for the window's layout file in the running game build; the path names the window before its elements, with `[name = "<window>"]`. An element name the map does not have is `not-found`; a build whose layout of the window the map does not know is `unavailable`. An element the map does not name is never reached by a name.
+- `text` exists only on text elements: a path through it reaches only those.
+- Whether an element is shown and a text element's text are held: the host hides the element again and writes the text again whenever the game changes them, and in a window the game builds later, until the plugin restores the path or stops. Then the host shows the element and writes back the game's latest text where the plugin's value is still there; the game shows, hides, and writes as it wants from its next update.
+- One plugin owns an element's value at a time; changing it needs `[lens] change = ["windows"]`.
 
 ## Text tables
 

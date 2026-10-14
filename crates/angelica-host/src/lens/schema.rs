@@ -34,6 +34,10 @@ pub struct Schema {
     /// Where every action's function and globals are, or why the build
     /// lacks one.
     pub actions: BTreeMap<String, Result<super::act::ActionAt, String>>,
+    /// The ids of every named element of each window the map has a schema
+    /// of, by name, or why this build's layout of the window is unknown;
+    /// filled by [`Schema::resolve_windows`].
+    pub windows: BTreeMap<String, Result<BTreeMap<String, u32>, String>>,
 }
 
 impl Schema {
@@ -45,12 +49,14 @@ impl Schema {
         let mut offsets = BTreeMap::new();
         for object in objects.types.values() {
             for field in object.fields.values() {
-                let offset = match entry(&field.at) {
-                    Ok(Value::Offset(offset)) => Ok(offset),
-                    Ok(Value::Address(_)) => Err(format!("map entry {} is not a field", field.at)),
-                    Err(reason) => Err(format!("map entry {} is absent: {reason}", field.at)),
-                };
-                offsets.insert(field.at.clone(), offset);
+                for at in std::iter::once(&field.at).chain(field.pointer.as_ref()) {
+                    let offset = match entry(at) {
+                        Ok(Value::Offset(offset)) => Ok(offset),
+                        Ok(Value::Address(_)) => Err(format!("map entry {at} is not a field")),
+                        Err(reason) => Err(format!("map entry {at} is absent: {reason}")),
+                    };
+                    offsets.insert(at.clone(), offset);
+                }
             }
         }
         let roots = objects
@@ -134,7 +140,55 @@ impl Schema {
             code,
             text_pointers,
             actions,
+            windows: BTreeMap::new(),
         }
+    }
+
+    /// Names the elements of every window the map has a schema of, by the
+    /// fingerprint of the window's layout file in this build, which
+    /// `layout` reads from the game's archives.
+    pub fn resolve_windows(&mut self, map: &Map, layout: &dyn Fn(&str) -> Result<Vec<u8>, String>) {
+        self.windows = map
+            .windows()
+            .map(|schema| {
+                let named = layout(&schema.layout)
+                    .map_err(|reason| format!("its layout file cannot be read: {reason}"))
+                    .and_then(|bytes| {
+                        schema.resolve(&angelica_map::window_layout_fingerprint(&bytes))
+                    });
+                (schema.window.clone(), named)
+            })
+            .collect();
+    }
+
+    /// The id of the element `element` of the window `window` in this build.
+    ///
+    /// # Errors
+    /// `not-found` for a window or element the map does not name;
+    /// `unavailable` when the build's layout of the window is unknown.
+    pub fn element(&self, window: &str, element: &str) -> crate::error::Result<u32> {
+        use crate::error::{Error, Kind};
+        let named = self.windows.get(window).ok_or_else(|| {
+            Error::new(
+                Kind::NotFound,
+                format!("the game map names no elements of window {window}"),
+            )
+        })?;
+        let named = named.as_ref().map_err(|reason| {
+            Error::new(
+                Kind::Unavailable,
+                format!(
+                    "the elements of window {window} are not known in this game build: {reason}"
+                ),
+            )
+        })?;
+        named.get(element).copied().ok_or_else(|| {
+            let known = named.keys().cloned().collect::<Vec<_>>().join(", ");
+            Error::new(
+                Kind::NotFound,
+                format!("the game map names no element {element} of window {window}; its elements: {known}"),
+            )
+        })
     }
 
     /// The model of `map` resolved through a catalog of the running build.

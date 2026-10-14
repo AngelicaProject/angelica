@@ -426,6 +426,20 @@ pub fn named(name: &str) -> Value {
     Value::Named(name.to_owned())
 }
 
+impl From<&str> for Value {
+    /// Text, for a text field.
+    fn from(value: &str) -> Self {
+        Self::Text(value.as_bytes().to_vec())
+    }
+}
+
+impl From<String> for Value {
+    /// Text, for a text field.
+    fn from(value: String) -> Self {
+        Self::Text(value.into_bytes())
+    }
+}
+
 impl From<u32> for Value {
     fn from(value: u32) -> Self {
         Self::Unsigned(value.into())

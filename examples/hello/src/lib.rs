@@ -3,17 +3,16 @@
 //! and sheets, a text table, letter case, a replaced game file, chat
 //! commands that print in the chat log, HTTPS requests from a job, the
 //! player's character read through Lens, the actions the player uses
-//! watched through Lens, the chat log's messages as
-//! events, and rules for the game's own windows. The host's integration
-//! tests drive
-//! it through its window and its commands.
+//! watched through Lens, the chat log's messages watched through Lens,
+//! and the game's own windows changed through Lens. The host's integration
+//! tests drive it through its window and its commands.
 use angelica_sdk::{
     Plugin,
     api::{excel_text, file_replacements, game_files, runtime, storage as files, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
     events::GameEvent,
-    excel, game_ui, http,
+    excel, http,
     jobs::{self, Job, Poll},
     lens, storage,
     text::{
@@ -51,6 +50,15 @@ struct Hello {
     volume: f64,
     bar: ExperienceBar,
 }
+
+/// Whether the game's experience bar is shown: the element the game map
+/// names `window` in the window `_Exp`.
+const EXPERIENCE_BAR: &str =
+    "windows.unit_manager.windows[name = \"_Exp\"].layout.elements[name = window].visible";
+
+/// The text above the experience bar.
+const EXPERIENCE_TEXT: &str =
+    "windows.unit_manager.windows[name = \"_Exp\"].layout.elements[name = text].text";
 
 /// What the example does to the game's experience bar.
 #[derive(Default)]
@@ -90,33 +98,29 @@ impl Hello {
         angelica_sdk::info(&self.message);
     }
 
-    /// Puts the clicks after the game's experience text, or removes them.
+    /// Shows the clicks in place of the game's experience text, or puts the
+    /// game's text back. The host keeps the text while the game writes its
+    /// own again, and whenever the bar is built again.
     fn show_clicks(&mut self) {
-        let rules = if self.bar.clicks {
-            vec![game_ui::after(
-                "_Exp",
-                "text",
-                format!(" · {} clicks", self.clicks),
-            )]
+        let result = if self.bar.clicks {
+            lens::set(EXPERIENCE_TEXT, format!("{} clicks", self.clicks)).map(drop)
         } else {
-            Vec::new()
+            lens::restore(EXPERIENCE_TEXT)
         };
-        match game_ui::texts(&rules) {
-            Ok(missing) if missing.is_empty() => {}
-            Ok(_) => self.say("this game build has no name for the experience text"),
-            Err(error) => self.say(format!("text refused: {}", error.message)),
+        if let Err(error) = result {
+            self.say(format!("text refused: {}", error.message));
         }
     }
 
     /// Hides the game's experience bar, or shows it again.
     fn hide_bar(&mut self) {
-        let elements = if self.bar.hidden {
-            Vec::new()
+        let result = if self.bar.hidden {
+            lens::restore(EXPERIENCE_BAR)
         } else {
-            vec![game_ui::element("_Exp", "window")]
+            lens::set(EXPERIENCE_BAR, false).map(drop)
         };
-        match game_ui::hide(&elements) {
-            Ok(missing) if missing.is_empty() => {
+        match result {
+            Ok(()) => {
                 self.bar.hidden = !self.bar.hidden;
                 self.say(if self.bar.hidden {
                     "experience bar hidden"
@@ -124,7 +128,6 @@ impl Hello {
                     "experience bar shown"
                 });
             }
-            Ok(_) => self.say("this game build has no name for the experience bar"),
             Err(error) => self.say(format!("hiding refused: {}", error.message)),
         }
     }

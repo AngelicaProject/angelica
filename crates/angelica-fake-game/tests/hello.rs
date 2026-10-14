@@ -575,7 +575,7 @@ fn jobs_fetch_from_the_listed_hosts() {
 
 /// The player's character, zone, and statuses, shaped like the game
 /// map's, with constant offsets.
-const CHARACTER_MAP: [(&str, &str); 8] = [
+const CHARACTER_MAP: [(&str, &str); 10] = [
     (
         "entries/test.toml",
         r#"
@@ -735,6 +735,51 @@ locator = { signature = "C3" }
 abi = { args = ["ptr", "i32"], ret = "bool" }
 thread = "main"
 
+[field."test.window.layout"]
+of = "test.window"
+type = "ptr"
+offset = 0x28
+
+[field."test.widget.nodes"]
+of = "test.widget"
+type = "ptr"
+offset = 0x10
+
+[field."test.widget.node_count"]
+of = "test.widget"
+type = "u16"
+offset = 0x18
+
+[field."test.node.id"]
+of = "test.node"
+type = "u32"
+offset = 0x14
+
+[field."test.node.kind"]
+of = "test.node"
+type = "u16"
+offset = 0x90
+
+[field."test.node.flags"]
+of = "test.node"
+type = "u32"
+offset = 0x9C
+
+[function."test.set_visible"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "u8"], ret = "void" }
+thread = "main"
+
+[field."test.text_node.text"]
+of = "test.text_node"
+type = "struct"
+offset = 0xD0
+
+[function."test.set_text"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "ptr"], ret = "void" }
+thread = "main"
+
 [global."test.camera_manager"]
 locator = { signature = "C3" }
 type = "struct"
@@ -879,6 +924,54 @@ doc = "How many values."
 doc = "Its values."
 array = { of = "test.atk_value", count = "value_count", most = 64, stride = 16 }
 
+[types."test.window".fields.layout]
+doc = "Its elements as its layout builds them."
+ref = "test.widget"
+
+[types."test.widget"]
+doc = "A window's elements."
+domain = "windows"
+
+[types."test.widget".fields.element_count]
+doc = "How many elements."
+at = "test.widget.node_count"
+
+[types."test.widget".fields.elements]
+doc = "The elements."
+at = "test.widget.nodes"
+array = { of = "test.node", count = "element_count", most = 64, stride = 8, pointers = true }
+
+[types."test.node"]
+doc = "An element of a window."
+domain = "windows"
+
+[types."test.node".fields.name]
+doc = "Its name."
+at = "test.node.id"
+element = "test.window.name"
+
+[types."test.node".fields.kind]
+doc = "What it is."
+enum = "test.node_kind"
+
+[types."test.node".fields.visible]
+doc = "Whether it is shown."
+at = "test.node.flags"
+bit = 20
+set = { call = "test.set_visible", hold = true }
+
+[types."test.text_node"]
+doc = "A text element."
+domain = "windows"
+extends = "test.node"
+variant = { field = "kind", values = ["text"] }
+
+[types."test.text_node".fields.text]
+doc = "Its text."
+pointer = "test.utf8_string.string_ptr"
+text = 512
+set = { call = "test.set_text", hold = true }
+
 [types."test.atk_value"]
 doc = "A value."
 domain = "windows"
@@ -954,6 +1047,7 @@ doc = "The game's windows."
 class = "others"
 read = { en = "Sees the game's windows", ru = "Видит окна игры" }
 act = { en = "Answers the game's dialogs for you", ru = "Отвечает на диалоги игры за вас" }
+change = { en = "Hides parts of the game's windows", ru = "Скрывает части окон игры" }
 
 [domains.chat]
 doc = "The chat log."
@@ -1057,6 +1151,30 @@ ref = "test.utf8_string"
 [events.chat_message_added.outcomes.hide]
 doc = "The message is not added."
 returns = 0
+"#,
+    ),
+    (
+        "enums/test.node_kind.toml",
+        "doc = \"Kinds of element.\"\nvalues = { res = 1, text = 3 }\n",
+    ),
+    (
+        "windows/_Exp.toml",
+        r#"
+window = "_Exp"
+doc = "The experience bar."
+layout = "ui/uld/Exp.uld"
+
+[elements.window]
+kind = "other"
+doc = "The whole bar."
+
+[elements.text]
+kind = "text"
+doc = "The experience text."
+
+[[layouts]]
+fingerprint = "50e3bcde560501b1"
+elements = { window = 1, text = 4 }
 "#,
     ),
     (
@@ -1502,7 +1620,7 @@ fn the_zoom_limit_is_changed_and_put_back() {
     );
 
     let test = with_character(
-        &MANIFEST.replace("change = [\"camera\", \"chat\"]\n", ""),
+        &MANIFEST.replace("change = [\"camera\", \"chat\", \"windows\"]\n", ""),
         &[],
     );
     test.game
@@ -1739,7 +1857,8 @@ fn approval_names_the_domains_in_the_maps_words() {
             "actions.act",
             "windows.act",
             "camera.change",
-            "chat.change"
+            "chat.change",
+            "windows.change"
         ]
     );
 }
@@ -1922,106 +2041,155 @@ fn removing_a_plugin_deletes_its_approval_and_its_data_only_when_asked() {
     }
 }
 
-/// A host whose game has the experience bar's layout file and names for
-/// two of its elements, with the bar built.
-fn with_experience_bar(manifest: &str) -> TestHost {
+/// The experience bar's elements, as the example changes them.
+const BAR: &str = "windows.unit_manager.windows[name = \"_Exp\"].layout";
+
+/// A host over the character map whose game has the experience bar's
+/// layout file, which the map's window schema knows.
+fn over_experience_bar(manifest: &str) -> TestHost {
     let game = FakeGame::new("2026.09.15.0000.0000")
         .with_file("ui/uld/Exp.uld", b"uldh0100 experience".to_vec());
-    let test = approved_over(&game, manifest, |test| {
-        test.name_elements("_Exp", "Exp", &[("window", 1, false), ("text", 4, true)]);
-    });
-    test.build_element("_Exp", 1, None);
-    test.build_element("_Exp", 4, Some("EXP 10/20"));
-    test
+    approved_over(&game, manifest, |test| test.use_map(&CHARACTER_MAP, &[]))
+}
+
+/// The game builds the experience bar: the whole bar, and its text.
+fn build_experience_bar(test: &TestHost, shown: &str) {
+    use angelica_fake_game::Set;
+    test.game.set(
+        &format!("{BAR}.elements[0]"),
+        &[
+            ("name", 1.into()),
+            ("kind", Set::Name("res".into())),
+            ("visible", true.into()),
+        ],
+    );
+    test.game.set(
+        &format!("{BAR}.elements[1]"),
+        &[
+            ("name", 4.into()),
+            ("kind", Set::Name("text".into())),
+            ("visible", true.into()),
+            ("text", shown.into()),
+        ],
+    );
+}
+
+/// A value of the experience bar's element `element` as the game holds it;
+/// `None` when the element does not have it.
+fn bar_value(test: &TestHost, element: &str, field: &str) -> Option<runtime::lens::Value> {
+    use runtime::game::Game as _;
+    let (schema, _) = test.host.services().lens.schema();
+    let read = runtime::lens::prepare(
+        &schema,
+        &format!("{BAR}.elements[name = {element}].{field}"),
+        &|_| true,
+    )
+    .unwrap();
+    test.game
+        .query(&read)
+        .unwrap()
+        .first()
+        .and_then(|row| row.values[0].clone())
+}
+
+fn bar_shown(test: &TestHost) -> bool {
+    bar_value(test, "window", "visible") == Some(runtime::lens::Value::Boolean(true))
+}
+
+fn bar_text(test: &TestHost) -> String {
+    match bar_value(test, "text", "text") {
+        Some(runtime::lens::Value::Text(bytes)) => String::from_utf8(bytes).unwrap(),
+        other => panic!("not text: {other:?}"),
+    }
 }
 
 #[test]
 fn elements_of_the_games_windows_stay_hidden_until_the_plugin_stops() {
-    let test = with_experience_bar(MANIFEST);
+    let test = over_experience_bar(MANIFEST);
+    // Before the game builds the bar, the change waits for it.
     click(&test, "hide");
     assert_eq!(message(&test), "experience bar hidden");
-    assert!(!test.element("_Exp", 1).visible);
+    build_experience_bar(&test, "EXP 10/20");
+    test.frames(1);
+    assert!(!bar_shown(&test));
 
     // The game shows the bar again; the next frame hides it.
     test.game
-        .windows
-        .lock()
-        .unwrap()
-        .get_mut(&("_Exp".to_owned(), 1))
-        .unwrap()
-        .visible = true;
+        .set(&format!("{BAR}.elements[0]"), &[("visible", true.into())]);
     test.frames(1);
-    assert!(!test.element("_Exp", 1).visible);
+    assert!(!bar_shown(&test));
 
     click(&test, "hide");
     assert_eq!(message(&test), "experience bar shown");
-    assert!(test.element("_Exp", 1).visible);
+    assert!(bar_shown(&test));
 
     click(&test, "hide");
+    assert!(!bar_shown(&test));
     test.host.queue(Action::Disable("hello".into()));
     test.frames(2);
-    assert!(test.element("_Exp", 1).visible);
+    assert!(bar_shown(&test));
 }
 
 #[test]
-fn text_in_the_games_windows_follows_the_game_and_the_plugin() {
-    let test = with_experience_bar(MANIFEST);
-    let shown = |test: &TestHost| String::from_utf8(test.element("_Exp", 4).text.unwrap()).unwrap();
+fn text_in_the_games_windows_is_held_against_the_game_until_the_plugin_stops() {
+    use angelica_fake_game::Set;
+    let test = over_experience_bar(MANIFEST);
+    build_experience_bar(&test, "EXP 10/20");
     click(&test, "label");
     assert_eq!(message(&test), "clicks in the experience text");
-    assert_eq!(shown(&test), "EXP 10/20 · 0 clicks");
+    assert_eq!(bar_text(&test), "0 clicks");
 
     click(&test, "click");
-    assert_eq!(shown(&test), "EXP 10/20 · 1 clicks");
+    assert_eq!(bar_text(&test), "1 clicks");
 
-    test.game_writes("_Exp", 4, "EXP 11/20");
+    // The game writes its own text again; the next frame puts the
+    // plugin's back, and the game's becomes the original.
+    test.game.set(
+        &format!("{BAR}.elements[1]"),
+        &[("text", Set::Text("EXP 11/20".into()))],
+    );
     test.frames(1);
-    assert_eq!(shown(&test), "EXP 11/20 · 1 clicks");
+    assert_eq!(bar_text(&test), "1 clicks");
 
-    // The game builds the window again.
-    test.build_element("_Exp", 4, Some("EXP 0/30"));
-    test.frames(1);
-    assert_eq!(shown(&test), "EXP 0/30 · 1 clicks");
+    // Only the text element has text: the bar itself is never written.
+    assert_eq!(bar_value(&test, "window", "text"), None);
 
     test.host.queue(Action::Disable("hello".into()));
     test.frames(2);
-    assert_eq!(shown(&test), "EXP 0/30");
+    assert_eq!(bar_text(&test), "EXP 11/20");
 }
 
 #[test]
-fn rules_for_the_games_windows_need_permissions_names_and_the_game() {
-    let without = without_permissions(&["gameui.hide", "gameui.text"]);
-    let test = with_experience_bar(&without);
+fn changes_to_the_games_windows_need_the_domain_and_the_names() {
+    let without = MANIFEST.replace(
+        "change = [\"camera\", \"chat\", \"windows\"]",
+        "change = [\"camera\", \"chat\"]",
+    );
+    let test = over_experience_bar(&without);
+    build_experience_bar(&test, "EXP 10/20");
     click(&test, "hide");
     assert_eq!(
         message(&test),
-        "hiding refused: the plugin does not hold gameui.hide"
+        "hiding refused: test.node.visible is in domain windows, which the plugin may not change: list it in the manifest's [lens] change"
     );
     click(&test, "label");
-    assert_eq!(
-        message(&test),
-        "text refused: the plugin does not hold gameui.text"
+    assert!(
+        message(&test).starts_with("text refused: test.text_node.text is in domain windows"),
+        "{}",
+        message(&test)
     );
-    assert!(test.element("_Exp", 1).visible);
+    assert!(bar_shown(&test));
 
-    // A game build whose layout file the map does not know.
-    let test = approved(MANIFEST);
+    // A game build whose layout file of the bar the map does not know.
+    let test = with_character(MANIFEST, &[]);
     click(&test, "hide");
-    assert_eq!(
-        message(&test),
-        "this game build has no name for the experience bar"
+    assert!(
+        message(&test).starts_with(
+            "hiding refused: the elements of window _Exp are not known in this game build"
+        ),
+        "{}",
+        message(&test)
     );
-
-    let test = with_experience_bar(MANIFEST);
-    test.game
-        .windows_available
-        .store(false, std::sync::atomic::Ordering::Release);
-    click(&test, "hide");
-    assert_eq!(
-        message(&test),
-        "hiding refused: map entry ui.stage is absent"
-    );
-    assert!(test.element("_Exp", 1).visible);
 }
 
 #[test]

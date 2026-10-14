@@ -430,6 +430,7 @@ fn check_arg(
                     }
                 }
                 Meaning::Sheet(_) | Meaning::Plain => {}
+                Meaning::Element(_) => return Err("a parameter is never a window element".into()),
             }
             if !matches!(param.meaning, Meaning::Plain) && !is_integer(kind) {
                 return Err("a sheet row, enum, or flags is an integer".into());

@@ -67,22 +67,24 @@ The exclusion list is an array of 16-byte records ended by one whose length is z
 
 ## Game windows
 
-The game's windows belong to a window manager the UI stage points to. A window is found by its name and one of its own elements by its id, both with the game's functions, which only read. An element's visibility is one bit of its flags; the game's function sets it and marks the element for drawing again. A text element keeps its text as a game string and copies the text it is given. The adapter installs no hook: once per frame, on the game's main thread, the host looks the elements of the active rules up and calls or reads through these entries.
+The game's windows are objects of the map's object model (`types/ui.toml`), read and changed through [Lens](../architecture/lens.md); no adapter of their own remains. The window manager the UI stage points to lists the loaded windows; a window's widget lists its elements, each a pointer to an element whose id the window's layout file gives. An element's visibility is one bit of its flags; the game's function sets it and marks the element for drawing again. A text element keeps its text as a game string and copies the text it is given.
 
 | Entry | Kind | Use |
 | --- | --- | --- |
 | `ui.stage` | `ptr` global | the stage, zero before it exists |
 | `ui.stage.unit_manager` (`ptr`) | field of the stage | the window manager |
-| `ui.unit_manager.get_unit_by_name` | function `(ptr manager, ptr name, i32 which) -> ptr` | the first window with a name, or zero |
-| `ui.unit_base.get_node_by_id` | function `(ptr window, u32 id) -> ptr` | an element of a built window, or zero |
-| `ui.unit_base.get_text_node_by_id` | function `(ptr window, u32 id) -> ptr` | the same, only when the element shows text |
+| `ui.unit_manager.units` (`struct`), `.unit_count` (`i16`) | fields of the manager | the loaded windows, by pointer |
+| `ui.unit_base.name` (`struct`) | field of a window | its name |
+| `ui.unit_base.widget` (`ptr`) | field of a window | its widget |
+| `ui.widget_info.nodes` (`ptr`), `.node_count` (`u32`) | fields of the widget | the window's elements, by pointer |
+| `ui.res_node.id` (`u32`), `.type` (`u16`) | fields of an element | its id in the layout file, and 3 for a text element |
 | `ui.res_node.flags` (`u32`) | field of an element | bit 20 is set while the element is visible |
 | `ui.res_node.set_visible` | function `(ptr element, u8 visible)` | shows or hides an element |
 | `ui.text_node.text` (`struct`) | field of a text element | its text, a game string |
 | `ui.text_node.set_text` | function `(ptr element, ptr text)` | sets a text element's text from NUL-terminated bytes |
-| `text.utf8_string.string_ptr` (`ptr`), `.used_size` (`i64`) | fields of the string | the text's bytes and their count with the terminator |
+| `text.utf8_string.string_ptr` (`ptr`) | field of the string | the text's bytes |
 
-An element is used only in the frame the game's functions returned it. A text longer than 8192 bytes is read as empty. Element ids come from the game map's [window schemas](./game-map-v2.md#window-schemas), never from a plugin. All entries of this section are needed; without one, rules for the game's windows are unavailable.
+The fields of the manager, the window, the widget, and the element are located in the code of the game's own lookups: `ui.unit_manager.get_unit_by_name`, which finds a window by its name, and `ui.unit_base.get_node_by_id` and `ui.unit_base.get_text_node_by_id`, which walk a window's elements for an id, the second only for elements of type 3. Element ids come from the game map's [window schemas](./game-map-v2.md#window-schemas), never from a plugin. Plugins change an element only through `set_visible` and `set_text`, on the game's main thread between frames, and the host applies those values again once per frame while a plugin holds them.
 
 ## Chat
 

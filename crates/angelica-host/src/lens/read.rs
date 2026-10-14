@@ -196,6 +196,10 @@ fn from_bits(kind: ValueKind, bits: u64) -> Option<Raw> {
 }
 
 fn raw(pages: &Pages<'_>, object: u64, read: &Read) -> Result<Option<Raw>> {
+    // A value of a variant exists only in the objects of the variant.
+    if !read.guards.is_empty() && !passes(pages, object, &read.guards)? {
+        return Ok(None);
+    }
     let object = match read.base {
         Base::Object => object,
         Base::Value { at, mask } => {
@@ -220,9 +224,10 @@ fn raw(pages: &Pages<'_>, object: u64, read: &Read) -> Result<Option<Raw>> {
         let mut bytes = [0u8; 8];
         Ok(pages.read(address, &mut bytes[..length])?.then_some(bytes))
     };
-    let kind = match read.stored {
+    let (kind, bit) = match read.stored {
         Stored::Text(length) => return read_text(pages, address, usize::from(length)),
-        Stored::Value(kind) => kind,
+        Stored::Value(kind) => (kind, None),
+        Stored::Bit { kind, index } => (kind, Some(index)),
     };
     let size = match kind {
         ValueKind::Bool | ValueKind::U8 | ValueKind::I8 => 1,
@@ -235,6 +240,9 @@ fn raw(pages: &Pages<'_>, object: u64, read: &Read) -> Result<Option<Raw>> {
         return Ok(None);
     };
     let unsigned = u64::from_le_bytes(bytes);
+    if let Some(index) = bit {
+        return Ok(Some(Raw::Boolean(unsigned >> index & 1 != 0)));
+    }
     Ok(Some(match kind {
         ValueKind::Bool => Raw::Boolean(bytes[0] != 0),
         ValueKind::U8 | ValueKind::U16 | ValueKind::U32 | ValueKind::U64 => {
@@ -598,4 +606,23 @@ fn read_text(pages: &Pages<'_>, address: u64, length: usize) -> Result<Option<Ra
         text.extend_from_slice(&piece);
     }
     Ok(Some(Raw::Text(text)))
+}
+
+/// The value `read` reads from the object at `object`, as bytes that are
+/// equal exactly when the values are: text as stored, a `bool` as one
+/// byte, a number as its 16 or 8 bytes. `None` when it cannot be read.
+#[must_use]
+pub fn current(memory: &dyn Memory, read: &Read, object: u64) -> Option<Vec<u8>> {
+    let pages = Pages {
+        memory,
+        loaded: RefCell::new(HashMap::new()),
+        most: MOST_CALL_PAGES,
+        call: None,
+    };
+    Some(match raw(&pages, object, read).ok()?? {
+        Raw::Text(text) => text,
+        Raw::Boolean(value) => vec![u8::from(value)],
+        Raw::Integer(value) => value.to_le_bytes().to_vec(),
+        Raw::Float(value) => value.to_le_bytes().to_vec(),
+    })
 }

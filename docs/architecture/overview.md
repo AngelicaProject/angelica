@@ -65,8 +65,7 @@ Each crate owns one boundary:
 - `host` owns installed plugins, their lifecycle, grants, settings, and the work of each frame; `sandbox` and `jobs` own wasmtime stores, the imports, and per-call limits; `storage` the plugins' folders; `ui` and `panel` plugin windows; `menu` the Angelica menu, `language` its English and Russian strings and the player's settings, and `theme` and `fonts` Angelica's look.
 - `game_data` reads the installed game's files and sheets through `angelica-sqpack` and caches decoded sheets.
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
-- `game_ui` owns the rules for the game's own windows and applies them once per frame through `Screen`, the game's windows as the game adapter offers them.
-- `lens` resolves the map's object model for the build, plans plugins' queries and watches, runs them over the game's memory, and takes plugins' actions ([Lens](./lens.md)).
+- `lens` resolves the map's object model for the build, plans plugins' queries and watches, runs them over the game's memory, changes values and applies held ones again once per frame, and takes plugins' actions ([Lens](./lens.md)).
 - `game::Game` is the boundary to the game process: the version, the adapters a service needs, and the memory reads, hooks, and calls of Lens.
 - `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay on the game's Direct3D 11 immediate context with its state saved and restored, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.
 

@@ -93,6 +93,9 @@ pub struct Objects {
     globals: BTreeMap<String, u64>,
     /// The entry of each function an action calls, by its address.
     pub code: BTreeMap<u64, String>,
+    /// The field each function that sets a value sets, by its address: its
+    /// type and name.
+    setters: BTreeMap<u64, (String, String)>,
 }
 
 impl Memory for Objects {
@@ -172,6 +175,21 @@ impl Objects {
                 }
             }
         }
+        // Functions that set fields get a place, and set the field in the
+        // scripted memory when called.
+        for object in map.objects().types.values() {
+            for field in object.fields.values() {
+                if let Some(call) = field.set.as_ref().and_then(|set| set.call.as_ref())
+                    && !objects.globals.contains_key(call)
+                {
+                    let at = objects.allocate(16);
+                    objects.globals.insert(call.clone(), at);
+                    objects
+                        .setters
+                        .insert(at, (object.name.clone(), field.name.clone()));
+                }
+            }
+        }
         let globals = objects.globals.clone();
         let schema = Schema::new(&map, BASE, |name| {
             if absent.contains(&name) {
@@ -226,6 +244,46 @@ impl Objects {
     fn write(&mut self, address: u64, bytes: &[u8]) {
         let start = usize::try_from(address - BASE).unwrap_or(usize::MAX);
         self.memory[start..start + bytes.len()].copy_from_slice(bytes);
+    }
+
+    /// The game's function at `function` sets its field of the object at
+    /// `object` to `value`, as a Lens change calls it.
+    pub fn set_through(
+        &mut self,
+        function: u64,
+        object: u64,
+        value: &runtime::lens::set::Setting,
+    ) -> bool {
+        use runtime::lens::set::Setting;
+        let (Some((type_name, name)), Ok(map)) = (self.setters.get(&function).cloned(), self.map())
+        else {
+            return false;
+        };
+        let Ok(field) = field_of(&map, &type_name, &name) else {
+            return false;
+        };
+        let set = match value {
+            Setting::Text(text) => Set::Text(String::from_utf8_lossy(text).into_owned()),
+            Setting::Number(bits) => match &field.shape {
+                Shape::Value {
+                    kind: ValueKind::Bool,
+                    ..
+                } => Set::Boolean(*bits & 0xFF != 0),
+                Shape::Value {
+                    kind: ValueKind::F32,
+                    ..
+                } => Set::Float(f64::from(f32::from_bits(
+                    u32::try_from(*bits & 0xFFFF_FFFF).unwrap_or_default(),
+                ))),
+                Shape::Value {
+                    kind: ValueKind::F64,
+                    ..
+                } => Set::Float(f64::from_bits(*bits)),
+                _ => Set::Integer(i128::from(*bits)),
+            },
+        };
+        self.assign(&map, &type_name, object, &[(name.as_str(), set)])
+            .is_ok()
     }
 
     fn pointer(&self, address: u64) -> u64 {
@@ -334,6 +392,8 @@ impl Objects {
                         domain: arg.domain.clone(),
                         forbidden: false,
                         set: None,
+                        bit: None,
+                        pointer: None,
                     };
                     let bytes = encode(&map, &field, value)?;
                     let mut wide = [0u8; 8];
@@ -554,8 +614,31 @@ impl Objects {
                 let field = field_of(map, &current, part)?;
                 let offset = u64::from(offset_of(map, &field)?);
                 if position + 1 == names.len() {
+                    if let Some(bit) = field.bit {
+                        // One bit of the entry's integer.
+                        let place = at + offset;
+                        let mut bytes = self.bytes_at(place, size(bit.kind));
+                        let byte = usize::from(bit.index / 8);
+                        let mask = 1u8 << (bit.index % 8);
+                        if matches!(value, Set::Boolean(true)) {
+                            bytes[byte] |= mask;
+                        } else {
+                            bytes[byte] &= !mask;
+                        }
+                        self.write(place, &bytes);
+                        break;
+                    }
                     let bytes = encode(map, &field, value)?;
-                    if matches!(field.shape, Shape::Text(_)) && behind_pointer(map, &field.at) {
+                    if let Some(pointer) = &field.pointer {
+                        // Text in a game string: the string's pointer leads
+                        // to a place of its own.
+                        let inner = u64::from(entry_offset(map, pointer)?);
+                        let text = self.allocate(bytes.len());
+                        self.write(text, &bytes);
+                        self.write(at + offset + inner, &text.to_le_bytes());
+                    } else if matches!(field.shape, Shape::Text(_))
+                        && behind_pointer(map, &field.at)
+                    {
                         // Text behind a pointer gets a place of its own.
                         let text = self.allocate(bytes.len());
                         self.write(text, &bytes);
@@ -681,32 +764,57 @@ fn pointer(map: &Map, global: &str) -> bool {
     )
 }
 
+/// A field of the type, of a base, or of a variant of it.
 fn field_of(map: &Map, type_name: &str, name: &str) -> Result<Field, String> {
     map.objects()
         .field(type_name, name)
         .map(|(_, field)| field.clone())
+        .or_else(|| {
+            map.objects()
+                .variant_field(type_name, name)
+                .map(|(_, _, field)| field.clone())
+        })
         .ok_or_else(|| format!("{type_name} has no field {name}"))
 }
 
 fn offset_of(map: &Map, field: &Field) -> Result<u32, String> {
-    match map.get(&field.at).map(|entry| &entry.kind) {
+    entry_offset(map, &field.at)
+}
+
+fn entry_offset(map: &Map, entry: &str) -> Result<u32, String> {
+    match map.get(entry).map(|entry| &entry.kind) {
         Some(EntryKind::Field {
             offset: Some(offset),
             ..
         }) => Ok(*offset),
-        _ => Err(format!("{} has no constant offset", field.at)),
+        _ => Err(format!("{entry} has no constant offset")),
     }
 }
 
 /// The bytes an object of `type_name` takes: up to the end of its last
-/// field, at least 8.
+/// field, or of a variant's, at least 8.
 fn size_of(map: &Map, type_name: &str) -> usize {
-    map.objects()
-        .fields(type_name)
+    let model = map.objects();
+    let variants = model
+        .types
         .values()
+        .filter(|object| object.variant.is_some() && object.extends.as_deref() == Some(type_name))
+        .flat_map(|object| object.fields.values());
+    model
+        .fields(type_name)
+        .into_values()
+        .chain(variants)
         .map(|field| {
             let at = offset_of(map, field).unwrap_or(0) as usize;
             at + match &field.shape {
+                Shape::Value { .. } if field.bit.is_some() => {
+                    field.bit.map_or(0, |bit| size(bit.kind))
+                }
+                Shape::Text(_) if field.pointer.is_some() => field
+                    .pointer
+                    .as_deref()
+                    .and_then(|pointer| entry_offset(map, pointer).ok())
+                    .map_or(8, |inner| inner as usize + 8),
                 Shape::Value { kind, .. } => size(*kind),
                 Shape::Text(_) if behind_pointer(map, &field.at) => 8,
                 Shape::Text(length) => usize::from(*length),

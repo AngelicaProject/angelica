@@ -157,9 +157,6 @@ pub struct Services {
     pub sheets: Arc<crate::sheets::Sheets>,
     /// The game map's object model for the running build, for Lens.
     pub lens: Arc<crate::lens::Lens>,
-    /// Events for the next frame and the plugins' subscriptions.
-    /// Rules for the game's own windows.
-    pub ui: Arc<crate::game_ui::GameUi>,
     /// What plugins draw over the game world.
     pub draw: Arc<crate::draw::Drawings>,
     /// Messages between plugins.
@@ -926,108 +923,6 @@ impl api::text_case::Host for State {
     }
 }
 
-fn target_from_api(element: api::game_ui::Element) -> crate::game_ui::Target {
-    crate::game_ui::Target {
-        window: element.window,
-        element: element.name,
-    }
-}
-
-fn targets_to_api(targets: Vec<crate::game_ui::Target>) -> Vec<api::game_ui::Element> {
-    targets
-        .into_iter()
-        .map(|target| api::game_ui::Element {
-            window: target.window,
-            name: target.element,
-        })
-        .collect()
-}
-
-impl State {
-    /// Fails when the game build lacks what rules for its windows need.
-    fn screen_available(&self) -> crate::error::Result<()> {
-        self.context
-            .services
-            .game
-            .with_screen(&mut |_| {})
-            .map_err(|reason| Error::new(Kind::Unavailable, reason))
-    }
-}
-
-impl api::game_ui::Host for State {
-    fn elements(&mut self, window: String) -> ApiResult<Vec<api::game_ui::ElementInfo>> {
-        api(self.main_only())?;
-        self.host(|state| {
-            let services = &state.context.services;
-            services.ui.elements(&window, &services.data).map(|named| {
-                named
-                    .into_iter()
-                    .map(|named| api::game_ui::ElementInfo {
-                        name: named.name,
-                        text: named.kind == angelica_map::ElementKind::Text,
-                    })
-                    .collect()
-            })
-        })
-        .map_err(Into::into)
-    }
-
-    fn set_hidden(
-        &mut self,
-        elements: Vec<api::game_ui::Element>,
-    ) -> ApiResult<Vec<api::game_ui::Element>> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::GameUiHide))?;
-        self.host(|state| {
-            if !elements.is_empty() {
-                state.screen_available()?;
-            }
-            let services = &state.context.services;
-            services
-                .ui
-                .set_hidden(
-                    &state.context.id,
-                    elements.into_iter().map(target_from_api).collect(),
-                    &services.data,
-                )
-                .map(targets_to_api)
-        })
-        .map_err(Into::into)
-    }
-
-    fn set_texts(
-        &mut self,
-        rules: Vec<api::game_ui::TextRule>,
-    ) -> ApiResult<Vec<api::game_ui::Element>> {
-        use crate::game_ui::Placement;
-        api(self.main_only())?;
-        api(self.permitted(Permission::GameUiText))?;
-        self.host(|state| {
-            if !rules.is_empty() {
-                state.screen_available()?;
-            }
-            let services = &state.context.services;
-            let rules = rules
-                .into_iter()
-                .map(|rule| crate::game_ui::TextRule {
-                    target: target_from_api(rule.element),
-                    text: rule.text,
-                    placement: match rule.placement {
-                        api::game_ui::Placement::After => Placement::After,
-                        api::game_ui::Placement::Before => Placement::Before,
-                        api::game_ui::Placement::Instead => Placement::Instead,
-                    },
-                })
-                .collect();
-            services
-                .ui
-                .set_texts(&state.context.id, rules, &services.data)
-                .map(targets_to_api)
-        })
-        .map_err(Into::into)
-    }
-}
-
 impl api::commands::Host for State {
     fn define(&mut self, commands: Vec<api::commands::Command>) -> ApiResult<()> {
         api(self.main_only())?;
@@ -1667,6 +1562,10 @@ impl crate::lens::set::Writer for GameCaller<'_> {
 
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
         self.0.write(address, bytes)
+    }
+
+    fn call_setter(&self, function: u64, object: u64, value: &crate::lens::set::Setting) -> bool {
+        self.0.call_setter(function, object, value)
     }
 }
 

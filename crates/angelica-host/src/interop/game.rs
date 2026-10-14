@@ -88,13 +88,6 @@ impl Game for WindowsGame {
         super::chat::print(&self.catalog, self.base, message)
     }
 
-    fn with_screen(
-        &self,
-        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
-    ) -> Result<(), String> {
-        super::game_ui::with_screen(&self.catalog, self.base, work)
-    }
-
     fn query(
         &self,
         prepared: &crate::lens::Prepared,

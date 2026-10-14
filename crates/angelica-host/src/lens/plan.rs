@@ -19,6 +19,11 @@ pub enum Stored {
     Value(ValueKind),
     /// NUL-terminated, at most this many bytes, inline.
     Text(u16),
+    /// One bit of an integer of this kind, as a `bool`.
+    Bit {
+        kind: ValueKind,
+        index: u8,
+    },
 }
 
 /// One step to another object: into an embedded object, or through the
@@ -53,12 +58,25 @@ pub enum Base {
 }
 
 /// How a value is read from an object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Read {
     pub base: Base,
     pub hops: Vec<Hop>,
     pub offset: u32,
     pub stored: Stored,
+    /// Conditions the object must meet for the value to exist, such as
+    /// being of the variant that has the field.
+    pub guards: Vec<Condition>,
+}
+
+impl Read {
+    /// The read starting from `base` instead, with its guards.
+    pub(crate) fn rebase(&mut self, base: Base) {
+        self.base = base;
+        for guard in &mut self.guards {
+            guard.read.rebase(base);
+        }
+    }
 }
 
 /// A number to compare with.
@@ -83,7 +101,7 @@ pub struct Condition {
     pub check: Check,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Count {
     Fixed(u16),
     /// A value of the object holding the array, at most `most`.
@@ -197,6 +215,9 @@ struct Planner<'a> {
     objects_only: bool,
     /// The type the path ended at, once planned.
     reached: Option<String>,
+    /// The text a condition on the path fixed for a text field, by the
+    /// field's `<type>.<field>`: the window whose elements are named.
+    fixed: BTreeMap<String, String>,
 }
 
 fn not_found(message: String) -> Error {
@@ -247,6 +268,64 @@ impl<'a> Planner<'a> {
         Ok((field, offset))
     }
 
+    /// A field of `type_name`, or of a variant of it: then also the
+    /// variant's type and the condition an object meets to be of it.
+    fn lookup(
+        &mut self,
+        type_name: &str,
+        name: &str,
+    ) -> Result<(&'a Field, u32, String, Option<Condition>)> {
+        let objects: &'a Objects = self.objects;
+        if let Some((owner, _)) = objects.field(type_name, name) {
+            let (field, offset) = self.field(type_name, name)?;
+            return Ok((field, offset, owner.name.clone(), None));
+        }
+        let Some((variant_type, variant, _)) = objects.variant_field(type_name, name) else {
+            // The error names the type's own fields.
+            let (field, offset) = self.field(type_name, name)?;
+            return Ok((field, offset, type_name.to_owned(), None));
+        };
+        let Some((_, kind_field)) = objects.field(type_name, &variant.field) else {
+            unreachable!("the map checks a variant's field");
+        };
+        let Shape::Value {
+            kind,
+            meaning: Meaning::Enum(enum_name),
+            ..
+        } = &kind_field.shape
+        else {
+            unreachable!("the map checks that a variant's field is an enum value");
+        };
+        let kind_offset = self.schema.offset(&kind_field.at).map_err(|reason| {
+            Error::new(
+                Kind::Unavailable,
+                format!(
+                    "{type_name}.{} is not available in this game build: {reason}",
+                    variant.field
+                ),
+            )
+        })?;
+        let values = &objects.enums[enum_name].values;
+        let guard = Condition {
+            read: Read {
+                base: Base::Object,
+                hops: Vec::new(),
+                offset: kind_offset,
+                stored: Stored::Value(*kind),
+                guards: Vec::new(),
+            },
+            check: Check::NumberIn(
+                variant
+                    .values
+                    .iter()
+                    .map(|value| Number::Integer(i128::from(values[value])))
+                    .collect(),
+            ),
+        };
+        let (field, offset) = self.field(&variant_type.name, name)?;
+        Ok((field, offset, variant_type.name.clone(), Some(guard)))
+    }
+
     fn domain(&mut self, domain: &str) -> Result<()> {
         if self.covered.contains(domain) {
             return Ok(());
@@ -268,43 +347,42 @@ impl<'a> Planner<'a> {
     fn value(&mut self, type_name: &str, path: &[String]) -> Result<(Read, Described)> {
         let mut current = type_name.to_owned();
         let mut hops = Vec::new();
+        let mut guards = Vec::new();
         for (position, name) in path.iter().enumerate() {
-            let (field, offset) = self.field(&current, name)?;
-            // The type that declares the field, which may be a base of `current`.
-            let owner = self
-                .objects
-                .field(&current, name)
-                .map_or_else(|| current.clone(), |(owner, _)| owner.name.clone());
+            // The type that declares the field, which may be a base of
+            // `current` or a variant of it.
+            let (field, offset, owner, guard) = self.lookup(&current, name)?;
+            if let Some(mut guard) = guard {
+                guard.read.hops.clone_from(&hops);
+                guards.push(guard);
+            }
             let last = position + 1 == path.len();
             match (&field.shape, last) {
                 (Shape::Value { kind, .. }, true) => {
+                    let stored = field.bit.map_or(Stored::Value(*kind), |bit| Stored::Bit {
+                        kind: bit.kind,
+                        index: bit.index,
+                    });
                     return Ok((
                         Read {
                             base: Base::Object,
                             hops,
                             offset,
-                            stored: Stored::Value(*kind),
+                            stored,
+                            guards,
                         },
                         described(field, format!("{owner}.{name}")),
                     ));
                 }
                 (Shape::Text(length), true) => {
-                    // Text behind a pointer is read where the pointer leads.
-                    let offset = if self.schema.text_pointers.contains(&field.at) {
-                        hops.push(Hop {
-                            offset,
-                            pointer: true,
-                        });
-                        0
-                    } else {
-                        offset
-                    };
+                    let offset = self.text_offset(field, offset, &mut hops)?;
                     return Ok((
                         Read {
                             base: Base::Object,
                             hops,
                             offset,
                             stored: Stored::Text(*length),
+                            guards,
                         },
                         described(field, format!("{owner}.{name}")),
                     ));
@@ -343,6 +421,47 @@ impl<'a> Planner<'a> {
         Err(Error::invalid("a value needs a field name"))
     }
 
+    /// Where a text field's text is read from its object at `offset`:
+    /// behind the pointer of its entry, behind the pointer in the structure
+    /// there, or in place.
+    fn text_offset(&self, field: &Field, offset: u32, hops: &mut Vec<Hop>) -> Result<u32> {
+        if let Some(pointer) = &field.pointer {
+            let inner = self.schema.offset(pointer).map_err(|reason| {
+                Error::new(
+                    Kind::Unavailable,
+                    format!(
+                        "{} is not available in this game build: {reason}",
+                        field.name
+                    ),
+                )
+            })?;
+            hops.push(Hop {
+                offset: offset.saturating_add(inner),
+                pointer: true,
+            });
+            return Ok(0);
+        }
+        if self.schema.text_pointers.contains(&field.at) {
+            hops.push(Hop {
+                offset,
+                pointer: true,
+            });
+            return Ok(0);
+        }
+        Ok(offset)
+    }
+
+    /// The window whose elements a field with element names names: the one
+    /// a condition earlier on the path fixed.
+    fn window(&self, window_field: &str, name: &str) -> Result<String> {
+        self.fixed.get(window_field).cloned().ok_or_else(|| {
+            let field = window_field.rsplit('.').next().unwrap_or(window_field);
+            Error::invalid(format!(
+                "{name} names elements of a window: name the window earlier on the path, such as [{field} = \"_Exp\"]"
+            ))
+        })
+    }
+
     fn condition(&mut self, scope: Scope<'_>, condition: &query::Condition) -> Result<Condition> {
         let (read, described) = self.scoped(scope, &condition.field)?;
         let name = described.name;
@@ -364,6 +483,10 @@ impl<'a> Planner<'a> {
                 Test::Compare(Op::NotEqual, _) => false,
                 Test::Compare(..) => return wrong("is text: compare it with = or !="),
             };
+            if equal && let [text] = texts.as_slice() {
+                self.fixed
+                    .insert(name.clone(), String::from_utf8_lossy(text).into_owned());
+            }
             return Ok(Condition {
                 read,
                 check: Check::Text(equal, texts),
@@ -383,6 +506,10 @@ impl<'a> Planner<'a> {
                         return wrong(&format!("has no value {value}; its values: {known}"));
                     };
                     Number::Integer(i128::from(*number))
+                }
+                (Literal::Name(element) | Literal::Text(element), Meaning::Element(window)) => {
+                    let window = self.window(window, &name)?;
+                    Number::Integer(i128::from(self.schema.element(&window, element)?))
                 }
                 (Literal::Name(value), _) => {
                     return wrong(&format!("has no named values, so {value} means nothing"));
@@ -473,6 +600,7 @@ impl<'a> Planner<'a> {
                     hops: Vec::new(),
                     offset: 0,
                     stored: Stored::Value(*kind),
+                    guards: Vec::new(),
                 },
                 own(),
             )),
@@ -482,12 +610,13 @@ impl<'a> Planner<'a> {
                     hops: Vec::new(),
                     offset: 0,
                     stored: Stored::Text(*length),
+                    guards: Vec::new(),
                 },
                 own(),
             )),
             (Shape::Ref(to), false) => {
                 let (mut read, described) = self.value(to, rest)?;
-                read.base = Base::Pointer(at);
+                read.rebase(Base::Pointer(at));
                 Ok((read, described))
             }
             (Shape::Ref(_), true) => Err(Error::invalid(format!(
@@ -517,6 +646,19 @@ impl<'a> Planner<'a> {
                     Meaning::Sheet(sheet) => ColumnMeaning::Sheet(sheet.clone()),
                     Meaning::Enum(name) => ColumnMeaning::Enum(names(name)),
                     Meaning::Flags(name) => ColumnMeaning::Flags(names(name)),
+                    Meaning::Element(window) => self
+                        .fixed
+                        .get(window)
+                        .and_then(|window| self.schema.windows.get(window))
+                        .and_then(|named| named.as_ref().ok())
+                        .map_or(ColumnMeaning::Plain, |named| {
+                            ColumnMeaning::Enum(
+                                named
+                                    .iter()
+                                    .map(|(name, id)| (u64::from(*id), name.clone()))
+                                    .collect(),
+                            )
+                        }),
                 };
                 (meaning, unit.clone())
             }
@@ -660,6 +802,7 @@ impl<'a> Planner<'a> {
             hops: Vec::new(),
             offset,
             stored: Stored::Value(*kind),
+            guards: Vec::new(),
         };
         let values = &objects.enums[enum_name].values;
         let domain_of = |value: &str| {
@@ -905,7 +1048,16 @@ impl<'a> Planner<'a> {
         steps: &mut Vec<Step>,
         columns: &mut Vec<Column>,
     ) -> Result<String> {
-        let (field, offset) = self.field(holder, &segment.field)?;
+        // A field of a variant reaches only the objects of the variant.
+        let (field, offset, owner, guard) = self.lookup(holder, &segment.field)?;
+        if let Some(guard) = guard {
+            steps.push(Step::Filter(vec![guard]));
+        }
+        let holder = if self.objects.types[&owner].variant.is_some() {
+            owner.as_str()
+        } else {
+            holder
+        };
         match &field.shape {
             Shape::Ref(to) | Shape::Embed(to) => {
                 steps.push(Step::Hop(Hop {
@@ -1106,6 +1258,7 @@ pub fn prepare_objects(schema: &Schema, text: &str) -> Result<Prepared> {
         watch: false,
         objects_only: true,
         reached: None,
+        fixed: BTreeMap::new(),
     }
     .plan(&query)
 }
@@ -1131,6 +1284,7 @@ pub fn prepare_rule(
         watch: true,
         objects_only: true,
         reached: None,
+        fixed: BTreeMap::new(),
     }
     .plan(&query)
 }
@@ -1142,6 +1296,8 @@ pub struct Target {
     pub owner: String,
     pub field: Field,
     pub offset: u32,
+    /// How its value is read from each object the plan reaches.
+    pub read: Read,
 }
 
 /// Plans a path to a value to change, such as `camera.camera.max_distance`:
@@ -1184,19 +1340,26 @@ pub fn prepare_set(
         watch: false,
         objects_only: true,
         reached: None,
+        fixed: BTreeMap::new(),
     };
-    let prepared = planner.plan(&query)?;
-    let owner = planner
+    let mut prepared = planner.plan(&query)?;
+    let reached = planner
         .reached
         .clone()
         .ok_or_else(|| Error::invalid("a value to change is a field of an object"))?;
-    let (field, offset) = planner.field(&owner, &last.field)?;
+    let (field, offset, owner, guard) = planner.lookup(&reached, &last.field)?;
+    // A field of a variant is changed only in the objects of the variant.
+    prepared
+        .steps
+        .extend(guard.map(|guard| Step::Filter(vec![guard])));
+    let (read, _) = planner.value(&reached, std::slice::from_ref(&last.field))?;
     Ok((
         prepared,
         Target {
             owner,
             field: field.clone(),
             offset,
+            read,
         },
     ))
 }
@@ -1218,6 +1381,7 @@ fn plan(
         watch,
         objects_only: false,
         reached: None,
+        fixed: BTreeMap::new(),
     }
     .plan(&query)
 }

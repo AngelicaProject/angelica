@@ -39,16 +39,16 @@ A field is visible to plugins because a type names it. Types and fields are a co
 
 ## Window schemas
 
-Plugins change the game's own windows by window and element name. The map's window schemas give the element names, each for the exact layout files of the window it was checked against ([format](../formats/game-map-v2.md#window-schemas)). The layout file is in the installed game's archives, so it is checked against the game's data, as sheets are:
+Plugins reach elements of the game's own windows by window and element name, through a field of the object model whose meaning is `element`. The map's window schemas give the element names, each for the exact layout files of the window it was checked against ([format](../formats/game-map-v2.md#window-schemas)). The layout file is in the installed game's archives, so it is checked against the game's data, as sheets are:
 
-- the host computes the fingerprint of a window's layout file when a plugin first names the window, and uses the schema's ids only for a file the schema lists;
+- the host computes the fingerprint of every schema's layout file when it resolves the object model for the build, at start and with every map reload, and uses the schema's ids only for a file the schema lists;
 - `angelica map verify` checks every schema against the game data next to the executable, reports each window as known or unknown with the file's fingerprint, and fails when a window is unknown.
 
 An element is named when a plugin needs it, after it was seen in the game to be what its `doc` says, never speculatively. A plugin cannot change an element the map does not name.
 
 ## Reloading the map
 
-While the game runs, the host looks at the signed map every second. When its file list changes, the host authenticates it, resolves it against the running executable again, and replaces the sheet schemas, the object model, and the window schemas plugins use. Entries that installed hooks use keep their addresses until the next game start.
+While the game runs, the host looks at the signed map every second. When its file list changes, the host authenticates it, resolves it against the running executable again, and replaces the sheet schemas and the object model plugins use, with the window schemas' names. Entries that installed hooks use keep their addresses until the next game start.
 
 ## Build records
 

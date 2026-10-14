@@ -42,12 +42,6 @@ pub enum Permission {
     /// Send data to the hosts the manifest lists: POST, PUT, PATCH, DELETE.
     #[serde(rename = "http.send")]
     HttpSend,
-    /// Keep elements of the game's own windows hidden.
-    #[serde(rename = "gameui.hide")]
-    GameUiHide,
-    /// Put text in text elements of the game's own windows.
-    #[serde(rename = "gameui.text")]
-    GameUiText,
     /// Draw marks, lines, and text over the game world.
     #[serde(rename = "draw.world")]
     DrawWorld,
@@ -82,8 +76,6 @@ impl Permission {
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
             Self::HttpSend => "http.send",
-            Self::GameUiHide => "gameui.hide",
-            Self::GameUiText => "gameui.text",
             Self::DrawWorld => "draw.world",
             Self::MessagesSend => "messages.send",
             Self::ClipboardWrite => "clipboard.write",
@@ -105,8 +97,6 @@ impl Permission {
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
             Self::HttpSend => "Sends data to these internet hosts",
-            Self::GameUiHide => "Hides parts of the game's interface",
-            Self::GameUiText => "Puts its own text in the game's windows",
             Self::DrawWorld => "Draws marks, lines, and text over the game world",
             Self::MessagesSend => "Sends messages to these plugins",
             Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
@@ -122,12 +112,9 @@ impl Permission {
     pub fn class(self) -> Class {
         match self {
             Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
-            Self::ExcelText
-            | Self::TextCase
-            | Self::FilesReplace
-            | Self::GameUiHide
-            | Self::GameUiText
-            | Self::DrawWorld => Class::WhatYouSee,
+            Self::ExcelText | Self::TextCase | Self::FilesReplace | Self::DrawWorld => {
+                Class::WhatYouSee
+            }
             Self::ChatCommands
             | Self::ChatPrint
             | Self::MessagesSend

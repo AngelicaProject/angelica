@@ -182,6 +182,7 @@ array = { of = "inventory.inventory_item", count = "size", most = 200, stride = 
 - `doc`: what the type is; not blank.
 - `domain`: the domain of the type's fields, unless a field names another.
 - `extends`: optional; a type whose fields this one has too, at the same offsets, such as a character that is also a game object. A field of the base keeps the base's entry and domain.
+- `variant`: optional, for a type that `extends` another: `{ field = "<field>", values = ["<value>", …] }`, an enum value field of the base and the values that make an object of the base one of this type, such as the text elements among a window's elements. A path from the base reaches the variant's own fields, and only in objects of the variant: an object of another kind is skipped where the path goes on through such a field, and has no value of it in braces.
 - `fields`: the type's fields, each named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
 
 A field is located by a `field` entry: `at`, or by default the entry `<type>.<field>`. The entry's `of` is the type that declares the field. The field's shape is one of:
@@ -194,7 +195,9 @@ A field is located by a `field` entry: `at`, or by default the entry `<type>.<fi
 | embedded object | `embed = "<type>"` | `struct` | an object of the type at the field's offset |
 | array | `array = { … }` | `struct` (in the object) or `ptr` (behind a pointer) | elements of a type |
 
-A value's meaning is at most one of: `sheet = "<sheet>"`, a row of the game's sheet; `enum = "<enum>"`, one of the enum's values; `flags = "<enum>"`, a set of a flags enum's bits. A sheet row, an enum value, and flags are integers. `unit` names the unit of a number, such as `yalms` or `s`.
+A value's meaning is at most one of: `sheet = "<sheet>"`, a row of the game's sheet; `enum = "<enum>"`, one of the enum's values; `flags = "<enum>"`, a set of a flags enum's bits; `element = "<type>.<field>"`, the id of an element of one of the game's windows, named by the [window schema](#window-schemas) of the window whose name the text field `<type>.<field>` holds. A sheet row, an enum value, flags, and an element are integers. `unit` names the unit of a number, such as `yalms` or `s`. A path names an element by its name only after an equality condition on that text field, which names the window: `windows[name = "_Exp"].layout.elements[name = text]`.
+
+A value whose entry is an integer may have `bit = n` (0 to one less than the integer's bits): the value is that bit, read as a `bool`, without a meaning or unit. Text whose entry is `struct` may have `pointer = "<entry>"`: the structure there, such as a game string, holds a pointer to the text at the `field` entry `pointer`, of the type `ptr`.
 
 An array gives:
 
@@ -206,7 +209,10 @@ An array gives:
 
 Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
 
-A value field may have `set`: `true`, or `{ range = [least, most] }`, when plugins may change it. Only a value that exists on the player's computer alone is marked, such as the camera's zoom limits: never one the game sends to its servers. The field is a number or a `bool`, never a pointer or forbidden; its domain has `change` wording; an integer field has an integer range.
+A value or text field may have `set`: `true`, or a table of `range = [least, most]`, `call`, and `hold`, when plugins may change it. Only a value that exists on the player's computer alone is marked, such as the camera's zoom limits or what the game's windows show: never one the game sends to its servers. The field is a number, a `bool`, or text, never a pointer or forbidden; its domain has `change` wording; only a number has a range, and an integer field an integer one.
+
+- `call`: a `function` entry of the main thread, `(ptr object, value)` returning nothing, whose value argument is the field's kind (`u8` or `bool` for a bit, `ptr` to NUL-terminated text for text). The host hands the value to the game's function, which changes it as the game itself does, instead of writing memory. Text and bits are changed only this way.
+- `hold = true`: the game sets the value again itself, such as an element's visibility. The host applies a plugin's value again every frame wherever the plugin's path reaches.
 
 ### Roots
 
@@ -313,7 +319,7 @@ default = 0
 
 ### Rules and resolution
 
-The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an event with outcomes is not at a function or its domain has no `change` wording, an outcome's `returns` does not fit the function's return kind, a `mask` is zero or on anything but an integer, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large; when a `variant` is on a type without `extends`, names no value, or names a field of the base that is not an enum value or a value the enum lacks; when an `element` names something other than a text field, a `bit` is past its integer or on anything but an integer, or a `pointer` is not a `ptr` field entry or on text that is not in a `struct`; when a `set` field's `call` is not a function of the main thread that takes the object and the value and returns nothing, or text or a bit is set without one. It is invalid too when an event's `at` is not a function or a location, an event with outcomes is not at a function or its domain has no `change` wording, an outcome's `returns` does not fit the function's return kind, a `mask` is zero or on anything but an integer, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
 
 In a build, a root is absent when its global is absent, a field when its entry is absent, an event when its `at` is absent, and an action when its function or a global it passes is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, events, and actions under `objects`, and an action whose condition or object path does not fit the model as absent.
 
@@ -341,7 +347,7 @@ elements = { text = 4 }
 - `elements`: at least one named element. A name is a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes. `kind` is `text` for an element that shows text and `other` for any other.
 - `layouts`: at least one layout file the names were checked against. `fingerprint` is 16 lowercase hexadecimal digits: the first 8 bytes of the SHA-256 of the layout file's bytes; `elements` gives every named element its id in that file, each id above zero and once.
 
-A name applies in a game build only when the build's layout file has the fingerprint of one of the schema's layouts. Otherwise every name of the window is absent in that build: a patch that changes the window's layout file in any way leaves its names absent until a layout for the new build is added. A name never means another element.
+The object model reaches elements by these names through a field with `element` ([types](#types)). A name applies in a game build only when the build's layout file has the fingerprint of one of the schema's layouts. Otherwise every name of the window is absent in that build: a patch that changes the window's layout file in any way leaves its names absent until a layout for the new build is added. A name never means another element.
 
 A schema that breaks a rule makes the whole map invalid. Window schemas are not part of `entries_sha256`.
 

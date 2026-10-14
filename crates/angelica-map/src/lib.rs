@@ -24,8 +24,8 @@ pub use events::{Arg, Event, MOST_RATE, Outcome, Register, Source as ArgSource};
 pub use load::{FORMAT, Map};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use objects::{
-    Array, Domain, DomainClass, Enum, Field, Length, MOST_ELEMENTS, MOST_TEXT, Meaning, Objects,
-    Partition, Root, Settable, Shape, Type, Wording,
+    Array, Bit, Domain, DomainClass, Enum, Field, Length, MOST_ELEMENTS, MOST_TEXT, Meaning,
+    Objects, Partition, Root, Settable, Shape, Type, Variant, Wording,
 };
 pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};

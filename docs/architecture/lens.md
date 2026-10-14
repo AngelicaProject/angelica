@@ -51,7 +51,11 @@ A decision point is an event of a function with outcomes. A plugin's rule there 
 
 ## Changes
 
-A change is a path to a field the map marks changeable, planned like a query that ends at objects, and a value checked against the field's kind and range. The host writes the value into each object the path reaches, only into committed read-write data of the game, and keeps the original. One plugin owns a changed value until it restores it or stops; another plugin's change of it is refused meanwhile. Putting back walks the path again and writes the original only where the path still reaches the same place and the value is still the one written, so the game's own changes and objects it made again are never overwritten.
+A change is a path to a field the map marks changeable, planned like a query that ends at objects, and a value checked against the field's kind and range, or text checked for its length and for control characters. The host writes the value into each object the path reaches, only into committed read-write data of the game, or hands it to the game's function the map names for the field, on the main thread, and keeps the original. One plugin owns a changed value until it restores it or stops; another plugin's change of it is refused meanwhile. Putting back walks the path again and writes the original only where the path still reaches the same place and the value is still the one written, so the game's own changes and objects it made again are never overwritten.
+
+A held change is one to a field the game sets again itself, such as an element of a window. Once per frame, after the plugins' calls, the host walks the path of every held change again: it applies the value in objects the path reaches for the first time, and again where the game changed it, whose value becomes the original; values in objects the path no longer reaches are forgotten.
+
+A field of a variant, such as a text element's text, is read and changed only in objects of the variant: the plan checks the base's field that tells them apart before it reads the field or goes on through it. Element names come from the map's window schemas for the build's layout files, which the host fingerprints when it resolves the object model; a path names the window, then its elements by name.
 
 ## Actions
 

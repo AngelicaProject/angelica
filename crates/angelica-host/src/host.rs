@@ -639,7 +639,6 @@ impl Host {
             .lens
             .changes
             .remove_plugin(id, &crate::sandbox::GameCaller(self.services.game.as_ref()));
-        self.services.ui.remove_plugin(id);
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -764,14 +763,10 @@ impl Host {
         for plugin in self.plugins() {
             self.frame_plugin(&plugin, &frame);
         }
-        let ui = &self.services.ui;
-        if !ui.idle() {
-            // Without the game's windows the rules wait; `set-hidden` and
-            // `set-texts` already told the plugin why.
-            let _ = self
-                .services
-                .game
-                .with_screen(&mut |screen| ui.apply(screen, &self.services.data));
+        // Values the game sets again itself, such as what its windows show.
+        let held = &self.services.lens.changes;
+        if held.holding() {
+            held.frame(&crate::sandbox::GameCaller(self.services.game.as_ref()));
         }
     }
 

@@ -54,7 +54,6 @@ world plugin {
     import http;
     import lens;
     import events;
-    import game-ui;
     import draw;
     import messages;
     import clipboard;

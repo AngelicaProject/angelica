@@ -42,16 +42,6 @@ pub trait Game: Send + Sync {
     /// does not exist yet.
     fn print(&self, message: &[u8]) -> Result<(), String>;
 
-    /// Runs `work` with the game's own windows, when the game has them
-    /// yet. On the main thread only.
-    ///
-    /// # Errors
-    /// Names the map entries the game build lacks.
-    fn with_screen(
-        &self,
-        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
-    ) -> Result<(), String>;
-
     /// The rows of a prepared Lens query, read from the game's memory. On
     /// the main thread only.
     ///
@@ -82,6 +72,23 @@ pub trait Game: Send + Sync {
     fn call(&self, address: u64, args: &[u64]) -> Result<crate::lens::act::Returned, String> {
         let _ = (address, args);
         Err("this game cannot be acted in".into())
+    }
+
+    /// Calls the game's function at `function` that sets a value of the
+    /// object at `object` to `value`, on the main thread, for a Lens
+    /// change; text is handed over NUL-terminated. Whether it was called.
+    fn call_setter(&self, function: u64, object: u64, value: &crate::lens::set::Setting) -> bool {
+        use crate::lens::set::Setting;
+        match value {
+            Setting::Number(bits) => self.call(function, &[object, *bits]).is_ok(),
+            Setting::Text(text) => {
+                let mut terminated = text.clone();
+                terminated.push(0);
+                // The buffer outlives the call, which copies the text.
+                let pointer = terminated.as_ptr() as u64;
+                self.call(function, &[object, pointer]).is_ok()
+            }
+        }
     }
 
     /// Makes the game ask [`crate::lens::decide::Decisions::decide`] with

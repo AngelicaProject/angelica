@@ -102,7 +102,7 @@ Change a value the game keeps on the player's computer alone, such as how far th
 
 - SDK: `lens::set("camera.camera.max_distance", 40.0f32)?` returns how many values it changed; `lens::restore("camera.camera.max_distance")?` puts the originals back. The host puts them back when the plugin stops too.
 - Permission: each domain the plugin changes, listed in the manifest as `[lens] change = ["camera"]`. Instance: main.
-- Only fields the map marks changeable, within their range; `schema show` says which. Set again when the game makes the object again: a change lives in the object it was written to.
+- Only fields the map marks changeable, within their range; `schema show` says which. A held field, such as what a window shows, the host applies again; any other change lives in the object it was written to, so set again when the game makes the object again.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
 ## Acting in the game
@@ -155,12 +155,12 @@ Teach the game's capitalization letters it does not know.
 
 ## The game's own windows
 
-Hide parts of the game's interface, or put your own text after, before, or instead of the text of one of its elements.
+Hide parts of the game's windows, or put your own text in place of the text of one of their elements.
 
-- SDK: `game_ui::hide(&[game_ui::element("_Exp", "window")])`, `game_ui::texts(&[game_ui::after("_Exp", "text", " (75%)")])`; `game_ui::elements("_Exp")` lists the names a window has.
-- Permissions: `gameui.hide` for hiding, `gameui.text` for text. Instance: main.
-- Each call replaces the plugin's whole list; an empty list removes the rules. Call `texts` again when your value changes; the host keeps the text in place when the game rewrites its own.
-- Both return the elements the running game build has no names for; decide whether your feature works without them. A window or element the game map does not name needs an [API request](./api-requests.md) for the name.
+- SDK: `lens::set("windows.unit_manager.windows[name = \"_Exp\"].layout.elements[name = window].visible", false)?` hides the experience bar; `lens::set("…elements[name = text].text", "75%")?` puts your text there; `lens::restore(path)?` gives the element back to the game.
+- Permission: the `windows` domain, `[lens] change = ["windows"]`. Instance: main.
+- The host holds the value: it hides the element again and writes your text again whenever the game changes them, and in a window the game builds later. Set again when your value changes. Your text replaces the game's whole text.
+- `set` returns how many elements it changed now: none while the window is closed. A name the running game build lacks fails with `not-found` or `unavailable`; decide whether your feature works without it. A window or element the game map does not name needs an [API request](./api-requests.md) for the name; `angelica schema show windows` lists what is named.
 - Contract: [game windows](../formats/plugin-api-v1.md#game-windows).
 
 ## Replacement game files

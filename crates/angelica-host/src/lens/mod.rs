@@ -17,6 +17,8 @@ pub mod set;
 #[cfg(test)]
 mod tests;
 pub mod watch;
+#[cfg(test)]
+mod window_tests;
 
 pub use plan::{
     Column, ColumnMeaning, Prepared, Stored, prepare, prepare_objects, prepare_rule, prepare_watch,

@@ -44,7 +44,6 @@ pub mod commands;
 pub mod draw;
 pub mod events;
 pub mod excel;
-pub mod game_ui;
 pub mod http;
 pub mod jobs;
 pub mod lens;
@@ -59,8 +58,8 @@ pub mod websocket;
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
         chat, clipboard, commands, draw, events, excel, excel_text, file_replacements, game_files,
-        game_ui, http, jobs, lens, messages, notifications, runtime, sound, storage, text_case,
-        types, websocket,
+        http, jobs, lens, messages, notifications, runtime, sound, storage, text_case, types,
+        websocket,
     };
 }
 

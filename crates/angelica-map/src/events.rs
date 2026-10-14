@@ -397,7 +397,7 @@ fn check_event(
                         }
                         None => return Err(wrong(format!("`{name}` is not an enum"))),
                     },
-                    Meaning::Sheet(_) | Meaning::Plain => {}
+                    Meaning::Sheet(_) | Meaning::Plain | Meaning::Element(_) => {}
                 }
                 if !matches!(meaning, Meaning::Plain) && !is_integer(kind) {
                     return Err(wrong("a sheet row, enum, or flags is an integer".into()));

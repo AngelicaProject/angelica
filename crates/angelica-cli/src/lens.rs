@@ -127,11 +127,14 @@ fn load(source: &Source) -> Result<Loaded, String> {
     let image =
         Image::parse(&executable, Layout::File).map_err(|e| format!("{}: {e}", path.display()))?;
     let resolution = map.resolve(&image, image.image_base());
-    let schema = Schema::new(&map, 0, |name| match resolution.get(name) {
+    let mut schema = Schema::new(&map, 0, |name| match resolution.get(name) {
         Some(Ok(value)) => Ok(*value),
         Some(Err(absence)) => Err(absence.to_string()),
         None => Err("not in the map".into()),
     });
+    // The archives are in `game/sqpack`, beside the executable.
+    let data = runtime::game_data::GameData::new(game.parent());
+    schema.resolve_windows(&map, &|path| data.read(path).map_err(|error| error.message));
     let game_version = std::fs::read_to_string(game.join("ffxivgame.ver"))
         .ok()
         .map(|text| text.trim().to_owned());
@@ -178,6 +181,17 @@ fn shape(objects: &Objects, field: &Field) -> String {
                 Meaning::Flags(name) => {
                     let _ = write!(text, ", flags {name}");
                 }
+                Meaning::Element(window) => {
+                    let _ = write!(text, ", an element named by the window {window} names");
+                }
+            }
+            if let Some(bit) = field.bit {
+                let _ = write!(
+                    text,
+                    ", bit {} of a {}",
+                    bit.index,
+                    format!("{:?}", bit.kind).to_lowercase()
+                );
             }
             if let Some(unit) = unit {
                 let _ = write!(text, ", in {unit}");
@@ -220,6 +234,8 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
         domain: arg.domain.clone(),
         forbidden: arg.forbidden,
         set: None,
+        bit: None,
+        pointer: None,
     };
     let mut held = match &arg.shape {
         Shape::Text(length) => format!("text of at most {length} bytes, behind a pointer"),
@@ -254,6 +270,7 @@ fn param_shape(objects: &Objects, param: &angelica_map::Param) -> String {
             };
             format!("{what} of {name} ({values})")
         }
+        Meaning::Element(window) => format!("an element of the window {window} names"),
     };
     if let Some(unit) = &param.unit {
         let _ = write!(text, ", in {unit}");
@@ -338,10 +355,17 @@ fn field_json(objects: &Objects, owner: &str, field: &Field, schema: Option<&Sch
 
 /// Which values plugins may set a field to.
 fn settable(set: &angelica_map::Settable) -> String {
-    match set.range {
+    let mut text = match set.range {
         Some((least, most)) => format!("{} to {}", least.float(), most.float()),
         None => "any value".to_owned(),
+    };
+    if let Some(call) = &set.call {
+        let _ = write!(text, ", through {call}");
     }
+    if set.hold {
+        text.push_str(", held while the game sets it again");
+    }
+    text
 }
 
 fn field_line(objects: &Objects, owner: &str, field: &Field, schema: Option<&Schema>) -> String {
@@ -499,6 +523,7 @@ fn stored(stored: Stored) -> String {
     match stored {
         Stored::Value(kind) => format!("{kind:?}").to_lowercase(),
         Stored::Text(length) => format!("text of at most {length} bytes"),
+        Stored::Bit { .. } => "bool".to_owned(),
     }
 }
 

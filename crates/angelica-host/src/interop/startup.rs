@@ -257,7 +257,7 @@ fn initialize() -> Result<(), String> {
         seen: None,
         sheets: host.services().sheets.clone(),
         lens: host.services().lens.clone(),
-        ui: host.services().ui.clone(),
+        data: host.services().data.clone(),
     };
     if diagnostics.plugins {
         host.watch(Box::new(FolderPackages::new(
@@ -315,7 +315,11 @@ fn services(
     ));
     let commands = Arc::new(crate::commands::Commands::default());
     let executable = module_path(base)?;
-    let (sheets, lens, ui) = map_services(map, catalog, base);
+    // The executable is in `game/`; the archives are in `game/sqpack`.
+    let data = Arc::new(crate::game_data::GameData::new(
+        executable.parent().and_then(Path::parent),
+    ));
+    let (sheets, lens) = map_services(map, catalog, base, &data);
     let game = Arc::new(WindowsGame {
         catalog: catalog.clone(),
         base,
@@ -327,10 +331,7 @@ fn services(
         version: WindowsGame::read_version(&executable),
     });
     Ok(Arc::new(Services {
-        // The executable is in `game/`; the archives are in `game/sqpack`.
-        data: Arc::new(crate::game_data::GameData::new(
-            executable.parent().and_then(Path::parent),
-        )),
+        data,
         files,
         excel,
         case,
@@ -338,7 +339,6 @@ fn services(
         chat: Arc::new(crate::chat::Chat::default()),
         sheets,
         lens,
-        ui,
         draw: Arc::new(crate::draw::Drawings::default()),
         messages: Arc::new(crate::messages::Messages::default()),
         clipboard: Arc::new(crate::clipboard::Clipboard::default()),
@@ -351,23 +351,33 @@ fn services(
     }))
 }
 
-/// The sheet schemas, object model, and window schemas of the map, resolved
-/// for the game loaded at `base`; none without a map.
+/// The sheet schemas and the object model of the map, resolved for the
+/// game loaded at `base` and its window layouts in `data`; none without a
+/// map.
 fn map_services(
     map: Option<&angelica_map::Map>,
     catalog: &Catalog,
     base: usize,
-) -> (
-    Arc<crate::sheets::Sheets>,
-    Arc<crate::lens::Lens>,
-    Arc<crate::game_ui::GameUi>,
-) {
+    data: &crate::game_data::GameData,
+) -> (Arc<crate::sheets::Sheets>, Arc<crate::lens::Lens>) {
     let sheets = crate::sheets::Sheets::new(map.iter().flat_map(|map| map.sheets().cloned()));
     let lens = map.map_or_else(Default::default, |map| {
-        crate::lens::Lens::new(crate::lens::Schema::from_catalog(map, catalog, base as u64))
+        crate::lens::Lens::new(schema(map, catalog, base, data))
     });
-    let ui = crate::game_ui::GameUi::new(map.iter().flat_map(|map| map.windows().cloned()));
-    (Arc::new(sheets), Arc::new(lens), Arc::new(ui))
+    (Arc::new(sheets), Arc::new(lens))
+}
+
+/// The object model of `map` for the game loaded at `base`, with the
+/// element names of the windows whose layouts `data` holds.
+fn schema(
+    map: &angelica_map::Map,
+    catalog: &Catalog,
+    base: usize,
+    data: &crate::game_data::GameData,
+) -> crate::lens::Schema {
+    let mut schema = crate::lens::Schema::from_catalog(map, catalog, base as u64);
+    schema.resolve_windows(map, &|path| data.read(path).map_err(|error| error.message));
+    schema
 }
 
 /// The signed map resolved for this executable, the map, and the lines the
@@ -523,7 +533,7 @@ struct MapData {
     seen: Option<Vec<u8>>,
     sheets: Arc<crate::sheets::Sheets>,
     lens: Arc<crate::lens::Lens>,
-    ui: Arc<crate::game_ui::GameUi>,
+    data: Arc<crate::game_data::GameData>,
 }
 
 impl MapData {
@@ -542,12 +552,7 @@ impl MapData {
             FileSet::load(&self.directory, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
         let (map, catalog) = Catalog::from_signed_files(&files, &snapshot, base as u64, hash)?;
         self.sheets.set(map.sheets().cloned());
-        self.lens.replace(crate::lens::Schema::from_catalog(
-            &map,
-            &catalog,
-            base as u64,
-        ));
-        self.ui.set(map.windows().cloned());
+        self.lens.replace(schema(&map, &catalog, base, &self.data));
         Ok(format!(
             "game map reloaded: {} sheet schemas, {} object types, and {} window schemas; entries that hooks use change at the next game start",
             map.sheets().count(),
