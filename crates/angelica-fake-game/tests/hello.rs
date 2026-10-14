@@ -575,7 +575,7 @@ fn jobs_fetch_from_the_listed_hosts() {
 
 /// The player's character, zone, and statuses, shaped like the game
 /// map's, with constant offsets.
-const CHARACTER_MAP: [(&str, &str); 7] = [
+const CHARACTER_MAP: [(&str, &str); 8] = [
     (
         "entries/test.toml",
         r#"
@@ -679,6 +679,55 @@ type = "struct"
 [function."test.print_message"]
 locator = { signature = "C3" }
 abi = { args = ["ptr", "u16", "ptr", "ptr", "i32", "u8"], ret = "u32" }
+thread = "main"
+
+[global."test.stage"]
+locator = { signature = "C3" }
+type = "ptr"
+
+[field."test.stage.unit_manager"]
+of = "test.stage"
+type = "ptr"
+offset = 0x20
+
+[field."test.unit_manager.units"]
+of = "test.unit_manager"
+type = "struct"
+offset = 0x10
+
+[field."test.unit_manager.unit_count"]
+of = "test.unit_manager"
+type = "u16"
+offset = 0x8
+
+[field."test.window.name"]
+of = "test.window"
+type = "struct"
+offset = 0x8
+
+[field."test.window.values"]
+of = "test.window"
+type = "ptr"
+offset = 0x178
+
+[field."test.window.value_count"]
+of = "test.window"
+type = "u16"
+offset = 0x1E2
+
+[field."test.atk_value.kind"]
+of = "test.atk_value"
+type = "u8"
+offset = 0x0
+
+[field."test.atk_value.text"]
+of = "test.atk_value"
+type = "ptr"
+offset = 0x8
+
+[function."test.fire_callback_int"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "i32"], ret = "bool" }
 thread = "main"
 
 [global."test.camera_manager"]
@@ -790,6 +839,52 @@ unit = "s"
 doc = "The game."
 domain = "location"
 
+[types."test.stage"]
+doc = "The stage."
+domain = "windows"
+
+[types."test.stage".fields.unit_manager]
+doc = "The windows' manager."
+ref = "test.unit_manager"
+
+[types."test.unit_manager"]
+doc = "The windows' manager."
+domain = "windows"
+
+[types."test.unit_manager".fields.unit_count]
+doc = "How many."
+
+[types."test.unit_manager".fields.windows]
+doc = "The windows."
+at = "test.unit_manager.units"
+array = { of = "test.window", count = "unit_count", most = 256, stride = 8, pointers = true }
+
+[types."test.window"]
+doc = "A window."
+domain = "windows"
+
+[types."test.window".fields.name]
+doc = "Its name."
+text = 32
+
+[types."test.window".fields.value_count]
+doc = "How many values."
+
+[types."test.window".fields.values]
+doc = "Its values."
+array = { of = "test.atk_value", count = "value_count", most = 64, stride = 16 }
+
+[types."test.atk_value"]
+doc = "A value."
+domain = "windows"
+
+[types."test.atk_value".fields.kind]
+doc = "Its kind."
+
+[types."test.atk_value".fields.text]
+doc = "Its text."
+text = 256
+
 [types."test.camera_manager"]
 doc = "The cameras."
 domain = "camera"
@@ -840,6 +935,12 @@ class = "you"
 read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
 act = { en = "Uses actions for you", ru = "Использует действия за вас" }
 
+[domains.windows]
+doc = "The game's windows."
+class = "others"
+read = { en = "Sees the game's windows", ru = "Видит окна игры" }
+act = { en = "Answers the game's dialogs for you", ru = "Отвечает на диалоги игры за вас" }
+
 [domains.chat]
 doc = "The chat log."
 class = "others"
@@ -863,6 +964,21 @@ domain = "actions"
 rate = 3
 ok = true
 when = [{ path = "player", says = "you are not in the world" }]
+
+[actions.answer_yes_no]
+doc = "Answers the yes or no dialog."
+call = "test.fire_callback_int"
+domain = "windows"
+when = [{ path = "windows.unit_manager.windows[name = \"SelectYesno\"]", says = "no yes or no dialog is open" }]
+
+[actions.answer_yes_no.args.window]
+arg = 0
+object = "windows.unit_manager.windows[name = \"SelectYesno\"]"
+
+[actions.answer_yes_no.args.answer]
+arg = 1
+doc = "Yes or no."
+enum = "test.yes_no"
 
 [actions.use_action.args.manager]
 arg = 0
@@ -920,6 +1036,10 @@ returns = 0
 "#,
     ),
     (
+        "enums/test.yes_no.toml",
+        "doc = \"Answers.\"\nvalues = { yes = 0, no = 1 }\n",
+    ),
+    (
         "enums/test.action_kind.toml",
         "doc = \"Kinds.\"\nvalues = { action = 1, item = 2, general_action = 5, mount = 13 }\n",
     ),
@@ -935,6 +1055,11 @@ type = "test.battle_chara"
 doc = "The game."
 global = "test.game_main"
 type = "test.game_main"
+
+[roots.windows]
+doc = "The windows."
+global = "test.stage"
+type = "test.stage"
 
 [roots.camera]
 doc = "The cameras."
@@ -964,6 +1089,31 @@ fn without_lens() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn a_dialog_is_read_and_answered() {
+    use angelica_fake_game::Set;
+    let test = with_character(MANIFEST, &[]);
+    click(&test, "yes");
+    assert_eq!(
+        message(&test),
+        "cannot say yes: action answer_yes_no: no yes or no dialog is open"
+    );
+    test.game.set(
+        r#"windows.unit_manager.windows[name = "SelectYesno"].values[0]"#,
+        &[
+            ("kind", Set::Integer(8)),
+            ("text", Set::Text("Leave the duty?".into())),
+        ],
+    );
+    click(&test, "yes");
+    assert_eq!(message(&test), "said yes to Leave the duty?");
+    let acted = test.game.acted.lock().unwrap().clone();
+    assert_eq!(acted.len(), 1);
+    assert_eq!(acted[0].0, "test.fire_callback_int");
+    assert_eq!(acted[0].1[1], 0, "yes");
+    assert_ne!(acted[0].1[0], 0, "the dialog's address");
 }
 
 #[test]
@@ -1119,7 +1269,10 @@ fn sprint_is_taken_through_the_map_under_its_domain() {
         "cannot sprint: the player stopped plugins from acting"
     );
 
-    let test = with_character(&MANIFEST.replace("act = [\"actions\"]\n", ""), &[]);
+    let test = with_character(
+        &MANIFEST.replace("act = [\"actions\", \"windows\"]", "act = [\"windows\"]"),
+        &[],
+    );
     test.game.set("player", &[("data.level", 90.into())]);
     click(&test, "sprint");
     assert_eq!(
@@ -1279,7 +1432,9 @@ fn approval_names_the_domains_in_the_maps_words() {
             "character",
             "location",
             "statuses",
+            "windows",
             "actions.act",
+            "windows.act",
             "camera.change",
             "chat.change"
         ]

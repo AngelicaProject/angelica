@@ -29,6 +29,8 @@ pub struct Schema {
     /// The address of every `function` and `location` entry, or why it is
     /// absent: the points `angelica look` can count the calls of.
     pub code: BTreeMap<String, Result<u64, String>>,
+    /// The `field` entries of text fields whose text is behind a pointer.
+    pub text_pointers: std::collections::BTreeSet<String>,
     /// Where every action's function and globals are, or why the build
     /// lacks one.
     pub actions: BTreeMap<String, Result<super::act::ActionAt, String>>,
@@ -89,6 +91,24 @@ impl Schema {
             })
             .collect();
         let actions = actions_at(map, base, &entry);
+        let text_pointers = objects
+            .types
+            .values()
+            .flat_map(|object| object.fields.values())
+            .filter(|field| matches!(field.shape, angelica_map::Shape::Text(_)))
+            .filter(|field| {
+                map.get(&field.at).is_some_and(|found| {
+                    matches!(
+                        found.kind,
+                        EntryKind::Field {
+                            value: ValueKind::Ptr,
+                            ..
+                        }
+                    )
+                })
+            })
+            .map(|field| field.at.clone())
+            .collect();
         let code = map
             .entries()
             .filter(|found| {
@@ -112,6 +132,7 @@ impl Schema {
             roots,
             events,
             code,
+            text_pointers,
             actions,
         }
     }

@@ -159,6 +159,10 @@ impl Hello {
                 let text = self.used_text();
                 self.say(text);
             }
+            "yes" => {
+                let text = answer_yes();
+                self.say(text);
+            }
             "quiet" => {
                 if self.quiet.take().is_some() {
                     self.say("system messages shown");
@@ -256,6 +260,27 @@ fn replace_texture() -> String {
     match result {
         Ok(()) => "texture replaced".to_owned(),
         Err(error) => format!("texture refused: {}", error.message),
+    }
+}
+
+/// Answers the open yes or no dialog with yes, saying what it asked.
+fn answer_yes() -> String {
+    let question = lens::Query::prepare(
+        "windows.unit_manager.windows[name = \"SelectYesno\"].values[0] { text }",
+    )
+    .and_then(|query| query.run().map(|rows| (query, rows)))
+    .map(|(query, rows)| {
+        rows.first()
+            .and_then(|row| query.get(row, "text"))
+            .and_then(lens::Value::plain)
+            .unwrap_or_default()
+    });
+    match (
+        question,
+        lens::act("answer_yes_no", &[("answer", lens::named("yes"))]),
+    ) {
+        (Ok(question), Ok(())) => format!("said yes to {question}"),
+        (Err(error), _) | (_, Err(error)) => format!("cannot say yes: {}", error.message),
     }
 }
 
@@ -497,6 +522,7 @@ impl Plugin for Hello {
                                 .button("used", "Last action used")
                                 .button("sprint", "Sprint")
                                 .button("zoom", "Zoom out further")
+                                .button("yes", "Say yes")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

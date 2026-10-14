@@ -545,7 +545,14 @@ impl Objects {
                 let offset = u64::from(offset_of(map, &field)?);
                 if position + 1 == names.len() {
                     let bytes = encode(map, &field, value)?;
-                    self.write(at + offset, &bytes);
+                    if matches!(field.shape, Shape::Text(_)) && behind_pointer(map, &field.at) {
+                        // Text behind a pointer gets a place of its own.
+                        let text = self.allocate(bytes.len());
+                        self.write(text, &bytes);
+                        self.write(at + offset, &text.to_le_bytes());
+                    } else {
+                        self.write(at + offset, &bytes);
+                    }
                     break;
                 }
                 match &field.shape {
@@ -644,6 +651,17 @@ fn encode(map: &Map, field: &Field, value: &Set) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Whether a field's entry holds a pointer, as text behind one does.
+fn behind_pointer(map: &Map, field: &str) -> bool {
+    matches!(
+        map.get(field).map(|entry| &entry.kind),
+        Some(EntryKind::Field {
+            value: ValueKind::Ptr,
+            ..
+        })
+    )
+}
+
 fn pointer(map: &Map, global: &str) -> bool {
     matches!(
         map.get(global).map(|entry| &entry.kind),
@@ -680,6 +698,7 @@ fn size_of(map: &Map, type_name: &str) -> usize {
             let at = offset_of(map, field).unwrap_or(0) as usize;
             at + match &field.shape {
                 Shape::Value { kind, .. } => size(*kind),
+                Shape::Text(_) if behind_pointer(map, &field.at) => 8,
                 Shape::Text(length) => usize::from(*length),
                 Shape::Ref(_)
                 | Shape::Array {

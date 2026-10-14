@@ -23,6 +23,6 @@ authors = ["AngelicaProject contributors"]
 hosts = ["example.com"]
 
 [lens]
-read = ["actions", "character", "location", "statuses"]
-act = ["actions"]
+read = ["actions", "character", "location", "statuses", "windows"]
+act = ["actions", "windows"]
 change = ["camera", "chat"]

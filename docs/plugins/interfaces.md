@@ -68,7 +68,7 @@ React to what appears in the chat log.
 
 ## The game's objects
 
-Read the player's character, where the player is, the bags, and whatever else the game map's object model describes, by path.
+Read the player's character, where the player is, the bags, the game's open windows and what their dialogs ask, and whatever else the game map's object model describes, by path.
 
 - SDK: `lens::Query::prepare("inventory.containers[kind = bag_1].items { item, quantity }")?` once, in `start` or when first needed; then `query.rows::<T>()?` with a `serde::Deserialize` structure whose fields are named like the columns, or `query.run()?` and `query.get(&row, "item")`.
 - Permission: each domain the query reads, listed in the manifest as `[lens] read = ["inventory"]`. Instance: main.
@@ -108,7 +108,7 @@ Change a value the game keeps on the player's computer alone, such as how far th
 
 ## Acting in the game
 
-Do something in the game for the player, as the game's own interface would: use an action or an item, mount, teleport.
+Do something in the game for the player, as the game's own interface would: use an action or an item, mount, teleport, answer a yes or no dialog, choose an entry of a list of choices.
 
 - SDK: `lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4u32.into())])?`; parameters by name, numbers with `.into()`, enum values with `lens::named`. A parameter left out takes the map's default.
 - Permission: each domain the plugin acts in, listed in the manifest as `[lens] act = ["actions"]`; the player sees it under **Acts in the game for you**, with a warning that automation breaks the game's terms. Instance: main, from `tick`, a command, or an event.

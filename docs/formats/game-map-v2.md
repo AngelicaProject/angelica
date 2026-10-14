@@ -189,7 +189,7 @@ A field is located by a `field` entry: `at`, or by default the entry `<type>.<fi
 | Shape | Written as | The entry's `type` | Read as |
 | --- | --- | --- | --- |
 | value | nothing, or `sheet`, `enum`, `flags`, `unit` | a number or `bool` | the value of the entry's type |
-| text | `text = n` | `struct` | NUL-terminated UTF-8 of at most `n` bytes (1 to 4096), stored in the object |
+| text | `text = n` | `struct` (in the object) or `ptr` (behind a pointer) | NUL-terminated UTF-8 of at most `n` bytes (1 to 4096), stored in the object or where the pointer leads; none for a zero pointer |
 | reference | `ref = "<type>"` | `ptr` | a pointer to an object of the type; zero is no object |
 | embedded object | `embed = "<type>"` | `struct` | an object of the type at the field's offset |
 | array | `array = { … }` | `struct` (in the object) or `ptr` (behind a pointer) | elements of a type |

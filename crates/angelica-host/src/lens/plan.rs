@@ -289,6 +289,16 @@ impl<'a> Planner<'a> {
                     ));
                 }
                 (Shape::Text(length), true) => {
+                    // Text behind a pointer is read where the pointer leads.
+                    let offset = if self.schema.text_pointers.contains(&field.at) {
+                        hops.push(Hop {
+                            offset,
+                            pointer: true,
+                        });
+                        0
+                    } else {
+                        offset
+                    };
                     return Ok((
                         Read {
                             base: Base::Object,

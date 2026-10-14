@@ -916,9 +916,9 @@ fn check_field(
             *kind = *value;
         }
         Shape::Text(_) => {
-            if *value != ValueKind::Struct {
+            if !matches!(value, ValueKind::Struct | ValueKind::Ptr) {
                 return Err(format!(
-                    "text is stored inline: `{}` has the type struct",
+                    "text is stored inline (`{}` has the type struct) or behind a pointer (ptr)",
                     field.at
                 ));
             }
