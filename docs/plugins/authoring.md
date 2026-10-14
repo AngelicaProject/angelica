@@ -4,7 +4,10 @@ A plugin is a Rust crate compiled to a WebAssembly component. It runs in the hos
 
 ## 1. Create the project
 
+Install the `angelica` command once, then create the project:
+
 ```text
+cargo install --locked --git https://github.com/AngelicaProject/angelica angelica-cli
 angelica plugin new <id>
 ```
 
@@ -15,12 +18,10 @@ angelica plugin new <id>
 | `angelica.toml` | the [manifest](../formats/plugin-manifest-v1.md): id, name, version, API version, permissions, HTTP hosts |
 | `src/lib.rs` | the plugin: a type that implements `angelica_sdk::Plugin`, exported with `angelica_sdk::plugin!` |
 | `tests/plugin.rs` | tests that run the component in the real host against a scripted game |
-| `AGENTS.md` | the work loop and rules for a coding agent, pointing here |
-| `.claude/skills/angelica-plugin/SKILL.md` | the same work loop as a skill for coding agents that load skills |
+| `AGENTS.md` | the work loop, commands, and rules for any coding agent, with links to this documentation |
 | `rust-toolchain.toml` | the compiler the host's components are built with |
-| `.cargo/config.toml` | not committed: points the dependencies at the local Angelica checkout |
 
-The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica repository; `.cargo/config.toml` replaces them with the checkout the command came from (`--angelica <checkout>` for another), so local changes to the SDK apply at once and the checkout's path never enters the plugin's repository. The first `cargo test` fetches the repository once, with git and its credentials, and builds the host, which takes a few minutes; later runs are quick and offline. The test build runs offline, so a new dependency builds once `cargo fetch` has downloaded it. Each plugin lives in its own repository.
+The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica repository on GitHub. The first `cargo test` fetches the repository and builds the host, which takes a few minutes; later runs are quick. For work on Angelica itself, `--angelica <checkout>` writes `.cargo/config.toml`, which is not committed and builds both from that checkout, so local changes to the SDK apply at once and the checkout's path never enters the plugin's repository. Each plugin lives in its own repository.
 
 ## 2. Find the interfaces
 
