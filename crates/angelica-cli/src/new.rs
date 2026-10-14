@@ -300,13 +300,15 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 
 1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Show the plan and the permissions it needs to the user.
 2. Look up every piece in the interface cards: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
-3. Collect every piece the cards do not cover at once: those are not available. Look for open requests first (`gh issue list --repo AngelicaProject/angelica --label api-request`, or https://github.com/AngelicaProject/angelica/issues?q=is%3Aopen+label%3Aapi-request). Write each new request in the format of `api-requests.md` and show it to the user. File it only once the user agrees: with `gh issue create` as `api-requests.md` shows, or by giving the user the text and https://github.com/AngelicaProject/angelica/issues/new?template=api-request.yml. Then build everything else, so the plugin is useful while it waits.
+3. Collect every piece the cards do not cover at once: those are not available. Look for open requests first (`gh issue list --repo AngelicaProject/angelica --label api-request`). Write each new request in the format of `api-requests.md` and show it to the user. File it with `gh issue create`, as `api-requests.md` shows, only once the user agrees. Then build everything else, so the plugin is useful while it waits.
 4. Write the code in `src/lib.rs`; long work goes in a job.
 5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run the checks below.
 6. When the user has Angelica installed, build, pack, and install the plugin (commands below), then tell the user exactly what to click or type in the game and what they should see. The user approves the plugin's permissions in the game; never approve them for the user. Report only what was observed.
 7. Publish only when the user asks: https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/authoring.md#6-publish.
 
 ## Commands
+
+The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user's account (https://cli.github.com/). When `gh` is missing or not signed in, ask the user to install it and run `gh auth login`.
 
 - `cargo test`: builds the component and runs `tests/` against the scripted game. The first run fetches the Angelica repository and builds the host, which takes a few minutes; later runs are quick.
 - `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic` for the plugin, `cargo clippy --tests -- -D warnings -W clippy::pedantic` for the tests, and `cargo fmt --check`.
@@ -325,10 +327,6 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 ";
-
-/// For coding agents that read `CLAUDE.md` instead of `AGENTS.md`: the same
-/// guidance, imported.
-const CLAUDE: &str = "@AGENTS.md\n";
 
 const GITIGNORE: &str = "/target\n/.cargo/config.toml\n";
 
@@ -413,7 +411,6 @@ fn create(args: &NewArgs) -> Result<PathBuf, String> {
         ("src/lib.rs", LIB),
         ("tests/plugin.rs", TEST),
         ("AGENTS.md", AGENTS),
-        ("CLAUDE.md", CLAUDE),
         (".gitignore", GITIGNORE),
         ("rust-toolchain.toml", TOOLCHAIN),
         (".github/workflows/ci.yml", CI),

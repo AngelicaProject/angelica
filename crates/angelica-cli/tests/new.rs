@@ -38,8 +38,8 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
         "https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md"
     ));
     assert!(!agents.contains("<angelica>") && !agents.contains("dev install"));
-    assert_eq!(read("CLAUDE.md"), "@AGENTS.md\n");
-    assert!(!folder.join(".claude").exists());
+    assert!(agents.contains("gh auth login"));
+    assert!(!folder.join("CLAUDE.md").exists() && !folder.join(".claude").exists());
     assert!(read("rust-toolchain.toml").contains("wasm32-wasip2"));
     assert!(read(".github/workflows/ci.yml").contains("cargo test"));
     let release = read(".github/workflows/release.yml");

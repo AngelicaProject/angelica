@@ -19,7 +19,6 @@ angelica plugin new <id>
 | `src/lib.rs` | the plugin: a type that implements `angelica_sdk::Plugin`, exported with `angelica_sdk::plugin!` |
 | `tests/plugin.rs` | tests that run the component in the real host against a scripted game |
 | `AGENTS.md` | the work loop, commands, and rules for any coding agent, with links to this documentation |
-| `CLAUDE.md` | one line that imports `AGENTS.md`, for agents that read `CLAUDE.md` instead |
 | `rust-toolchain.toml` | the compiler the host's components are built with |
 
 The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica repository on GitHub. The first `cargo test` fetches the repository and builds the host, which takes a few minutes; later runs are quick. For work on Angelica itself, `--angelica <checkout>` writes `.cargo/config.toml`, which is not committed and builds both from that checkout, so local changes to the SDK apply at once and the checkout's path never enters the plugin's repository. Each plugin lives in its own repository.
