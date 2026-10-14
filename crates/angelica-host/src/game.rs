@@ -60,12 +60,13 @@ pub trait Game: Send + Sync {
         work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
     ) -> Result<(), String>;
 
-    /// The rows of a state table with the values of `fields` (named
-    /// `names`), read from the game's memory. On the main thread only.
-    fn read_state(
+    /// The rows of a prepared Lens query, read from the game's memory. On
+    /// the main thread only.
+    ///
+    /// # Errors
+    /// The limits of [`crate::lens::run`].
+    fn query(
         &self,
-        table: &crate::state::TablePlan,
-        names: &[String],
-        fields: &[crate::state::FieldPlan],
-    ) -> Vec<Vec<Option<crate::state::StateValue>>>;
+        prepared: &crate::lens::Prepared,
+    ) -> crate::error::Result<Vec<crate::lens::Row>>;
 }

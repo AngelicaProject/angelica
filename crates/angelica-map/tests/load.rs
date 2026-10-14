@@ -1,6 +1,6 @@
 use angelica_map::{Check, EntryKind, Locator, Map, MapError, Thread, ValueKind};
 
-const MAP: &str = "format = 1\n";
+const MAP: &str = "format = 2\n";
 
 fn map(files: &[(&str, &str)]) -> Result<Map, MapError> {
     let files = files
@@ -118,18 +118,18 @@ fn refuses_an_unsupported_format() {
         Map::from_sources("", &[]).unwrap_err(),
         MapError::Format {
             found: None,
-            supported: 1
+            supported: 2
         }
     );
     assert_eq!(
-        Map::from_sources("format = 2", &[]).unwrap_err(),
+        Map::from_sources("format = 1", &[]).unwrap_err(),
         MapError::Format {
-            found: Some(2),
-            supported: 1
+            found: Some(1),
+            supported: 2
         }
     );
     assert!(matches!(
-        Map::from_sources("format = 1\nextra = 1", &[]),
+        Map::from_sources("format = 2\nextra = 1", &[]),
         Err(MapError::Toml { .. })
     ));
 }
@@ -380,7 +380,7 @@ fn hashes_the_map_files_in_path_order() {
     assert_ne!(forward.entries_sha256(), changed.entries_sha256());
     assert_ne!(
         map(&[]).unwrap().entries_sha256(),
-        Map::from_sources("format = 1\n\n", &[])
+        Map::from_sources("format = 2\n\n", &[])
             .unwrap()
             .entries_sha256()
     );

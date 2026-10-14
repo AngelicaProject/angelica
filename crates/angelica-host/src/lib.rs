@@ -27,6 +27,8 @@ pub mod installer;
 pub mod jobs;
 pub mod key;
 pub mod language;
+pub mod lens;
+pub mod look;
 pub mod manifest;
 pub mod menu;
 #[cfg(test)]
@@ -37,7 +39,6 @@ pub mod plugin_installer;
 pub mod sandbox;
 pub mod self_update;
 pub mod sheets;
-pub mod state;
 pub mod storage;
 pub mod text_case;
 pub mod theme;

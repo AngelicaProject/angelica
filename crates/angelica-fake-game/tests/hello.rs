@@ -573,101 +573,341 @@ fn jobs_fetch_from_the_listed_hosts() {
     assert!(String::from_utf8_lossy(&saved).contains("Example Domain"));
 }
 
+/// The player's character, zone, and statuses, shaped like the game
+/// map's, with constant offsets.
+const CHARACTER_MAP: [(&str, &str); 4] = [
+    (
+        "entries/test.toml",
+        r#"
+[global."test.local_player"]
+locator = { signature = "C3" }
+type = "ptr"
+
+[global."test.game_main"]
+locator = { signature = "C3" }
+type = "struct"
+
+[field."test.game_object.name"]
+of = "test.game_object"
+type = "struct"
+offset = 0x30
+
+[field."test.game_object.position_x"]
+of = "test.game_object"
+type = "f32"
+offset = 0xB0
+
+[field."test.game_object.position_y"]
+of = "test.game_object"
+type = "f32"
+offset = 0xB4
+
+[field."test.game_object.position_z"]
+of = "test.game_object"
+type = "f32"
+offset = 0xB8
+
+[field."test.character.data"]
+of = "test.character"
+type = "struct"
+offset = 0x1A0
+
+[field."test.character_data.class_job"]
+of = "test.character_data"
+type = "u8"
+offset = 0x2A
+
+[field."test.character_data.level"]
+of = "test.character_data"
+type = "u8"
+offset = 0x2B
+
+[field."test.character_data.health"]
+of = "test.character_data"
+type = "u32"
+offset = 0x0C
+
+[field."test.character_data.max_health"]
+of = "test.character_data"
+type = "u32"
+offset = 0x10
+
+[field."test.character_data.mana"]
+of = "test.character_data"
+type = "u32"
+offset = 0x14
+
+[field."test.character_data.max_mana"]
+of = "test.character_data"
+type = "u32"
+offset = 0x18
+
+[field."test.battle_chara.status_manager"]
+of = "test.battle_chara"
+type = "struct"
+offset = 0x23B0
+
+[field."test.status_manager.statuses"]
+of = "test.status_manager"
+type = "struct"
+offset = 0x8
+
+[field."test.status.status_id"]
+of = "test.status"
+type = "u16"
+offset = 0x0
+
+[field."test.status.remaining_time"]
+of = "test.status"
+type = "f32"
+offset = 0x4
+
+[field."test.game_main.current_territory_type"]
+of = "test.game_main"
+type = "u32"
+offset = 0x4108
+"#,
+    ),
+    (
+        "types/test.toml",
+        r#"
+[types."test.game_object"]
+doc = "An object."
+domain = "character"
+
+[types."test.game_object".fields.name]
+doc = "The name."
+text = 64
+
+[types."test.game_object".fields.position_x]
+doc = "East-west."
+domain = "location"
+
+[types."test.game_object".fields.position_y]
+doc = "Height."
+domain = "location"
+
+[types."test.game_object".fields.position_z]
+doc = "North-south."
+domain = "location"
+
+[types."test.character"]
+doc = "A character."
+domain = "character"
+extends = "test.game_object"
+
+[types."test.character".fields.data]
+doc = "Its numbers."
+embed = "test.character_data"
+
+[types."test.character_data"]
+doc = "Numbers."
+domain = "character"
+
+[types."test.character_data".fields.class_job]
+doc = "Class."
+sheet = "ClassJob"
+
+[types."test.character_data".fields.level]
+doc = "Level."
+
+[types."test.character_data".fields.health]
+doc = "HP."
+
+[types."test.character_data".fields.max_health]
+doc = "Maximum HP."
+
+[types."test.character_data".fields.mana]
+doc = "MP."
+
+[types."test.character_data".fields.max_mana]
+doc = "Maximum MP."
+
+[types."test.battle_chara"]
+doc = "A battle character."
+domain = "character"
+extends = "test.character"
+
+[types."test.battle_chara".fields.status_manager]
+doc = "Its statuses."
+embed = "test.status_manager"
+domain = "statuses"
+
+[types."test.status_manager"]
+doc = "Statuses."
+domain = "statuses"
+
+[types."test.status_manager".fields.statuses]
+doc = "The slots."
+array = { of = "test.status", length = 60, stride = 16, present = "status_id" }
+
+[types."test.status"]
+doc = "A status."
+domain = "statuses"
+
+[types."test.status".fields.status_id]
+doc = "The status."
+sheet = "Status"
+
+[types."test.status".fields.remaining_time]
+doc = "Seconds."
+unit = "s"
+
+[types."test.game_main"]
+doc = "The game."
+domain = "location"
+
+[types."test.game_main".fields.current_territory_type]
+doc = "The zone."
+sheet = "TerritoryType"
+"#,
+    ),
+    (
+        "domains.toml",
+        r#"
+[domains.character]
+doc = "The character."
+class = "you"
+read = { en = "Sees your character", ru = "Видит вашего персонажа" }
+
+[domains.location]
+doc = "Where."
+class = "you"
+read = { en = "Sees where you are", ru = "Видит, где вы" }
+
+[domains.statuses]
+doc = "Statuses."
+class = "you"
+read = { en = "Sees your statuses", ru = "Видит ваши эффекты" }
+"#,
+    ),
+    (
+        "roots.toml",
+        r#"
+[roots.player]
+doc = "The player."
+global = "test.local_player"
+type = "test.battle_chara"
+
+[roots.game]
+doc = "The game."
+global = "test.game_main"
+type = "test.game_main"
+"#,
+    ),
+];
+
+/// The example approved over the character map, without `absent` entries.
+fn with_character(manifest: &str, absent: &[&str]) -> TestHost {
+    let test = TestHost::new(Limits::default());
+    test.use_map(&CHARACTER_MAP, absent);
+    approve(test, manifest)
+}
+
+/// The example's manifest without its `[lens]` table.
+fn without_lens() -> String {
+    MANIFEST
+        .lines()
+        .filter(|line| *line != "[lens]" && !line.starts_with("read = "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
-fn the_characters_state_is_read_under_its_permission() {
-    use runtime::state::StateValue;
+fn the_character_is_read_through_lens_under_its_domains() {
     let test = approved(MANIFEST);
     click(&test, "where");
     assert_eq!(
         message(&test),
-        "cannot read the character: the game map has no state table self"
+        "cannot read the character: the game map has no root player"
     );
 
-    let fields: [&str; 10] = [
-        "name",
-        "class_job",
-        "level",
-        "health",
-        "max_health",
-        "mana",
-        "max_mana",
-        "position_x",
-        "position_y",
-        "position_z",
-    ];
-    test.define_state_table("self", "self", &fields, &[]);
-    test.define_state_table("self.zone", "self", &["territory_type"], &[]);
+    let test = with_character(MANIFEST, &[]);
     click(&test, "where");
     assert_eq!(message(&test), "no character yet");
 
-    let mut state = test.game.state.lock().unwrap();
-    state.insert(
-        "self".into(),
-        vec![
-            [
-                ("name".to_owned(), StateValue::Text(b"Alisaie".to_vec())),
-                ("class_job".to_owned(), StateValue::Unsigned(35)),
-                ("level".to_owned(), StateValue::Unsigned(100)),
-                ("health".to_owned(), StateValue::Unsigned(900)),
-                ("max_health".to_owned(), StateValue::Unsigned(1000)),
-                ("position_x".to_owned(), StateValue::Float(1.25)),
-            ]
-            .into(),
+    test.game.set(
+        "player",
+        &[
+            ("name", "Alisaie".into()),
+            ("data.class_job", 35.into()),
+            ("data.level", 100.into()),
+            ("data.health", 900.into()),
+            ("data.max_health", 1000.into()),
+            ("position_x", 1.25.into()),
         ],
     );
-    state.insert(
-        "self.zone".into(),
-        vec![[("territory_type".to_owned(), StateValue::Unsigned(132))].into()],
-    );
-    drop(state);
+    test.game
+        .set("game", &[("current_territory_type", 132.into())]);
     click(&test, "where");
     assert_eq!(
         message(&test),
         "Alisaie is class 35 at level 100, HP 900/1000, MP 0/0, at (1.2, 0.0, 0.0) in zone 132"
     );
+    test.game.clear("player");
+    click(&test, "where");
+    assert_eq!(message(&test), "no character yet", "logged out");
 
-    test.define_state_table("self", "self", &fields, &["level"]);
+    let test = with_character(MANIFEST, &["test.character_data.level"]);
     click(&test, "where");
     assert_eq!(
         message(&test),
-        "cannot read the character: state table self, field level: map entry test.level is absent"
+        "cannot read the character: test.character_data.level is not available in this game build: map entry test.character_data.level is absent: absent in the scripted build"
     );
 
-    let test = approved(&without_permissions(&["state.self"]));
-    test.define_state_table("self", "self", &fields, &[]);
+    let test = with_character(&without_lens(), &[]);
     click(&test, "where");
     assert_eq!(
         message(&test),
-        "cannot read the character: the plugin does not hold state.self"
+        "cannot read the character: the query reads character, which the plugin may not read: its manifest lists the domains it reads in [lens] read"
     );
 }
 
 #[test]
-fn list_tables_give_one_row_per_element() {
-    use runtime::state::StateValue;
-    let test = approved(MANIFEST);
-    test.define_state_table(
-        "self.statuses",
-        "self",
-        &["status_id", "remaining_time"],
-        &[],
-    );
+fn arrays_on_the_path_give_one_row_per_element() {
+    let test = with_character(MANIFEST, &[]);
     click(&test, "statuses");
     assert_eq!(message(&test), "no statuses");
 
-    let row = |id: u64, time: f64| {
-        [
-            ("status_id".to_owned(), StateValue::Unsigned(id)),
-            ("remaining_time".to_owned(), StateValue::Float(time)),
-        ]
-        .into()
-    };
-    test.game.state.lock().unwrap().insert(
-        "self.statuses".into(),
-        vec![row(48, 1799.6), row(1199, 0.0)],
+    test.game.set(
+        "player.status_manager.statuses[0]",
+        &[("status_id", 48.into()), ("remaining_time", 1799.6.into())],
+    );
+    test.game.set(
+        "player.status_manager.statuses[3]",
+        &[("status_id", 1199.into())],
     );
     click(&test, "statuses");
     assert_eq!(message(&test), "statuses: 48 (1800s), 1199");
+}
+
+#[test]
+fn approval_names_the_domains_in_the_maps_words() {
+    let mut test = TestHost::new(Limits::default());
+    test.use_map(&CHARACTER_MAP, &[]);
+    test.install(MANIFEST, component()).unwrap();
+    let plugin = test.host.plugin("hello").unwrap();
+    let words: Vec<String> = plugin
+        .asked()
+        .iter()
+        .map(|asked| runtime::language::Language::English.asked(asked))
+        .collect();
+    for wording in [
+        "Sees your character",
+        "Sees where you are",
+        "Sees your statuses",
+    ] {
+        assert!(words.iter().any(|word| word == wording), "{words:?}");
+    }
+    assert!(plugin.ungranted().is_empty());
+
+    // Without the map, the domains cannot be granted.
+    let mut bare = TestHost::new(Limits::default());
+    bare.install(MANIFEST, component()).unwrap();
+    assert_eq!(
+        bare.host.plugin("hello").unwrap().ungranted(),
+        ["character", "location", "statuses"]
+    );
 }
 
 #[test]
@@ -721,7 +961,7 @@ fn a_new_package_replaces_the_running_plugin_without_a_restart() {
 
 #[test]
 fn a_package_that_declares_more_waits_for_approval() {
-    let test = approved(&without_permissions(&["state.self"]));
+    let test = approved(&without_permissions(&["chat.read"]));
     test.reload(MANIFEST, component()).unwrap();
     assert_eq!(
         test.host.plugin("hello").unwrap().status(),

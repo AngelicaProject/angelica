@@ -1,6 +1,6 @@
 # Game structures the host changes
 
-The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v1.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can.
+The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v2.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can.
 
 ## Excel rows, version 3
 
@@ -82,7 +82,7 @@ The game's windows belong to a window manager the UI stage points to. A window i
 | `ui.text_node.set_text` | function `(ptr element, ptr text)` | sets a text element's text from NUL-terminated bytes |
 | `text.utf8_string.string_ptr` (`ptr`), `.used_size` (`i64`) | fields of the string | the text's bytes and their count with the terminator |
 
-An element is used only in the frame the game's functions returned it. A text longer than 8192 bytes is read as empty. Element ids come from the game map's [window schemas](./game-map-v1.md#window-schemas), never from a plugin. All entries of this section are needed; without one, rules for the game's windows are unavailable.
+An element is used only in the frame the game's functions returned it. A text longer than 8192 bytes is read as empty. Element ids come from the game map's [window schemas](./game-map-v2.md#window-schemas), never from a plugin. All entries of this section are needed; without one, rules for the game's windows are unavailable.
 
 ## Chat
 

@@ -16,6 +16,7 @@ members = [
   "crates/angelica-fake-game",
   "crates/angelica-fake-game/hostile",
   "examples/hello",
+  "examples/inventory",
 ]
 
 [workspace.package]

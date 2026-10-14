@@ -213,7 +213,27 @@ fn operations_stay_in_their_instance() {
 #[test]
 fn undeclared_permissions_are_refused() {
     let test = started(Limits::default());
-    test.define_state_table("self", "self", &["level"], &[]);
+    test.use_map(
+        &[
+            (
+                "entries/test.toml",
+                "[global.\"test.player\"]\nlocator = { signature = \"C3\" }\ntype = \"ptr\"\n\n[field.\"test.character.level\"]\nof = \"test.character\"\ntype = \"u8\"\noffset = 0x2B\n",
+            ),
+            (
+                "types/test.toml",
+                "[types.\"test.character\"]\ndoc = \"A character.\"\ndomain = \"character\"\n\n[types.\"test.character\".fields.level]\ndoc = \"Level.\"\n",
+            ),
+            (
+                "domains.toml",
+                "[domains.character]\ndoc = \"The character.\"\nclass = \"you\"\nread = { en = \"Sees your character\", ru = \"Видит вашего персонажа\" }\n",
+            ),
+            (
+                "roots.toml",
+                "[roots.player]\ndoc = \"The player.\"\nglobal = \"test.player\"\ntype = \"test.character\"\n",
+            ),
+        ],
+        &[],
+    );
     click(&test, "permissions");
     assert_eq!(
         report(&test).matches("PermissionDenied: ").count(),

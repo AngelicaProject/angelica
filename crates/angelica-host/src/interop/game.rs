@@ -36,7 +36,7 @@ fn hooked(what: &str, result: Result<(), String>) -> Result<(), String> {
 /// fails instead of faulting.
 struct ProcessMemory;
 
-impl crate::state::Memory for ProcessMemory {
+impl crate::lens::Memory for ProcessMemory {
     fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
         let Ok(address) = usize::try_from(address) else {
             return false;
@@ -102,12 +102,10 @@ impl Game for WindowsGame {
         super::game_ui::with_screen(&self.catalog, self.base, work)
     }
 
-    fn read_state(
+    fn query(
         &self,
-        table: &crate::state::TablePlan,
-        _names: &[String],
-        fields: &[crate::state::FieldPlan],
-    ) -> Vec<Vec<Option<crate::state::StateValue>>> {
-        crate::state::read(&ProcessMemory, table, fields)
+        prepared: &crate::lens::Prepared,
+    ) -> crate::error::Result<Vec<crate::lens::Row>> {
+        crate::lens::run(&ProcessMemory, prepared)
     }
 }

@@ -1,0 +1,89 @@
+package angelica:plugin@1.0.0;
+
+/// Lens: the game's objects, read by path.
+///
+/// The game map describes the game's objects: their types and fields, the
+/// roots where paths start, and the domain each field belongs to. A query
+/// is a path from a root through fields, with filters on arrays and the
+/// values to answer with:
+///
+/// ```text
+/// inventory.containers[kind in (bag_1, bag_2)].items[item != 0] { item, quantity }
+/// ```
+///
+/// `prepare` checks a query against the map for the running game build
+/// and plans its reads; `run` reads the game's memory along the plan. Every
+/// domain a query reads must be listed in the manifest's `[lens] read` and
+/// approved by the player. The language is specified in
+/// `docs/formats/plugin-api-v1.md`.
+///
+/// Both run in the main instance, on the game's main thread between
+/// frames, and never write; jobs get `wrong-context`.
+interface lens {
+    use types.{error};
+
+    /// A row of one of the game's sheets.
+    record sheet-row {
+        sheet: string,
+        row: u32,
+    }
+
+    /// The names of the set bits that have one, and every bit.
+    record flag-set {
+        names: list<string>,
+        bits: u64,
+    }
+
+    variant value {
+        boolean(bool),
+        signed(s64),
+        unsigned(u64),
+        float(f64),
+        /// Text as the game stores it, without its terminator.
+        text(list<u8>),
+        /// A number that is a row of a sheet, such as an item.
+        sheet(sheet-row),
+        /// A number that is one of the named values of an enum.
+        named(string),
+        %flags(flag-set),
+    }
+
+    /// One answer: the position in each array on the query's path, and a
+    /// value per column, `none` where the game holds nothing: a pointer on
+    /// its way is zero.
+    record row {
+        indexes: list<u32>,
+        values: list<option<value>>,
+    }
+
+    record column {
+        /// The name in the query's braces, or its alias.
+        name: string,
+        /// What the field holds, from the game map.
+        doc: string,
+    }
+
+    record prepared {
+        /// The handle `run` and `release` take.
+        query: u32,
+        columns: list<column>,
+    }
+
+    /// Checks and plans a query. A query that breaks the syntax or the
+    /// model's rules returns `invalid-argument`; an unknown root or field,
+    /// `not-found`; a domain the plugin may not read or a field no plugin
+    /// reads, `permission-denied`; anything the running build lacks,
+    /// `unavailable`; a plugin holding 256 queries, `limit-exceeded`. The
+    /// message names the field.
+    prepare: func(query: string) -> result<prepared, error>;
+
+    /// The rows of a prepared query now: none while its root's object does
+    /// not exist, such as before the player logs in. After the game map is
+    /// reloaded, the query is planned again and returns `prepare`'s errors
+    /// when it no longer fits. More than 4096 rows or 16 MiB of memory read
+    /// returns `limit-exceeded`. An unknown handle returns `not-found`.
+    run: func(query: u32) -> result<list<row>, error>;
+
+    /// Forgets a prepared query.
+    release: func(query: u32);
+}

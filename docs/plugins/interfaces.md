@@ -66,15 +66,16 @@ React to what appears in the chat log.
 - Events arrive in the next frame, after `tick` and commands. A `Dropped` event reports how many were lost when the game produced too many.
 - Contract: [events](../formats/plugin-api-v1.md#events).
 
-## The player's state
+## The game's objects
 
-Read the player's character and where the player is.
+Read the player's character, where the player is, the bags, and whatever else the game map's object model describes, by path.
 
-- SDK: `state::read_one("self", &["level", "class_job"])` for a table of one object, `state::read("self.statuses", &[..])` for a list, `state::tables()` for every table and field with whether it is present.
-- Permission: `state.self`. Instance: main.
-- No row means the object does not exist, such as before log-in. A field whose map entries the running game build lacks returns `unavailable`; handle it as "not known yet", not as a fault.
-- Numbers that identify game data (`class_job`, `territory_type`, `status_id`) are rows of the sheets the field documentation names; read their names with [sheets](#sheets).
-- Contract: [game state](../formats/plugin-api-v1.md#game-state).
+- SDK: `lens::Query::prepare("inventory.containers[kind = bag_1].items { item, quantity }")?` once, in `start` or when first needed; then `query.rows::<T>()?` with a `serde::Deserialize` structure whose fields are named like the columns, or `query.run()?` and `query.get(&row, "item")`.
+- Permission: each domain the query reads, listed in the manifest as `[lens] read = ["inventory"]`. Instance: main.
+- No row means the root's object does not exist, such as the character before log-in. A query that names something the running build lacks fails with `unavailable`; handle it as "not known yet", not as a fault. After a map update a held query is planned again.
+- Numbers that identify game data are sheet rows (`Value::Sheet`, a `u32` in a structure); read their names with [sheets](#sheets). An enum value is its name; flags are their names (a `Vec<String>` in a structure) and bits.
+- Find roots, types, fields, and domains with `angelica schema search` and `schema show`; check a query with `angelica query`.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
 ## Sheets
 
@@ -140,7 +141,7 @@ Do long work without stalling the game: bulk sheet reads, parsing downloads, req
 - SDK: `jobs::start::<Output>(name, &input)` returns a `Job`; poll it in `tick` with `job.poll()`; in `Plugin::run_job` do the work with `jobs::run(&input, |input: Input| ...)`. Inputs and outputs are any serde types. `jobs::report(fraction, message)` reports progress.
 - Permission: none. Instance: started from main; runs in a job instance.
 - A job has its own memory and never runs `start`: pass it everything it needs in its input, or in storage. A plugin has at most four jobs at once, counting finished ones until they are polled and cancelled ones until they stop; dropping a `Job` cancels it.
-- A job may read storage, game files, sheets, and the internet; it cannot change the game, print, or read state.
+- A job may read storage, game files, sheets, and the internet; it cannot change the game, print, or read the game's objects.
 - Contract: [calls into the plugin](../formats/plugin-api-v1.md#calls-into-the-plugin).
 
 ```rust

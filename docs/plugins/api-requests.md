@@ -18,7 +18,7 @@ What in the game is involved, as the player sees it: the inventory's items,
 the party list, the target, the map's flag, a game window.
 
 ## Operation
-- Kind: read state | event | operation on the game | game data | rule
+- Kind: read objects | event | operation on the game | game data | rule
 - Inputs and results: the values the plugin passes and receives, with
   their meaning (for example "the item's row in the Item sheet", "the
   quantity").
@@ -47,7 +47,7 @@ The player's inventory bags and the crystal bag: each slot's item and
 quantity, and whether the item is high quality.
 
 ## Operation
-- Kind: read state
+- Kind: read objects
 - Inputs and results: one row per used slot with the bag, the slot, the
   item (a row of the Item sheet), the quantity, and high quality.
 - When: when the helper's window is open, at most once a second, from main.

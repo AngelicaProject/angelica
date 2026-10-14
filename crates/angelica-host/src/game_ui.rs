@@ -548,7 +548,7 @@ fingerprint = "{fingerprint}"
 elements = {{ text = 4, bar = 6 }}
 "#
         );
-        angelica_map::Map::from_sources("format = 1", &[("windows/_Exp.toml".into(), text)])
+        angelica_map::Map::from_sources("format = 2", &[("windows/_Exp.toml".into(), text)])
             .unwrap()
             .window("_Exp")
             .unwrap()

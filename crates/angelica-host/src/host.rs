@@ -76,6 +76,8 @@ pub struct Plugin {
     windows: Mutex<Vec<Window>>,
     /// When the menu was last told that the plugin held up a frame.
     slow: Mutex<Option<std::time::Instant>>,
+    /// The game map's domains, for what reading them is called.
+    lens: Arc<crate::lens::Lens>,
 }
 
 /// What a frame brings every plugin.
@@ -112,7 +114,23 @@ impl Plugin {
     /// approval, only what it does not cover.
     #[must_use]
     pub fn requests(&self) -> Vec<(crate::manifest::Class, Vec<crate::manifest::Request>)> {
-        crate::manifest::requests(&self.manifest, self.granted.as_ref())
+        crate::manifest::requests(&self.manifest, self.granted.as_ref(), &|name| {
+            self.lens.domain(name)
+        })
+    }
+
+    /// Everything the plugin asks for that can be granted: its host
+    /// permissions and the domains of the game map it reads.
+    #[must_use]
+    pub fn asked(&self) -> Vec<crate::manifest::Asked> {
+        crate::manifest::asked(&self.manifest, &|name| self.lens.domain(name))
+    }
+
+    /// The domains the plugin lists that are not granted now: the game map
+    /// does not describe them, or this host does not present their class.
+    #[must_use]
+    pub fn ungranted(&self) -> Vec<String> {
+        crate::manifest::ungranted(&self.manifest, &|name| self.lens.domain(name))
     }
 
     /// Whether the player approved an earlier version of the plugin.
@@ -177,6 +195,8 @@ pub struct Host {
     self_update: std::sync::OnceLock<Arc<crate::self_update::SelfUpdate>>,
     /// The catalog's index; none in tests and without a release key.
     catalog: std::sync::OnceLock<crate::catalog_index::Source>,
+    /// Lens queries from `angelica look`; only in a development build.
+    look: Mutex<Option<crate::look::Look>>,
 }
 
 impl Host {
@@ -206,6 +226,7 @@ impl Host {
             plugin_installer: std::sync::OnceLock::new(),
             self_update: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
+            look: Mutex::new(None),
         }
     }
 
@@ -248,6 +269,12 @@ impl Host {
     #[must_use]
     pub fn self_update(&self) -> Option<&Arc<crate::self_update::SelfUpdate>> {
         self.self_update.get()
+    }
+
+    /// Answers `angelica look` from `folder`; a development build only.
+    pub fn serve_look(&self, folder: std::path::PathBuf) {
+        *self.look.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(crate::look::Look::new(folder));
     }
 
     pub fn set_catalog(&self, source: crate::catalog_index::Source) {
@@ -408,7 +435,10 @@ impl Host {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
             Err(e) => return Err(format!("{id}: settings: {e}")),
         };
-        let approved = grants.as_ref().is_some_and(|g| g.cover(&manifest));
+        let lens = self.services.lens.clone();
+        let approved = grants
+            .as_ref()
+            .is_some_and(|g| g.cover(&manifest, &|name| lens.domain(name)));
         let storage = Arc::new(
             Storage::new(&self.directories.storage.join(&id), DEFAULT_QUOTA)
                 .map_err(|e| format!("{id}: {e}"))?,
@@ -436,6 +466,7 @@ impl Host {
             jobs: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
             slow: Mutex::new(None),
+            lens,
         });
         Ok(plugin)
     }
@@ -476,6 +507,12 @@ impl Host {
                 .permissions()
                 .intersection(&grants.permissions)
                 .copied()
+                .collect(),
+            lens_read: plugin
+                .manifest
+                .lens_read()
+                .intersection(&grants.lens_read)
+                .cloned()
                 .collect(),
             memory_bytes: plugin
                 .manifest
@@ -658,6 +695,15 @@ impl Host {
             Some(Ok(note)) => self.diagnostic(note),
             Some(Err(reason)) => self.diagnostic(format!("game map not reloaded: {reason}")),
             None => {}
+        }
+        let looked = self
+            .look
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .and_then(|look| look.poll(&self.services));
+        if let Some(note) = looked {
+            self.diagnostic(note);
         }
         for package in changed {
             if let Err(reason) =
@@ -901,7 +947,8 @@ impl Host {
         let plugin = &plugin;
         match action {
             Action::Approve(_) => {
-                let grants = Grants::for_manifest(&plugin.manifest);
+                let grants =
+                    Grants::for_manifest(&plugin.manifest, &|name| self.services.lens.domain(name));
                 write_json(&self.directories.grants, id, &grants)?;
                 *plugin.grants.lock().unwrap_or_else(PoisonError::into_inner) = Some(grants);
                 self.set_enabled(plugin, true)?;

@@ -3,7 +3,7 @@
 //! plugin or refuses the operation while the game and other plugins go on.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, http, jobs, state, storage},
+    api::{excel_text, http, jobs, lens, storage},
     commands::{self, Command},
     ui::{Event, Window},
 };
@@ -105,7 +105,7 @@ impl Hostile {
             }
             "permissions" => {
                 self.report = [
-                    outcome(state::read("self", &["level".into()])),
+                    outcome(lens::prepare("player { level }")),
                     outcome(commands::define(&[Command::new("hostile", "Takes over")])),
                 ]
                 .join("; ");

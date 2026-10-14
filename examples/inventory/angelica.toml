@@ -1,0 +1,12 @@
+manifest = 1
+
+[plugin]
+id = "inventory"
+name = "Bags"
+version = "0.1.0"
+api = "1.0"
+description = "What is in your bags, searched by name."
+authors = ["AngelicaProject contributors"]
+
+[lens]
+read = ["inventory"]

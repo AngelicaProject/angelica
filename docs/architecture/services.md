@@ -8,14 +8,14 @@ The API is defined in `wit/` and specified in [the API contract](../formats/plug
 
 An operation names a resource and defines its inputs, results, validation, ownership, thread, limits, and failure. It must serve any plugin that needs the resource, without the host learning a plugin's name, file formats, or policy. A first consumer may motivate an operation; it must still be described in terms of the resource. For example, text tables replace cells of the game's sheets by sheet, row, column, and guard: a translation plugin uses them for its packs, another plugin could use them for annotations or accessibility. Reading the translation pack, trusting its publisher, and choosing which sheets to translate stay in the translation plugin.
 
-An operation is as narrow as its verified contract. A game structure the map does not describe, or a change whose effects on the game are not known, stays unavailable rather than being exposed through a general escape hatch such as raw memory access or arbitrary function calls.
+An operation is as narrow as its verified contract. A game structure the map does not describe, or a change whose effects on the game are not known, stays unavailable rather than being exposed through a general escape hatch such as raw memory access or arbitrary function calls. Reading grows by data: a new type or field in the map's object model is readable through Lens without new host code.
 
 ## Kinds of services
 
 | Kind | Example | Rule |
 | --- | --- | --- |
 | Declarative game rules | text tables, letter case, replacement files, hidden elements and text in the game's own windows | the plugin activates rules; the host applies them natively on the game's hot path, validates them on activation, and removes them when the plugin stops |
-| Game state | the player, the party, the inventory | the plugin reads fields the game map makes visible to plugins, by entry name, under a read permission for their domain; reads happen on the main thread between frames and never write |
+| Game objects | the player, the inventory | the plugin reads the game's objects through [Lens](./lens.md), by paths through the game map's object model, under a read permission for each domain it reads; reads happen on the main thread between frames and never write |
 | Game events | a chat message arrived, a window opened, the zone changed | an adapter's hook records the event; the plugin receives it in the next frame and cannot change what the game did |
 | Operations on the game | using an action, moving an item | one host operation per kind of action, with its own permission, validated arguments, and a rate the host enforces; automation is built from these operations |
 | Player interaction | chat commands, chat messages | the plugin declares its commands and supplies its messages; the host parses, answers help and mistakes, and presents everything under the plugin's name in the game's own look |

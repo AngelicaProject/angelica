@@ -18,8 +18,9 @@ Documentation is maintained with the code it describes and is the source of trut
 | Change a component boundary or data flow | [`architecture/overview.md`](./architecture/overview.md) |
 | Change how Angelica gets into the game process | [`architecture/loading.md`](./architecture/loading.md) |
 | Change hooking, trampolines, or code patches | [`architecture/hooks.md`](./architecture/hooks.md) |
-| Change how map entries are resolved or verified | [`architecture/game-map.md`](./architecture/game-map.md), [`formats/game-map-v1.md`](./formats/game-map-v1.md) |
+| Change how map entries are resolved or verified | [`architecture/game-map.md`](./architecture/game-map.md), [`formats/game-map-v2.md`](./formats/game-map-v2.md) |
 | Change the plugin runtime or the plugin API | [`architecture/plugins.md`](./architecture/plugins.md), [`formats/plugin-api-v1.md`](./formats/plugin-api-v1.md), [`formats/plugin-manifest-v1.md`](./formats/plugin-manifest-v1.md) |
+| Change Lens: the object model, queries, or their tools | [`architecture/lens.md`](./architecture/lens.md), [`formats/game-map-v2.md`](./formats/game-map-v2.md#object-model), [`formats/plugin-api-v1.md`](./formats/plugin-api-v1.md#lens) |
 | Write a plugin | [`plugins/authoring.md`](./plugins/authoring.md), [`plugins/interfaces.md`](./plugins/interfaces.md) |
 | Request a capability the plugin API lacks | [`plugins/api-requests.md`](./plugins/api-requests.md) |
 | Add or change a permission | [`architecture/permissions.md`](./architecture/permissions.md) |

@@ -9,6 +9,7 @@ Start with [`overview.md`](./overview.md). It defines the components, the reposi
 | Hooks, trampolines, and code patches | [`hooks.md`](./hooks.md) | `angelica-hook` |
 | Resolving and verifying map entries | [`game-map.md`](./game-map.md) | `angelica-pe`, `angelica-map` |
 | Plugin runtime and API | [`plugins.md`](./plugins.md) | `angelica-host`, `wit/`, `angelica-sdk` |
+| Reading the game's objects through the map | [`lens.md`](./lens.md) | `angelica-map`, `angelica-host` (`lens`) |
 | Permissions | [`permissions.md`](./permissions.md) | `angelica-host` |
 | Host services | [`services.md`](./services.md) | `angelica-host` |
 | In-game interface | [`ui.md`](./ui.md) | `angelica-host` |

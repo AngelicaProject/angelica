@@ -131,9 +131,10 @@ impl Catalog {
         let entries = files
             .iter()
             .filter(|(name, _)| {
-                ["entries/", "sheets/", "state/", "windows/"]
+                ["entries/", "sheets/", "types/", "enums/", "windows/"]
                     .iter()
                     .any(|folder| name.starts_with(folder))
+                    || ["domains.toml", "roots.toml"].contains(&name.as_str())
             })
             .map(|(name, bytes)| Ok((name.clone(), text(bytes)?)))
             .collect::<Result<Vec<_>, String>>()?;

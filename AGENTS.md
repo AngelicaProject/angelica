@@ -20,8 +20,9 @@ Then load the canonical project documentation for the affected area:
 - Components and their ownership: `docs/architecture/overview.md`
 - Loading into the game process: `docs/architecture/loading.md`
 - Hooks and code patches: `docs/architecture/hooks.md`
-- The game map as the host uses it: `docs/architecture/game-map.md` and `docs/formats/game-map-v1.md`
+- The game map as the host uses it: `docs/architecture/game-map.md` and `docs/formats/game-map-v2.md`
 - Plugin runtime: `docs/architecture/plugins.md` and `docs/formats/plugin-manifest-v1.md`
+- Lens, the object model, and queries: `docs/architecture/lens.md`
 - Writing a plugin or the SDK: `docs/plugins/README.md`
 - Permissions: `docs/architecture/permissions.md`
 - Host services: `docs/architecture/services.md`
@@ -49,7 +50,7 @@ Start from `docs/README.md` when the correct document is not obvious.
 
 ## Related repositories
 
-- `angelica-gamemap`: the game map data. Its format is owned here (`docs/formats/game-map-v1.md`).
+- `angelica-gamemap`: the game map data. Its format is owned here (`docs/formats/game-map-v2.md`).
 - `angelica-registry`: the plugin catalog.
 
 ## Project notes

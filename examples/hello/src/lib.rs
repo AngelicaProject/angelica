@@ -2,7 +2,7 @@
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
 //! commands that print in the chat log, HTTPS requests from a job, the
-//! player's character from the game's state, the chat log's messages as
+//! player's character read through Lens, the chat log's messages as
 //! events, and rules for the game's own windows. The host's integration
 //! tests drive
 //! it through its window and its commands.
@@ -14,7 +14,7 @@ use angelica_sdk::{
     events::{self, EventKind, GameEvent},
     excel, game_ui, http,
     jobs::{self, Job, Poll},
-    state, storage,
+    lens, storage,
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -245,74 +245,68 @@ const TONES: [(&str, ChatTone); 6] = [
     ("bad", ChatTone::Bad),
 ];
 
-/// The player's character and zone from the game's state.
+/// The player's character and zone, read through Lens.
 fn who() -> Result<String, String> {
-    let Some(values) = state::read_one(
-        "self",
-        &[
-            "name",
-            "class_job",
-            "level",
-            "health",
-            "max_health",
-            "mana",
-            "max_mana",
-            "position_x",
-            "position_y",
-            "position_z",
-        ],
-    )?
-    else {
+    let character = lens::Query::prepare(
+        "player { name, class_job: data.class_job, level: data.level, health: data.health,          max_health: data.max_health, mana: data.mana, max_mana: data.max_mana,          position_x, position_y, position_z }",
+    )?;
+    let rows = character.run()?;
+    let Some(row) = rows.first() else {
         return Ok("no character yet".into());
     };
-    let name = values[0]
-        .as_ref()
-        .and_then(state::Value::text)
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    let name = character
+        .get(row, "name")
+        .and_then(lens::Value::plain)
         .unwrap_or_default();
-    let number = |index: usize| {
-        values[index]
-            .as_ref()
-            .and_then(state::Value::unsigned)
+    let number = |name: &str| {
+        character
+            .get(row, name)
+            .and_then(lens::Value::unsigned)
             .unwrap_or(0)
     };
-    let float = |index: usize| {
-        values[index]
-            .as_ref()
-            .and_then(state::Value::float)
+    let float = |name: &str| {
+        character
+            .get(row, name)
+            .and_then(lens::Value::float)
             .unwrap_or(0.0)
     };
-    let zone = state::read_one("self.zone", &["territory_type"])?
-        .and_then(|values| values[0].as_ref().and_then(state::Value::unsigned))
+    let zone = lens::Query::prepare("game.current_territory_type")?;
+    let zone = zone
+        .run()?
+        .first()
+        .and_then(|row| row.values[0].as_ref())
+        .and_then(lens::Value::unsigned)
         .unwrap_or(0);
     Ok(format!(
         "{name} is class {} at level {}, HP {}/{}, MP {}/{}, at ({:.1}, {:.1}, {:.1}) in zone {zone}",
-        number(1),
-        number(2),
-        number(3),
-        number(4),
-        number(5),
-        number(6),
-        float(7),
-        float(8),
-        float(9)
+        number("class_job"),
+        number("level"),
+        number("health"),
+        number("max_health"),
+        number("mana"),
+        number("max_mana"),
+        float("position_x"),
+        float("position_y"),
+        float("position_z")
     ))
 }
 
 /// The statuses on the player's character, with the seconds they last.
 fn statuses() -> Result<String, String> {
-    let rows = state::read("self.statuses", &["status_id", "remaining_time"])?;
+    let statuses =
+        lens::Query::prepare("player.status_manager.statuses { status_id, remaining_time }")?;
+    let rows = statuses.run()?;
     if rows.is_empty() {
         return Ok("no statuses".into());
     }
     let listed: Vec<String> = rows
         .iter()
         .map(|row| {
-            let id = row[0]
+            let id = row.values[0]
                 .as_ref()
-                .and_then(state::Value::unsigned)
+                .and_then(lens::Value::unsigned)
                 .unwrap_or(0);
-            match row[1].as_ref().and_then(state::Value::float) {
+            match row.values[1].as_ref().and_then(lens::Value::float) {
                 Some(time) if time > 0.0 => format!("{id} ({time:.0}s)"),
                 _ => id.to_string(),
             }

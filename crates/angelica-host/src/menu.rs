@@ -7,7 +7,7 @@ use crate::{
     host::{Action, Event, Host, Plugin, Status},
     key::MenuKey,
     language::{Language, Settings, Strings, fill},
-    manifest::{Class, Manifest, Origin, Permission},
+    manifest::{Asked, Class, Manifest, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
     sandbox::{LogLine, bindings::angelica::plugin::runtime::Level},
     theme::{self, Icon, Palette, Size, Theme, Word, medium, mono, sans, strong, wordmark},
@@ -111,9 +111,9 @@ pub fn class_icon(class: Class) -> Icon {
     }
 }
 
-/// The classes of `permissions`, each once, in the order they are shown.
-fn classes_of(permissions: impl IntoIterator<Item = Permission>) -> Vec<Class> {
-    let held: Vec<Class> = permissions.into_iter().map(Permission::class).collect();
+/// The classes of `held`, each once, in the order they are shown.
+fn classes_of(held: impl IntoIterator<Item = Class>) -> Vec<Class> {
+    let held: Vec<Class> = held.into_iter().collect();
     CLASSES
         .into_iter()
         .filter(|class| held.contains(class))
@@ -1095,19 +1095,7 @@ impl Menu {
                         .wrap(),
                     );
                 }
-                let permissions = manifest.permissions();
-                if permissions.is_empty() {
-                    permission_line(ui, view, None, s.asks_nothing, p.secondary);
-                }
-                for &permission in permissions {
-                    permission_line(
-                        ui,
-                        view,
-                        Some(class_icon(permission.class())),
-                        &self.permission_text(plugin, permission),
-                        p.text,
-                    );
-                }
+                self.held(ui, view, plugin);
                 ui.label(
                     RichText::new(format!(
                         "{}, {}",
@@ -1258,14 +1246,44 @@ impl Menu {
         }
     }
 
+    /// What a plugin may do, one line each, and the domains it asks for that
+    /// are not granted.
+    fn held(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin) {
+        let s = self.strings();
+        let p = view.p;
+        let asked = plugin.asked();
+        let ungranted = plugin.ungranted();
+        if asked.is_empty() && ungranted.is_empty() {
+            permission_line(ui, view, None, s.asks_nothing, p.secondary);
+        }
+        for asked in &asked {
+            permission_line(
+                ui,
+                view,
+                Some(class_icon(asked.class())),
+                &self.permission_text(plugin, asked),
+                p.text,
+            );
+        }
+        for domain in &ungranted {
+            permission_line(
+                ui,
+                view,
+                None,
+                &fill(s.lens_ungranted, &[("domain", domain)]),
+                p.secondary,
+            );
+        }
+    }
+
     /// A permission in plain words, with the sites of a network one.
-    fn permission_text(&self, plugin: &Plugin, permission: Permission) -> String {
-        let text = self.language.permission(permission);
-        if permission == Permission::HttpGet {
+    fn permission_text(&self, plugin: &Plugin, asked: &Asked) -> String {
+        let text = self.language.asked(asked);
+        if *asked == Asked::Permission(Permission::HttpGet) {
             let hosts: Vec<String> = plugin.manifest.http_hosts().into_iter().collect();
             format!("{text}: {}", hosts.join(", "))
         } else {
-            text.to_owned()
+            text
         }
     }
 
@@ -1486,9 +1504,9 @@ impl Menu {
         let s = self.strings();
         let p = view.p;
         let requests = plugin.requests();
-        let asked: Vec<Permission> = requests
+        let asked: Vec<&Asked> = requests
             .iter()
-            .flat_map(|(_, requests)| requests.iter().map(|request| request.permission))
+            .flat_map(|(_, requests)| requests.iter().map(|request| &request.asked))
             .collect();
         let title = if more { s.asks_first } else { s.asks };
         theme::header(
@@ -1522,7 +1540,7 @@ impl Menu {
                             ui,
                             view,
                             Some(class_icon(*class)),
-                            self.language.permission(request.permission),
+                            &self.language.asked(&request.asked),
                             p.text,
                         );
                         if !request.hosts.is_empty() {
@@ -1538,12 +1556,10 @@ impl Menu {
                     }
                 }
             });
-        let already: Vec<Permission> = plugin
-            .manifest
-            .permissions()
-            .iter()
-            .copied()
-            .filter(|permission| !asked.contains(permission))
+        let already: Vec<Asked> = plugin
+            .asked()
+            .into_iter()
+            .filter(|held| !asked.contains(&held))
             .collect();
         if more && !already.is_empty() {
             ui.add_space(view.at(6.0));
@@ -1555,7 +1571,7 @@ impl Menu {
                         ui,
                         view,
                         Some(class_icon(permission.class())),
-                        &self.permission_text(plugin, permission),
+                        &self.permission_text(plugin, &permission),
                         p.secondary,
                     );
                 });
@@ -2239,7 +2255,17 @@ fn report_text<'a>(
         Status::Faulted(reason) => format!("stopped: {reason}"),
     };
     let _ = writeln!(out, "State: {state}");
-    let permissions: Vec<&str> = manifest.permissions().iter().map(|p| p.name()).collect();
+    let permissions: Vec<String> = manifest
+        .permissions()
+        .iter()
+        .map(|p| p.name().to_owned())
+        .chain(
+            manifest
+                .lens_read()
+                .iter()
+                .map(|domain| format!("{domain}.read")),
+        )
+        .collect();
     let _ = writeln!(
         out,
         "Permissions: {}",
@@ -2678,16 +2704,11 @@ fn row_facts(
 /// The classes a plugin holds, and for one waiting for approval, also
 /// those it asks for.
 fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
-    let mut permissions: Vec<Permission> = plugin.manifest.permissions().iter().copied().collect();
+    let mut classes: Vec<Class> = plugin.asked().iter().map(Asked::class).collect();
     if *status == Status::AwaitingApproval {
-        permissions.extend(
-            plugin
-                .requests()
-                .into_iter()
-                .flat_map(|(_, requests)| requests.into_iter().map(|request| request.permission)),
-        );
+        classes.extend(plugin.requests().into_iter().map(|(class, _)| class));
     }
-    classes_of(permissions)
+    classes_of(classes)
 }
 
 /// A search field: a plain field with a thin border and a magnifier.
@@ -3119,12 +3140,15 @@ mod tests {
     #[test]
     fn classes_come_once_in_their_order() {
         assert_eq!(
-            classes_of([
-                Permission::StateSelf,
-                Permission::ExcelText,
-                Permission::HttpGet,
-                Permission::FilesReplace,
-            ]),
+            classes_of(
+                [
+                    Permission::ChatPrint,
+                    Permission::ExcelText,
+                    Permission::HttpGet,
+                    Permission::FilesReplace,
+                ]
+                .map(Permission::class)
+            ),
             vec![Class::Network, Class::WhatYouSee, Class::YoursOnly]
         );
         for class in CLASSES {

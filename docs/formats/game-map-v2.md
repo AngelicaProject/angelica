@@ -1,12 +1,15 @@
-# Game map format v1
+# Game map format v2
 
 The game map is a directory of UTF-8 TOML files in the `angelica-gamemap` repository. `angelica-map` reads it; nothing else interprets it.
 
 ```text
 map.toml                 format version
 entries/<area>.toml      hand-maintained entries, one file per area
+domains.toml             the object model's domains: what plugins ask the player to read
+roots.toml               the object model's roots: where paths through the objects start
+types/<area>.toml        the object model's types: the game's structures and their fields
+enums/<name>.toml        the object model's enums: names for the values of a field
 sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
-state/<domain>.toml      state tables: game state plugins may read, by domain
 windows/<window>.toml    window schemas: names for elements of the game's own windows
 builds/<version>.toml    generated build records, one per game executable
 ```
@@ -14,7 +17,7 @@ builds/<version>.toml    generated build records, one per game executable
 `map.toml`:
 
 ```toml
-format = 1
+format = 2
 ```
 
 A reader refuses any other `format` value.
@@ -121,50 +124,105 @@ A name applies in a game build only when the build's layout of the sheet has the
 
 A schema that breaks a rule makes the whole map invalid. Sheet schemas are not part of `entries_sha256`: they do not affect how entries resolve against the executable.
 
-## State tables
+## Object model
 
-A state table names game state plugins may read: the fields of one object of the game, such as the player's character. The tables of a domain are in `state/<domain>.toml`; the domain is a lowercase word, and reading its tables requires the plugin permission `state.<domain>`, which the host defines. A host offers only the tables of domains it has a permission for.
+The object model describes the game's objects for Lens (`docs/architecture/lens.md`): the structures of the game as types with fields, the roots where a path through them starts, the enums that name a field's values, and the domain every field belongs to. Entries say where things are in a build; the object model says what they are. A plugin's query is a path through the model; the model never holds an address or an offset of its own, except the strides and lengths of arrays.
 
-```toml
-[tables.self]
-doc = "The player's character, while the player is logged in."
-object = ["character.local_player"]
+### Domains
 
-[tables.self.fields.level]
-doc = "The level of the current class or job."
-path = ["character.character.data", "character.character_data.level"]
-
-[tables.self.fields.name]
-doc = "The character's name."
-path = ["object.game_object.name"]
-text = 64
-```
-
-- A table is named `<domain>` or `<domain>.<subject>`; a field is a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes. `doc` says what the table or field holds, including the sheet a number refers to; it is not blank.
-- `object` is the path to the object: a `global` entry, then `field` entries. Every step has the type `ptr` or `struct`.
-- A field's `path` leads from the object to the value through `field` entries. Every step but the last has the type `ptr` or `struct`. The last is the value: read by its type, which is not `ptr` or `struct`; or, with `text`, a `struct` field holding NUL-terminated UTF-8 of at most `text` bytes (1 to 4096).
-
-A path is walked from the global's address: each step adds its offset, and a step of type `ptr` then reads the pointer stored there. The table has one row while the object path ends at a non-zero address and none otherwise; a field's value is none when a pointer on its path is zero. A table or field whose entries are absent in a build is absent with them.
-
-A list table describes the elements of an array in the object, one row per element, instead of the object itself; its fields' paths lead from the element. `list` says where the array is:
+`domains.toml` lists the domains. A domain is the unit of a plugin's permission to read: a plugin lists the domains it reads in its manifest, and the player approves each in the domain's own words.
 
 ```toml
-[tables."self.statuses"]
-doc = "The statuses on the player's character."
-object = ["character.local_player", "character.battle_chara.status_manager"]
-list = { at = "status.status_manager.statuses", length = 60, stride = 16, present = "status_id" }
+[domains.inventory]
+doc = "The items the player carries: the bags, the equipped gear, the currency, the crystals, and the key items."
+class = "you"
+read = { en = "Sees the items you carry", ru = "Видит предметы, которые вы носите" }
 ```
 
-- `at`: a field of the object, the array itself (`struct`) or a pointer to it (`ptr`).
-- `length`: the most elements read, 1 to 1024.
-- `stride`: the bytes from one element to the next, 1 to 65536; a constant of the table, as a constant offset is of a field.
-- `pointers`: when true, every element is a pointer to the row's object and a zero pointer is skipped; the stride is then 8.
-- `count`: optional; a field of the object, an integer of at most 32 bits, holding how many elements are used. Elements past it are not read.
-- `present`: optional; a field of the table. An element whose value of it is zero, false, empty, or none is skipped.
+- A domain is named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
+- `doc`: what the domain holds; not blank.
+- `class`: how far the domain reaches, as the player sees it: `you` (only about the player), `display` (changes what the player sees), `others` (sees other players), `acts` (acts in the game for the player), or `acts_on_others` (acts toward other players). A host grants a domain only of a class it presents.
+- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `change` and `act`, in the same form, say what changing the domain and acting in it allow; the plugin API does not use them yet.
 
-Every list table has the implicit field `index`, the element's position in its array from 0; a list table defines no field of that name.
+A new domain and its wording are approved by the maintainer once; types and fields join a domain without a new approval. A domain is narrow: what one kind of plugin needs, not everything about the player.
 
-A table that breaks a rule or names an entry that does not exist or has the wrong kind makes the whole map invalid. State tables are not part of `entries_sha256`.
+### Enums
+
+`enums/<name>.toml` names the values of a field. The enum's name is the file's name without `.toml`: dotted words like an entry name, such as `inventory.container_kind`.
+
+```toml
+doc = "The kinds of item container, as the game numbers its inventory types."
+values = { bag_1 = 0, bag_2 = 1, crystals = 2001 }
+```
+
+- `doc`: what the values are; not blank.
+- `values`: at least one value. A name is a lowercase letter followed by lowercase letters, digits, and underscores; two names never have the same number.
+- `flags`: when true, every value is a single bit, and a field with the enum holds a set of them.
+
+### Types
+
+`types/<area>.toml` holds the types of an area. A type is a structure of the game; its name is the name the `field` entries of the structure have in their `of`, and starts with the file's area.
+
+```toml
+[types."inventory.inventory_container"]
+doc = "One container of items: a bag, the equipped gear, the currency, a part of the armoury chest, a saddlebag, or a retainer's page."
+domain = "inventory"
+
+[types."inventory.inventory_container".fields.kind]
+doc = "Which container this is."
+enum = "inventory.container_kind"
+
+[types."inventory.inventory_container".fields.items]
+doc = "The container's slots; an empty slot is skipped."
+array = { of = "inventory.inventory_item", count = "size", most = 200, stride = 72, present = "item" }
+```
+
+- `doc`: what the type is; not blank.
+- `domain`: the domain of the type's fields, unless a field names another.
+- `extends`: optional; a type whose fields this one has too, at the same offsets, such as a character that is also a game object. A field of the base keeps the base's entry and domain.
+- `fields`: the type's fields, each named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
+
+A field is located by a `field` entry: `at`, or by default the entry `<type>.<field>`. The entry's `of` is the type that declares the field. The field's shape is one of:
+
+| Shape | Written as | The entry's `type` | Read as |
+| --- | --- | --- | --- |
+| value | nothing, or `sheet`, `enum`, `flags`, `unit` | a number or `bool` | the value of the entry's type |
+| text | `text = n` | `struct` | NUL-terminated UTF-8 of at most `n` bytes (1 to 4096), stored in the object |
+| reference | `ref = "<type>"` | `ptr` | a pointer to an object of the type; zero is no object |
+| embedded object | `embed = "<type>"` | `struct` | an object of the type at the field's offset |
+| array | `array = { … }` | `struct` (in the object) or `ptr` (behind a pointer) | elements of a type |
+
+A value's meaning is at most one of: `sheet = "<sheet>"`, a row of the game's sheet; `enum = "<enum>"`, one of the enum's values; `flags = "<enum>"`, a set of a flags enum's bits. A sheet row, an enum value, and flags are integers. `unit` names the unit of a number, such as `yalms` or `s`.
+
+An array gives:
+
+- `of`: the type of the elements.
+- `length = n`, the number of elements, or `count = "<field>"` with `most = n`: an integer field of the object holding the array that says how many elements are used, at most `n`. `n` is 1 to 4096.
+- `stride`: the bytes from one element to the next, 1 to 65536; with `pointers = true`, every element is a pointer to the object, a zero pointer is skipped, and the stride is 8.
+- `present`: optional; a value or text field of the element. An element whose value of it is zero, false, or empty is skipped.
+- `partition`: optional; `{ field = "<field>", domains = { <domain> = ["<value>", …] } }`. The elements belong to domains by the value of `field`, a field of the element with an enum: a value listed under a domain belongs to it, any other named value to the array field's own domain, and an element whose value has no name in the enum is never read.
+
+Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
+
+### Roots
+
+`roots.toml` lists where paths start.
+
+```toml
+[roots.inventory]
+doc = "The player's items."
+global = "inventory.inventory_manager.instance"
+type = "inventory.inventory_manager"
+```
+
+- A root is named like a domain. `doc` is not blank.
+- `global`: a `global` entry; of type `struct`, it is the object of `type`; of type `ptr`, it holds a pointer to it, and the root has no object while the pointer is zero.
+
+### Rules and resolution
+
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large.
+
+In a build, a root is absent when its global is absent and a field when its entry is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots and fields under `objects`.
 
 ## Window schemas
 

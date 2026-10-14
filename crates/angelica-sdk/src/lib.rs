@@ -45,7 +45,7 @@ pub mod excel;
 pub mod game_ui;
 pub mod http;
 pub mod jobs;
-pub mod state;
+pub mod lens;
 pub mod storage;
 pub mod ui;
 
@@ -53,7 +53,7 @@ pub mod ui;
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
         chat, commands, events, excel, excel_text, file_replacements, game_files, game_ui, http,
-        jobs, runtime, state, storage, text_case, types,
+        jobs, lens, runtime, storage, text_case, types,
     };
 }
 

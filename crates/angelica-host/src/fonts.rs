@@ -123,7 +123,6 @@ mod tests {
             Permission::ChatCommands,
             Permission::ChatPrint,
             Permission::HttpGet,
-            Permission::StateSelf,
             Permission::ChatRead,
             Permission::GameUiHide,
             Permission::GameUiText,

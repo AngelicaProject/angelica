@@ -1,5 +1,5 @@
 //! Named columns of the game's sheets: the game map's sheet schemas applied
-//! to the layouts the installed game has (`docs/formats/game-map-v1.md`).
+//! to the layouts the installed game has (`docs/formats/game-map-v2.md`).
 #![forbid(unsafe_code)]
 use crate::{
     error::{Error, Kind, Result},

@@ -155,8 +155,8 @@ pub struct Services {
     pub chat: Arc<Chat>,
     /// Names of sheet columns from the game map.
     pub sheets: Arc<crate::sheets::Sheets>,
-    /// State tables from the game map.
-    pub state: Arc<crate::state::StateTables>,
+    /// The game map's object model for the running build, for Lens.
+    pub lens: Arc<crate::lens::Lens>,
     /// Events for the next frame and the plugins' subscriptions.
     pub events: Arc<crate::events::Events>,
     /// Rules for the game's own windows.
@@ -228,6 +228,9 @@ pub struct Context {
     pub name: String,
     /// Permissions the manifest declares and the player granted.
     pub permissions: BTreeSet<Permission>,
+    /// The domains the manifest's `[lens] read` lists and the player
+    /// granted.
+    pub lens_read: BTreeSet<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -293,6 +296,8 @@ pub struct State {
     limits: StoreLimits,
     budget: Budget,
     exceeded: Option<Exceeded>,
+    /// The Lens queries this instance prepared.
+    queries: crate::lens::Queries,
 }
 
 /// A store with its instance's state.
@@ -313,6 +318,7 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
             limits,
             budget: Budget::new(Duration::ZERO, Duration::ZERO),
             exceeded: None,
+            queries: crate::lens::Queries::default(),
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -1151,65 +1157,75 @@ fn copy_body(
     }
 }
 
-impl api::state::Host for State {
-    fn tables(&mut self) -> Vec<api::state::Table> {
-        self.context
-            .services
-            .state
-            .tables()
-            .into_iter()
-            .map(|table| api::state::Table {
-                present: table.object.is_ok(),
-                fields: table
-                    .fields
-                    .into_iter()
-                    .map(|(name, field)| api::state::Field {
-                        name,
-                        doc: field.doc,
-                        present: field.steps.is_ok(),
-                    })
-                    .collect(),
-                name: table.name,
-                domain: table.domain,
-                doc: table.doc,
+impl api::lens::Host for State {
+    fn prepare(&mut self, query: String) -> ApiResult<api::lens::Prepared> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let (handle, prepared) = self
+            .host(|state| {
+                state
+                    .queries
+                    .prepare(&context.services.lens, &query, &permitted)
             })
-            .collect()
+            .map_err(api::types::Error::from)?;
+        Ok(api::lens::Prepared {
+            query: handle,
+            columns: prepared
+                .columns
+                .into_iter()
+                .map(|column| api::lens::Column {
+                    name: column.name,
+                    doc: column.doc,
+                })
+                .collect(),
+        })
     }
 
-    fn read(
-        &mut self,
-        table: String,
-        fields: Vec<String>,
-    ) -> ApiResult<Vec<Vec<Option<api::state::Value>>>> {
-        use crate::state::StateValue as S;
-        use api::state::Value;
+    fn run(&mut self, query: u32) -> ApiResult<Vec<api::lens::Row>> {
+        use crate::lens::Value as V;
+        use api::lens::Value;
         api(self.main_only())?;
-        let services = self.context.services.clone();
-        let (plan, plans) = api(services.state.plan(&table, &fields))?;
-        let permission = crate::state::permission(&plan.domain).ok_or_else(|| {
-            api::types::Error::from(Error::new(
-                Kind::Unavailable,
-                format!("this host has no permission for domain {}", plan.domain),
-            ))
-        })?;
-        api(self.permitted(permission))?;
-        let rows = self.host(|_| services.game.read_state(&plan, &fields, &plans));
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let rows = self
+            .host(|state| {
+                let prepared = state
+                    .queries
+                    .plan(&context.services.lens, query, &permitted)?;
+                context.services.game.query(&prepared)
+            })
+            .map_err(api::types::Error::from)?;
         Ok(rows
             .into_iter()
-            .map(|row| {
-                row.into_iter()
+            .map(|row| api::lens::Row {
+                indexes: row.indexes,
+                values: row
+                    .values
+                    .into_iter()
                     .map(|value| {
                         value.map(|value| match value {
-                            S::Boolean(value) => Value::Boolean(value),
-                            S::Signed(value) => Value::Signed(value),
-                            S::Unsigned(value) => Value::Unsigned(value),
-                            S::Float(value) => Value::Float(value),
-                            S::Text(bytes) => Value::Text(bytes),
+                            V::Boolean(value) => Value::Boolean(value),
+                            V::Signed(value) => Value::Signed(value),
+                            V::Unsigned(value) => Value::Unsigned(value),
+                            V::Float(value) => Value::Float(value),
+                            V::Text(bytes) => Value::Text(bytes),
+                            V::Row { sheet, row } => {
+                                Value::Sheet(api::lens::SheetRow { sheet, row })
+                            }
+                            V::Named(name) => Value::Named(name),
+                            V::Flags { names, bits } => {
+                                Value::Flags(api::lens::FlagSet { names, bits })
+                            }
                         })
                     })
-                    .collect()
+                    .collect(),
             })
             .collect())
+    }
+
+    fn release(&mut self, query: u32) {
+        self.queries.release(query);
     }
 }
 

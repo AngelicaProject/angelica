@@ -9,6 +9,9 @@
 pub use angelica_sqpack::excel::{ColumnKind, Language};
 pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
+pub use objects::Set;
+
+mod objects;
 /// The host the tests run plugins in.
 pub use runtime;
 /// The windows and window events of the plugin API.
@@ -42,9 +45,9 @@ pub struct ScriptedGame {
     pub chat_available: AtomicBool,
     /// Every message printed in the chat log, as the game's text.
     pub printed: Mutex<Vec<Vec<u8>>>,
-    /// The rows of each state table by table name: each row's fields by
-    /// name. A table without rows has no object, as before log-in.
-    pub state: Mutex<std::collections::BTreeMap<String, Vec<StateRow>>>,
+    /// The game's objects, laid out as the game map a test named
+    /// describes them ([`TestHost::use_map`]).
+    objects: Mutex<objects::Objects>,
     /// False when the game build lacks what rules for its windows need.
     pub windows_available: AtomicBool,
     /// The elements of the game's own windows, by window name and id.
@@ -106,10 +109,6 @@ impl runtime::game_ui::Screen for ScriptedScreen<'_> {
     }
 }
 
-/// A row of a state table: values by field name; a field without a value
-/// reads as `None`.
-pub type StateRow = std::collections::BTreeMap<String, runtime::state::StateValue>;
-
 impl Default for ScriptedGame {
     fn default() -> Self {
         Self {
@@ -120,7 +119,7 @@ impl Default for ScriptedGame {
             commands_available: AtomicBool::new(true),
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
-            state: Mutex::new(std::collections::BTreeMap::new()),
+            objects: Mutex::new(objects::Objects::default()),
             windows_available: AtomicBool::new(true),
             windows: Mutex::new(std::collections::BTreeMap::new()),
         }
@@ -185,22 +184,14 @@ impl Game for ScriptedGame {
         Ok(())
     }
 
-    fn read_state(
+    fn query(
         &self,
-        table: &runtime::state::TablePlan,
-        names: &[String],
-        _fields: &[runtime::state::FieldPlan],
-    ) -> Vec<Vec<Option<runtime::state::StateValue>>> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&table.name)
-            .map(|rows| {
-                rows.iter()
-                    .map(|row| names.iter().map(|name| row.get(name).cloned()).collect())
-                    .collect()
-            })
-            .unwrap_or_default()
+        prepared: &runtime::lens::Prepared,
+    ) -> runtime::error::Result<Vec<runtime::lens::Row>> {
+        runtime::lens::run(
+            &*self.objects.lock().unwrap_or_else(PoisonError::into_inner),
+            prepared,
+        )
     }
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
@@ -216,6 +207,43 @@ impl Game for ScriptedGame {
 }
 
 impl ScriptedGame {
+    /// Sets `values` of the object `path` names in the game map a test
+    /// named, making everything on the way that does not exist yet. An
+    /// array's element is named by position, `[3]`, or by values,
+    /// `[kind = bag_1]`: the first element with them, or else the first
+    /// empty one, which gets them. A dotted value name goes through
+    /// references and embedded objects.
+    ///
+    /// ```ignore
+    /// test.game.set(
+    ///     "inventory.containers[kind = bag_1].items[0]",
+    ///     &[("item", 5057.into()), ("quantity", 12.into())],
+    /// );
+    /// ```
+    ///
+    /// # Panics
+    /// When the path or a value does not fit the map.
+    pub fn set(&self, path: &str, values: &[(&str, Set)]) {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set(path, values)
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+    }
+
+    /// The game has no object at `root` now, as before the player logs in:
+    /// the pointer its global holds is zero.
+    ///
+    /// # Panics
+    /// When the root is unknown or not behind a pointer.
+    pub fn clear(&self, root: &str) {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear(root)
+            .unwrap_or_else(|error| panic!("{root}: {error}"));
+    }
+
     /// Forgets the printed messages.
     pub fn clear_printed(&self) {
         self.printed
@@ -331,7 +359,7 @@ impl TestHost {
             commands: Arc::new(runtime::commands::Commands::default()),
             chat: Arc::new(runtime::chat::Chat::default()),
             sheets: Arc::new(runtime::sheets::Sheets::default()),
-            state: Arc::new(runtime::state::StateTables::default()),
+            lens: Arc::new(runtime::lens::Lens::default()),
             events: Arc::new(runtime::events::Events::default()),
             ui: Arc::new(runtime::game_ui::GameUi::default()),
             game: game.clone(),
@@ -550,37 +578,29 @@ impl TestHost {
         self.host.frame(FRAME);
     }
 
-    /// Defines a state table of `domain` with `fields`, present in the
-    /// game build unless listed in `absent`, as a game map would; its rows
-    /// come from [`ScriptedGame::state`].
-    pub fn define_state_table(&self, table: &str, domain: &str, fields: &[&str], absent: &[&str]) {
-        self.services().state.insert(runtime::state::TablePlan {
-            name: table.to_owned(),
-            domain: domain.to_owned(),
-            doc: "A test table.".into(),
-            object: Ok(Vec::new()),
-            list: None,
-            fields: fields
-                .iter()
-                .map(|name| {
-                    (
-                        (*name).to_owned(),
-                        runtime::state::FieldPlan {
-                            doc: "A test field.".into(),
-                            steps: if absent.contains(name) {
-                                Err(format!("map entry test.{name} is absent"))
-                            } else {
-                                Ok(Vec::new())
-                            },
-                            representation: angelica_map::Representation::Value(
-                                angelica_map::ValueKind::U32,
-                            ),
-                            index: false,
-                        },
-                    )
-                })
-                .collect(),
-        });
+    /// The game map's object model for Lens: `files` as a map's
+    /// `entries/`, `types/`, `enums/`, `domains.toml`, and `roots.toml`
+    /// files hold them, with constant field offsets. Entries in `absent`
+    /// are absent in the scripted build. The game's objects start empty;
+    /// [`ScriptedGame::set`] fills them.
+    ///
+    /// # Panics
+    /// When the files are not a valid map.
+    pub fn use_map(&self, files: &[(&str, &str)], absent: &[&str]) {
+        let files: Vec<(String, String)> = files
+            .iter()
+            .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()))
+            .collect();
+        let map =
+            angelica_map::Map::from_sources(&format!("format = {}", angelica_map::FORMAT), &files)
+                .unwrap_or_else(|error| panic!("the test's map: {error}"));
+        let (objects, schema) = objects::Objects::new(map, absent);
+        *self
+            .game
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = objects;
+        self.services().lens.replace(schema);
     }
 
     /// Names columns of a sheet of the game in `game_folder`, as a game map

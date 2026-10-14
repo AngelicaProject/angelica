@@ -86,6 +86,7 @@ strings! {
     adding: "Adding…", "Добавляю…";
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
     source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
+    lens_ungranted: "Wants to read {domain}, which the game map does not offer: not allowed", "Хочет читать {domain}, чего карта игры не даёт: не разрешено";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
     version: "version {version}", "версия {version}";
@@ -253,12 +254,22 @@ impl Language {
                 Permission::ChatCommands => "Добавляет свои команды чата",
                 Permission::ChatPrint => "Пишет свои сообщения в ваш чат",
                 Permission::HttpGet => "Скачивает с этих сайтов",
-                Permission::StateSelf => {
-                    "Видит вашего персонажа: имя, класс, уровень, HP и MP, место и зону"
-                }
                 Permission::ChatRead => "Читает сообщения в вашем чате, в том числе других игроков",
                 Permission::GameUiHide => "Скрывает части интерфейса игры",
                 Permission::GameUiText => "Вписывает свой текст в окна игры",
+            },
+        }
+    }
+
+    /// What the player is told a plugin may do: a host permission's own
+    /// words, or a domain's from the game map.
+    #[must_use]
+    pub fn asked(self, asked: &crate::manifest::Asked) -> String {
+        match asked {
+            crate::manifest::Asked::Permission(permission) => self.permission(*permission).into(),
+            crate::manifest::Asked::Read(domain) => match self {
+                Self::English => domain.read.en.clone(),
+                Self::Russian => domain.read.ru.clone(),
             },
         }
     }
@@ -386,7 +397,6 @@ mod tests {
             Permission::ChatCommands,
             Permission::ChatPrint,
             Permission::HttpGet,
-            Permission::StateSelf,
             Permission::ChatRead,
             Permission::GameUiHide,
             Permission::GameUiText,

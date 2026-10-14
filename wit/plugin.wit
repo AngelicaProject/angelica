@@ -50,7 +50,7 @@ world plugin {
     import commands;
     import chat;
     import http;
-    import state;
+    import lens;
     import events;
     import game-ui;
     export guest;

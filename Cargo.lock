@@ -100,6 +100,7 @@ dependencies = [
  "angelica-map",
  "angelica-sqpack",
  "angelica-text",
+ "serde_json",
  "tempfile",
  "wasmtime",
 ]
@@ -154,6 +155,14 @@ name = "angelica-hostile"
 version = "0.1.0"
 dependencies = [
  "angelica-sdk",
+]
+
+[[package]]
+name = "angelica-inventory"
+version = "0.1.0"
+dependencies = [
+ "angelica-sdk",
+ "serde",
 ]
 
 [[package]]

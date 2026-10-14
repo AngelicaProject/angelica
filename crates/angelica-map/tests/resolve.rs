@@ -145,7 +145,7 @@ replacement = "EB 05"
 
 fn map() -> Map {
     Map::from_sources(
-        "format = 1\n",
+        "format = 2\n",
         &[("entries/game.toml".to_owned(), ENTRIES.to_owned())],
     )
     .unwrap()

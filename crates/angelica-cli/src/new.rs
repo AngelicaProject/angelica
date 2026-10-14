@@ -285,7 +285,7 @@ angelica-sdk = { path = "{angelica}/crates/angelica-sdk" }
 angelica-fake-game = { path = "{angelica}/crates/angelica-fake-game" }
 "#;
 
-const AGENTS: &str = r"# {name}
+const AGENTS: &str = r#"# {name}
 
 An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly component. This file is the guidance for any coding agent working on it.
 
@@ -299,7 +299,7 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 ## Work loop
 
 1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Show the plan and the permissions it needs to the user.
-2. Look up every piece in the interface cards: SDK call, permission, main instance or job. Add the permissions to `angelica.toml`; nothing else.
+2. Look up every piece in the interface cards: SDK call, permission, main instance or job. For the game's objects, find the roots, types, and fields with `angelica schema search` and check each query with `angelica query`. Add the permissions to `angelica.toml`, and the domains the queries read to its `[lens] read`; nothing else.
 3. Collect every piece the cards do not cover at once: those are not available. Look for open requests first (`gh issue list --repo AngelicaProject/angelica --label api-request`). Write each new request in the format of `api-requests.md` and show it to the user. File it with `gh issue create`, as `api-requests.md` shows, only once the user agrees. Then build everything else, so the plugin is useful while it waits.
 4. Write the code in `src/lib.rs`; long work goes in a job.
 5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run the checks below.
@@ -316,6 +316,7 @@ The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user
 - `angelica plugin pack --component target/wasm32-wasip2/release/{crate}.wasm` signs it into `{id}-<version>.angelica` with the author key.
 - `angelica plugin install {id}-<version>.angelica --installation <installation>` installs it into Angelica (`%LOCALAPPDATA%\Angelica` for an installed Angelica); the running game loads it within a second.
 - `angelica excel sheets --game <game folder>` and `angelica excel show <sheet> --game <game folder>` show the game's own data, such as item names and recipes, from the installed game's `game` folder.
+- `angelica schema search <words> --map <map> --game <game folder>` and `angelica schema show <root or type> --map <map>` show what the game map describes of the game's objects: roots, types, fields, and the domain of each; `angelica query "<query>" --map <map> --game <game folder> --plugin .` checks a query and the domains `angelica.toml` lists. The map of an installed Angelica is its `map` folder (`%LOCALAPPDATA%\Angelica\map`).
 
 ## Rules
 
@@ -326,7 +327,7 @@ The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user
 - For your own serde types, add the `serde` crate with its `derive` feature.
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
-";
+"#;
 
 const GITIGNORE: &str = "/target\n/.cargo/config.toml\n";
 
