@@ -490,8 +490,8 @@ mod tests {
     #[test]
     fn refused_replacement_textures_load_as_plain_files() {
         let folder = tempfile::tempdir().unwrap();
-        let mut texture = vec![0u8; 96];
-        texture[4] = 0x40;
+        // A 2x2 texture of 32 bits a pixel: 96 bytes.
+        let mut texture = crate::file_formats::tests::texture_file(0x0080_0000, 0x1450, 2, 2, 1);
         FakeGame::new("1")
             .with_file("chara/common/texture/skin_d.tex", texture.clone())
             .write(&folder.path().join("game"))
