@@ -7,6 +7,7 @@ map.toml                 format version
 entries/<area>.toml      hand-maintained entries, one file per area
 domains.toml             the object model's domains: what plugins ask the player to read
 roots.toml               the object model's roots: where paths through the objects start
+events.toml              the object model's events: points of the game's code that plugins watch
 types/<area>.toml        the object model's types: the game's structures and their fields
 enums/<name>.toml        the object model's enums: names for the values of a field
 sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
@@ -126,7 +127,7 @@ A schema that breaks a rule makes the whole map invalid. Sheet schemas are not p
 
 ## Object model
 
-The object model describes the game's objects for Lens (`docs/architecture/lens.md`): the structures of the game as types with fields, the roots where a path through them starts, the enums that name a field's values, and the domain every field belongs to. Entries say where things are in a build; the object model says what they are. A plugin's query is a path through the model; the model never holds an address or an offset of its own, except the strides and lengths of arrays.
+The object model describes the game's objects for Lens (`docs/architecture/lens.md`): the structures of the game as types with fields, the roots where a path through them starts, the events where the game's code hands objects to a watch, the enums that name a field's values, and the domain every field belongs to. Entries say where things are in a build; the object model says what they are. A plugin's query is a path through the model; the model never holds an address or an offset of its own, except the strides and lengths of arrays.
 
 ### Domains
 
@@ -218,11 +219,44 @@ type = "inventory.inventory_manager"
 - A root is named like a domain. `doc` is not blank.
 - `global`: a `global` entry; of type `struct`, it is the object of `type`; of type `ptr`, it holds a pointer to it, and the root has no object while the pointer is zero.
 
+### Events
+
+`events.toml` lists the points of the game's code that plugins watch. An event is a `function` entry, which fires when the game calls the function, or a `location` entry, which fires when the instruction runs; its arguments are the values the game's code has there. A watch is a query that starts at an event instead of a root.
+
+```toml
+[events.action_used]
+doc = "The player asked to use an action: from a hotbar, a menu, a macro, or the duty finder."
+at = "action.action_manager.use_action"
+domain = "actions"
+rate = 32
+
+[events.action_used.args.kind]
+doc = "The kind of action."
+arg = 1
+enum = "action.action_type"
+
+[events.action_used.args.action]
+doc = "The action's id: a row of the Action sheet for an action, of the Item sheet for an item, and so on by kind."
+arg = 2
+```
+
+- An event is named like a domain, and never like a root. `doc` is not blank.
+- `at`: a `function` or `location` entry.
+- `domain`: the domain of the event's arguments, unless an argument names another.
+- `rate`: optional, 1 to 1024, 64 by default: the most firings a watch keeps between two frames.
+- `args`: at least one argument, each named like a field.
+
+An argument gives where its value is and what it is:
+
+- `arg = n`, for a function: the argument at position `n` from 0, its kind from the function's `abi`. `register = "<register>"` with `kind = "<value kind>"`, for a location: one of `rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`, `rbp`, `r8` to `r15`, or the low 64 bits of `xmm0` to `xmm15`. A float is in an `xmm` register, and only a float.
+- Its shape: a value, with `sheet`, `enum`, `flags`, and `unit` as for a field; `text = n`, NUL-terminated UTF-8 of at most `n` bytes behind a pointer; or `ref = "<type>"`, a pointer to an object of the type, from which a watch's path goes on. Text and references have the kind `ptr`.
+- `domain` and `forbidden`, as for a field.
+
 ### Rules and resolution
 
-The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large.
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind.
 
-In a build, a root is absent when its global is absent and a field when its entry is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots and fields under `objects`.
+In a build, a root is absent when its global is absent, a field when its entry is absent, and an event when its `at` is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, and events under `objects`.
 
 ## Window schemas
 

@@ -106,8 +106,7 @@ impl Lens {
             })?;
             self.watches.hooked(id);
         }
-        self.watches.subscribe(
-            id,
+        let subscriber = watch::Subscriber::new(
             plugin,
             handle,
             text,
@@ -116,6 +115,7 @@ impl Lens {
             event.rate,
             prepared,
         );
+        self.watches.subscribe(id, subscriber);
         Ok(())
     }
 

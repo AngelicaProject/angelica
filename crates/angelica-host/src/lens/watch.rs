@@ -15,7 +15,7 @@ use std::sync::{
 };
 
 /// One plugin's watch of an event.
-struct Subscriber {
+pub struct Subscriber {
     plugin: String,
     handle: u32,
     text: String,
@@ -29,6 +29,33 @@ struct Subscriber {
     /// The rows of each firing since the last delivery.
     firings: Vec<Vec<Row>>,
     dropped: u32,
+}
+
+impl Subscriber {
+    /// A plugin's watch of `event` with the query `text`, keeping at most
+    /// `rate` firings between two frames.
+    #[must_use]
+    pub fn new(
+        plugin: &str,
+        handle: u32,
+        text: &str,
+        read: BTreeSet<String>,
+        event: &str,
+        rate: u16,
+        plan: Prepared,
+    ) -> Self {
+        Self {
+            plugin: plugin.to_owned(),
+            handle,
+            text: text.to_owned(),
+            read,
+            event: event.to_owned(),
+            rate,
+            plan: Some(plan),
+            firings: Vec::new(),
+            dropped: 0,
+        }
+    }
 }
 
 /// A point of the game's code that plugins watch: a `function` or
@@ -105,20 +132,8 @@ impl Watches {
             .cloned()
     }
 
-    /// Adds a plugin's watch of `event`, at the point `id`, keeping at most
-    /// `rate` firings between two frames.
-    #[allow(clippy::too_many_arguments)]
-    pub fn subscribe(
-        &self,
-        id: usize,
-        plugin: &str,
-        handle: u32,
-        text: &str,
-        read: BTreeSet<String>,
-        event: &str,
-        rate: u16,
-        plan: Prepared,
-    ) {
+    /// Adds a plugin's watch at the point `id`.
+    pub fn subscribe(&self, id: usize, subscriber: Subscriber) {
         let Some(point) = self.get(id) else {
             return;
         };
@@ -126,17 +141,7 @@ impl Watches {
             .subscribers
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        subscribers.push(Subscriber {
-            plugin: plugin.to_owned(),
-            handle,
-            text: text.to_owned(),
-            read,
-            event: event.to_owned(),
-            rate,
-            plan: Some(plan),
-            firings: Vec::new(),
-            dropped: 0,
-        });
+        subscribers.push(subscriber);
         point.active.store(true, Ordering::Release);
     }
 

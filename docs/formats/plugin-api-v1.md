@@ -82,7 +82,7 @@ Both read the original files: never another plugin's text tables or replaced fil
 inventory.containers[kind in (bag_1, bag_2, bag_3, bag_4)].items[symbolic = false] { item, quantity, flags }
 ```
 
-- The path starts at a root, then names fields with `.`: references, embedded objects, and arrays.
+- The path starts at a root, then names fields with `.`: references, embedded objects, and arrays. `[<conditions>]` right after the root skips its object when a condition fails.
 - An array on the path gives a row per element. `[n]` takes the element at position `n`. `[<conditions>]` takes the elements that meet every condition, joined by `and`; a condition on an embedded object or a reference skips the object when it fails.
 - A condition compares a value of the element, a field name or names through references and embedded objects joined by `.`, with `=`, `!=`, `<`, `<=`, `>`, `>=`, or `in (…)`. A value is a number (decimal, `0x` hexadecimal, or with a fraction), `true` or `false`, the name of one of the field's enum values, or text in double quotes with `\"` and `\\` as escapes. Text compares with `=`, `!=`, and `in`; an enum value or flags with `=`, `!=`, and `in`.
 - `{ … }` names the values to answer with, separated by commas: a field, a path through references and embedded objects, or `alias: path`. A column is named by its alias, or by the path's names joined by `_` (`data.level` is `data_level`). A path that ends in a value, without braces, answers with that value alone.
@@ -95,10 +95,19 @@ A plugin holds at most 256 prepared queries; `release` forgets one, and the SDK 
 
 Every field belongs to a domain, and a query may read only the domains the manifest lists in `[lens] read` and the player approved: every field on the path, in the conditions, and in the answers. An array whose elements belong to different domains by the value of a field, such as item containers by kind, is read only in the elements of the permitted domains; a condition on that field with `=` or `in` names the elements the query reads, each of which must be permitted, and an element whose value has no name is never read. Fields the map marks forbidden are never read. Reads happen in the main instance, on the game's main thread between frames; jobs get `wrong-context`. Reading never changes the game.
 
+`watch` starts a watch: a query that starts at an [event](./game-map-v2.md#events) of the map instead of a root, such as `action_used[kind = action] { action, target }`.
+
+- Conditions in brackets after the event's name test its arguments; a firing that fails them is not delivered.
+- Without a path, the braces name the event's arguments. A path goes on only through an argument that is a reference, and then reads the object it points to as a query reads from a root: `<event>.<argument>.<field> { … }`.
+- The event's arguments and everything read through them count under their domains, as for `prepare`; the errors are `prepare`'s, and `unavailable` also when the host cannot hook the event's point in the running build.
+
+When the game reaches the event's point, the host reads the rows at once, on the thread that reached it, and in the next frame delivers each firing as a `watched` [game event](#events) with the handle `watch` returned. A watch keeps at most the event's `rate` of firings between two frames; a firing past that, past 256 rows, or past 64 pages of 4 KiB is left out, and the plugin receives `watch-dropped` with how many before the firings it kept. `release` ends a watch; a watch ends when the plugin stops. After the game map is reloaded, a watch is planned again, and one that no longer fits receives nothing until the plugin watches again. Watches count toward the 256 held queries.
+
 ## Events
 
 `events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.
 
+- `watched` and `watch-dropped`: the firings of a [Lens watch](#lens), delivered without a subscription, after the subscribed events of the frame.
 - `chat-message` (`chat.read`): a message the game added to the chat log, whatever the channel, with its kind (a row of the LogKind sheet), the game's full log information, the sender's name and the message as game text of at most 8192 bytes each, and the time in seconds since 1970. Messages printed by Angelica's plugins are not delivered, so a plugin that answers messages never hears itself.
 
 The host keeps at most 256 events between two frames, for all plugins together; when more arrive, every subscribed plugin first receives `dropped` with how many were left out. A subscription ends when the plugin stops. Subscribing to a kind whose map entries the game build lacks returns `unavailable`.

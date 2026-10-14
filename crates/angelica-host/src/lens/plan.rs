@@ -790,172 +790,171 @@ impl<'a> Planner<'a> {
         self.depth += 1;
         self.domain(&arg.domain)?;
         steps.push(Step::FromArg(arg_at(arg)));
-        match &segment.filter {
-            None => {}
-            Some(Filter::Index(_)) => {
-                return Err(Error::invalid(format!(
-                    "{}.{} is one object, not an array: it has no index",
-                    event.name, segment.field
-                )));
-            }
-            Some(Filter::Conditions(conditions)) => {
-                let conditions = self.conditions(Scope::Type(to), conditions)?;
-                steps.push(Step::Filter(conditions));
-            }
-        }
+        let name = format!("{}.{}", event.name, segment.field);
+        self.one_object_filter(&name, segment.filter.as_ref(), to, steps)?;
         Ok(Some(to.clone()))
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn plan(&mut self, query: &Query) -> Result<Prepared> {
+    /// The filter on one object, which can have conditions but not an
+    /// index. `name` says which object for the error.
+    fn one_object_filter(
+        &mut self,
+        name: &str,
+        filter: Option<&Filter>,
+        of: &str,
+        steps: &mut Vec<Step>,
+    ) -> Result<()> {
+        match filter {
+            None => {}
+            Some(Filter::Index(_)) => {
+                return Err(Error::invalid(format!(
+                    "{name} is one object, not an array: it has no index"
+                )));
+            }
+            Some(Filter::Conditions(conditions)) => {
+                let conditions = self.conditions(Scope::Type(of), conditions)?;
+                steps.push(Step::Filter(conditions));
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the plan starts, the type it reached (`None` while a watch is
+    /// still at its event), and how many path segments that took.
+    fn start(
+        &mut self,
+        query: &Query,
+        steps: &mut Vec<Step>,
+        columns: &mut Vec<Column>,
+    ) -> Result<(Start, Option<String>, usize)> {
         let objects = self.objects;
-        let mut steps = Vec::new();
-        let mut columns = Vec::new();
-        let (start, current, skip) = if let Some(event) = objects.events.get(&query.root) {
+        if let Some(event) = objects.events.get(&query.root) {
             if !self.watch {
                 return Err(Error::invalid(format!(
                     "{} is an event: watch it with lens.watch",
                     query.root
                 )));
             }
-            let reached = self.event_start(event, query, &mut steps, &mut columns)?;
-            match reached {
-                Some(to) => (Start::Event(event.name.clone()), Some(to), 1),
-                None => (Start::Event(event.name.clone()), None, query.path.len()),
+            let reached = self.event_start(event, query, steps, columns)?;
+            let skip = if reached.is_some() {
+                1
+            } else {
+                query.path.len()
+            };
+            return Ok((Start::Event(event.name.clone()), reached, skip));
+        }
+        if self.watch {
+            let known = objects
+                .events
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut message = format!("the game map has no event {}", query.root);
+            if !known.is_empty() {
+                let _ = write!(message, "; its events: {known}");
             }
-        } else {
-            if self.watch {
-                let known = objects
-                    .events
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let mut message = format!("the game map has no event {}", query.root);
-                if !known.is_empty() {
-                    let _ = write!(message, "; its events: {known}");
-                }
-                return Err(not_found(message));
+            return Err(not_found(message));
+        }
+        let (root, at) = self.root(&query.root)?;
+        self.one_object_filter(&root.name, query.filter.as_ref(), &root.r#type, steps)?;
+        Ok((Start::Root(at), Some(root.r#type.clone()), 0))
+    }
+
+    /// The columns of a watch whose answers are the event's own arguments.
+    fn event_columns(&mut self, query: &Query, columns: &mut Vec<Column>) -> Result<()> {
+        let event = &self.objects.events[&query.root];
+        if let Some(selected) = &query.select {
+            for selected in selected {
+                columns.push(self.column(Scope::Event(event), &selected.name, &selected.path)?);
             }
-            let (root, at) = self.root(&query.root)?;
-            match &query.filter {
-                None => {}
-                Some(Filter::Index(_)) => {
-                    return Err(Error::invalid(format!(
-                        "{} is one object, not an array: it has no index",
-                        root.name
-                    )));
-                }
-                Some(Filter::Conditions(conditions)) => {
-                    let conditions = self.conditions(Scope::Type(&root.r#type), conditions)?;
-                    steps.push(Step::Filter(conditions));
-                }
+        } else if columns.is_empty() {
+            let known = event.args.keys().cloned().collect::<Vec<_>>().join(", ");
+            return Err(Error::invalid(format!(
+                "name the values to answer with in braces, such as {{ a, b }}; the arguments of {}: {known}",
+                event.name
+            )));
+        }
+        Ok(())
+    }
+
+    /// One segment of the path from an object of type `holder`. Returns the
+    /// type the path reached. `answer` is set when the segment is the last
+    /// one and nothing is selected, so a value there is the one column.
+    fn segment(
+        &mut self,
+        holder: &str,
+        segment: &query::Segment,
+        answer: bool,
+        steps: &mut Vec<Step>,
+        columns: &mut Vec<Column>,
+    ) -> Result<String> {
+        let (field, offset) = self.field(holder, &segment.field)?;
+        match &field.shape {
+            Shape::Ref(to) | Shape::Embed(to) => {
+                steps.push(Step::Hop(Hop {
+                    offset,
+                    pointer: matches!(field.shape, Shape::Ref(_)),
+                }));
+                let name = format!("{holder}.{}", segment.field);
+                self.one_object_filter(&name, segment.filter.as_ref(), to, steps)?;
+                Ok(to.clone())
             }
-            (Start::Root(at), Some(root.r#type.clone()), 0)
-        };
-        let Some(mut current) = current else {
-            // A watch whose answers are the event's own arguments.
-            let event = &objects.events[&query.root];
-            if let Some(selected) = &query.select {
-                for selected in selected {
-                    columns.push(self.column(
-                        Scope::Event(event),
-                        &selected.name,
-                        &selected.path,
-                    )?);
-                }
-            } else if columns.is_empty() {
-                let known = event.args.keys().cloned().collect::<Vec<_>>().join(", ");
-                return Err(Error::invalid(format!(
-                    "name the values to answer with in braces, such as {{ a, b }}; the arguments of {}: {known}",
-                    event.name
-                )));
-            }
-            return Ok(Prepared {
-                columns,
-                domains: std::mem::take(&mut self.domains),
-                start,
-                steps,
-            });
-        };
-        for (position, segment) in query.path.iter().enumerate().skip(skip) {
-            let last = position + 1 == query.path.len();
-            let (field, offset) = self.field(&current, &segment.field)?;
-            let field = field.clone();
-            let holder = current.clone();
-            match &field.shape {
-                Shape::Ref(to) | Shape::Embed(to) => {
-                    steps.push(Step::Hop(Hop {
-                        offset,
-                        pointer: matches!(field.shape, Shape::Ref(_)),
-                    }));
-                    current.clone_from(to);
-                    match &segment.filter {
-                        None => {}
-                        Some(Filter::Index(_)) => {
-                            return Err(Error::invalid(format!(
-                                "{holder}.{} is one object, not an array: it has no index",
-                                segment.field
-                            )));
-                        }
-                        Some(Filter::Conditions(conditions)) => {
-                            let conditions = self.conditions(Scope::Type(&current), conditions)?;
-                            steps.push(Step::Filter(conditions));
-                        }
-                    }
-                }
-                Shape::Array {
+            Shape::Array {
+                array,
+                behind_pointer,
+            } => {
+                let step = self.array(
+                    holder,
+                    segment,
+                    offset,
                     array,
-                    behind_pointer,
-                } => {
-                    let step = self.array(
-                        &holder,
-                        segment,
-                        offset,
-                        array,
-                        *behind_pointer,
-                        &field.domain,
-                    )?;
-                    steps.push(Step::Array(step));
-                    current.clone_from(&array.of);
-                }
-                Shape::Value { .. } | Shape::Text(_) if last && query.select.is_none() => {
-                    if segment.filter.is_some() {
-                        return Err(Error::invalid(format!(
-                            "{holder}.{} is a value: it has no filter",
-                            segment.field
-                        )));
-                    }
-                    // The value is the one column; the plan reads it from the
-                    // object holding it.
-                    self.depth -= 1;
-                    columns.push(self.column(
-                        Scope::Type(&holder),
-                        &segment.field,
-                        std::slice::from_ref(&segment.field),
-                    )?);
-                }
-                Shape::Value { .. } | Shape::Text(_) => {
+                    *behind_pointer,
+                    &field.domain,
+                )?;
+                steps.push(Step::Array(step));
+                Ok(array.of.clone())
+            }
+            Shape::Value { .. } | Shape::Text(_) if answer => {
+                if segment.filter.is_some() {
                     return Err(Error::invalid(format!(
-                        "{holder}.{} is a value: a path goes on only through references, objects, and arrays",
+                        "{holder}.{} is a value: it has no filter",
                         segment.field
                     )));
                 }
+                // The value is the one column; the plan reads it from the
+                // object holding it.
+                self.depth -= 1;
+                columns.push(self.column(
+                    Scope::Type(holder),
+                    &segment.field,
+                    std::slice::from_ref(&segment.field),
+                )?);
+                Ok(holder.to_owned())
             }
+            Shape::Value { .. } | Shape::Text(_) => Err(Error::invalid(format!(
+                "{holder}.{} is a value: a path goes on only through references, objects, and arrays",
+                segment.field
+            ))),
         }
+    }
+
+    /// The columns selected in braces from the object the path ended at.
+    fn selected(&mut self, query: &Query, current: &str, columns: &mut Vec<Column>) -> Result<()> {
         match &query.select {
             Some(selected) => {
                 for selected in selected {
                     columns.push(self.column(
-                        Scope::Type(&current),
+                        Scope::Type(current),
                         &selected.name,
                         &selected.path,
                     )?);
                 }
             }
             None if columns.is_empty() && !self.objects_only => {
-                let known = objects
-                    .fields(&current)
+                let known = self
+                    .objects
+                    .fields(current)
                     .keys()
                     .copied()
                     .collect::<Vec<_>>()
@@ -965,6 +964,22 @@ impl<'a> Planner<'a> {
                 )));
             }
             None => {}
+        }
+        Ok(())
+    }
+
+    fn plan(&mut self, query: &Query) -> Result<Prepared> {
+        let mut steps = Vec::new();
+        let mut columns = Vec::new();
+        let (start, current, skip) = self.start(query, &mut steps, &mut columns)?;
+        if let Some(mut current) = current {
+            for (position, segment) in query.path.iter().enumerate().skip(skip) {
+                let answer = position + 1 == query.path.len() && query.select.is_none();
+                current = self.segment(&current, segment, answer, &mut steps, &mut columns)?;
+            }
+            self.selected(query, &current, &mut columns)?;
+        } else {
+            self.event_columns(query, &mut columns)?;
         }
         Ok(Prepared {
             columns,

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use angelica_map::{Field, Length, Map, Meaning, Objects, Shape, Value};
+use angelica_map::{Domain, Event, Field, Length, Map, Meaning, Objects, Shape, Value};
 use angelica_pe::{Image, Layout};
 use clap::{Args, Subcommand};
 use runtime::lens::{ColumnMeaning, Schema, Stored};
@@ -271,7 +271,6 @@ fn field_line(objects: &Objects, owner: &str, field: &Field, schema: Option<&Sch
 
 /// Everything in the object model whose name or description has every
 /// word.
-#[allow(clippy::too_many_lines)]
 fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
     let objects = loaded.map.objects();
     let schema = loaded.schema.as_ref();
@@ -310,60 +309,8 @@ fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
             ));
         }
     }
-    for object in objects.types.values() {
-        if matches(&[&object.name, &object.doc]) {
-            found.push((
-                json!({"kind": "type", "name": object.name, "doc": object.doc, "domain": object.domain, "extends": object.extends}),
-                format!("type {} [{}] {}", object.name, object.domain, object.doc),
-            ));
-        }
-        for field in object.fields.values() {
-            if matches(&[
-                &object.name,
-                &field.name,
-                &field.doc,
-                &shape(objects, field),
-            ]) {
-                found.push((
-                    field_json(objects, &object.name, field, schema),
-                    format!("field {}", field_line(objects, &object.name, field, schema)),
-                ));
-            }
-        }
-    }
-    for event in objects.events.values() {
-        let available = schema.and_then(|schema| schema.events.get(&event.name).cloned());
-        if matches(&[&event.name, &event.doc, &event.at]) {
-            let mut line = format!(
-                "event {} at {} [{}] {}",
-                event.name, event.at, event.domain, event.doc
-            );
-            if let Some(Err(reason)) = &available {
-                let _ = write!(line, " (absent in this build: {reason})");
-            }
-            found.push((
-                json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
-                       "available": available.as_ref().map(Result::is_ok), "reason": available.clone().and_then(Result::err)}),
-                line,
-            ));
-        }
-        for arg in event.args.values() {
-            if matches(&[&event.name, &arg.name, &arg.doc]) {
-                found.push((
-                    json!({"kind": "argument", "name": format!("{}.{}", event.name, arg.name), "doc": arg.doc,
-                           "domain": arg.domain, "shape": arg_shape(objects, arg)}),
-                    format!(
-                        "argument {}.{}: {} [{}] {}",
-                        event.name,
-                        arg.name,
-                        arg_shape(objects, arg),
-                        arg.domain,
-                        arg.doc
-                    ),
-                ));
-            }
-        }
-    }
+    found_in_types(objects, schema, &matches, &mut found);
+    found_in_events(objects, schema, &matches, &mut found);
     for found_enum in objects.enums.values() {
         let values = found_enum.values.keys().cloned().collect::<Vec<_>>();
         if matches(&[&found_enum.name, &found_enum.doc, &values.join(" ")]) {
@@ -376,7 +323,6 @@ fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
     found
 }
 
-#[allow(clippy::too_many_lines)]
 fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
     let objects = loaded.map.objects();
     let schema = loaded.schema.as_ref();
@@ -419,62 +365,10 @@ fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
         return Ok((shown, text));
     }
     if let Some(domain) = objects.domains.get(name) {
-        let _ = writeln!(
-            text,
-            "domain {} ({:?}): {}",
-            domain.name, domain.class, domain.doc
-        );
-        let _ = writeln!(text, "  read: {} / {}", domain.read.en, domain.read.ru);
-        let mut fields = Vec::new();
-        for object in objects.types.values() {
-            for field in object
-                .fields
-                .values()
-                .filter(|field| field.domain == domain.name)
-            {
-                let _ = writeln!(
-                    text,
-                    "  {}",
-                    field_line(objects, &object.name, field, schema)
-                );
-                fields.push(field_json(objects, &object.name, field, schema));
-            }
-        }
-        return Ok((
-            json!({"kind": "domain", "name": domain.name, "doc": domain.doc, "class": format!("{:?}", domain.class),
-                   "read": {"en": domain.read.en, "ru": domain.read.ru}, "fields": fields}),
-            text,
-        ));
+        return Ok(show_domain(objects, schema, domain));
     }
     if let Some(event) = objects.events.get(name) {
-        let available = schema.and_then(|schema| schema.events.get(name).cloned());
-        let _ = writeln!(
-            text,
-            "event {} at {} [{}], at most {} firings a frame: {}",
-            event.name, event.at, event.domain, event.rate, event.doc
-        );
-        if let Some(Err(reason)) = &available {
-            let _ = writeln!(text, "  absent in this build: {reason}");
-        }
-        let mut args = Vec::new();
-        for arg in event.args.values() {
-            let _ = writeln!(
-                text,
-                "  {}.{}: {} [{}] {}",
-                event.name,
-                arg.name,
-                arg_shape(objects, arg),
-                arg.domain,
-                arg.doc
-            );
-            args.push(json!({"name": arg.name, "doc": arg.doc, "domain": arg.domain, "shape": arg_shape(objects, arg)}));
-        }
-        return Ok((
-            json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
-                   "rate": event.rate, "available": available.as_ref().map(Result::is_ok),
-                   "reason": available.and_then(Result::err), "args": args}),
-            text,
-        ));
+        return Ok(show_event(objects, schema, event));
     }
     if let Some(found) = objects.enums.get(name) {
         let _ = writeln!(text, "enum {}: {}", found.name, found.doc);
@@ -619,7 +513,6 @@ fn row_lines(text: &mut String, columns: &[runtime::look::Column], rows: &[runti
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn look(args: &LookArgs) -> Result<(Json, String), String> {
     use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response, write_atomically};
     if let [before, after] = args.compare.as_slice() {
@@ -678,6 +571,149 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
     if let Some(error) = &response.error {
         return Err(format!("{}: {}", error.kind, error.message));
     }
+    let text = response_text(mode, &response);
+    Ok((serde_json::to_value(&response).unwrap_or_default(), text))
+}
+
+/// Types and their fields that `matches`, for `search`.
+fn found_in_types(
+    objects: &Objects,
+    schema: Option<&Schema>,
+    matches: &dyn Fn(&[&str]) -> bool,
+    found: &mut Vec<(Json, String)>,
+) {
+    for object in objects.types.values() {
+        if matches(&[&object.name, &object.doc]) {
+            found.push((
+                json!({"kind": "type", "name": object.name, "doc": object.doc, "domain": object.domain, "extends": object.extends}),
+                format!("type {} [{}] {}", object.name, object.domain, object.doc),
+            ));
+        }
+        for field in object.fields.values() {
+            if matches(&[
+                &object.name,
+                &field.name,
+                &field.doc,
+                &shape(objects, field),
+            ]) {
+                found.push((
+                    field_json(objects, &object.name, field, schema),
+                    format!("field {}", field_line(objects, &object.name, field, schema)),
+                ));
+            }
+        }
+    }
+}
+
+/// Events and their arguments that `matches`, for `search`.
+fn found_in_events(
+    objects: &Objects,
+    schema: Option<&Schema>,
+    matches: &dyn Fn(&[&str]) -> bool,
+    found: &mut Vec<(Json, String)>,
+) {
+    for event in objects.events.values() {
+        let available = schema.and_then(|schema| schema.events.get(&event.name).cloned());
+        if matches(&[&event.name, &event.doc, &event.at]) {
+            let mut line = format!(
+                "event {} at {} [{}] {}",
+                event.name, event.at, event.domain, event.doc
+            );
+            if let Some(Err(reason)) = &available {
+                let _ = write!(line, " (absent in this build: {reason})");
+            }
+            found.push((
+                json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
+                       "available": available.as_ref().map(Result::is_ok), "reason": available.clone().and_then(Result::err)}),
+                line,
+            ));
+        }
+        for arg in event.args.values() {
+            if matches(&[&event.name, &arg.name, &arg.doc]) {
+                found.push((
+                    json!({"kind": "argument", "name": format!("{}.{}", event.name, arg.name), "doc": arg.doc,
+                           "domain": arg.domain, "shape": arg_shape(objects, arg)}),
+                    format!(
+                        "argument {}.{}: {} [{}] {}",
+                        event.name,
+                        arg.name,
+                        arg_shape(objects, arg),
+                        arg.domain,
+                        arg.doc
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// A domain and every field in it, for `show`.
+fn show_domain(objects: &Objects, schema: Option<&Schema>, domain: &Domain) -> (Json, String) {
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "domain {} ({:?}): {}",
+        domain.name, domain.class, domain.doc
+    );
+    let _ = writeln!(text, "  read: {} / {}", domain.read.en, domain.read.ru);
+    let mut fields = Vec::new();
+    for object in objects.types.values() {
+        for field in object
+            .fields
+            .values()
+            .filter(|field| field.domain == domain.name)
+        {
+            let _ = writeln!(
+                text,
+                "  {}",
+                field_line(objects, &object.name, field, schema)
+            );
+            fields.push(field_json(objects, &object.name, field, schema));
+        }
+    }
+    (
+        json!({"kind": "domain", "name": domain.name, "doc": domain.doc, "class": format!("{:?}", domain.class),
+               "read": {"en": domain.read.en, "ru": domain.read.ru}, "fields": fields}),
+        text,
+    )
+}
+
+/// An event and its arguments, for `show`.
+fn show_event(objects: &Objects, schema: Option<&Schema>, event: &Event) -> (Json, String) {
+    let mut text = String::new();
+    let available = schema.and_then(|schema| schema.events.get(&event.name).cloned());
+    let _ = writeln!(
+        text,
+        "event {} at {} [{}], at most {} firings a frame: {}",
+        event.name, event.at, event.domain, event.rate, event.doc
+    );
+    if let Some(Err(reason)) = &available {
+        let _ = writeln!(text, "  absent in this build: {reason}");
+    }
+    let mut args = Vec::new();
+    for arg in event.args.values() {
+        let _ = writeln!(
+            text,
+            "  {}.{}: {} [{}] {}",
+            event.name,
+            arg.name,
+            arg_shape(objects, arg),
+            arg.domain,
+            arg.doc
+        );
+        args.push(json!({"name": arg.name, "doc": arg.doc, "domain": arg.domain, "shape": arg_shape(objects, arg)}));
+    }
+    (
+        json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
+               "rate": event.rate, "available": available.as_ref().map(Result::is_ok),
+               "reason": available.and_then(Result::err), "args": args}),
+        text,
+    )
+}
+
+/// What `look` prints for a response.
+fn response_text(mode: runtime::look::Mode, response: &runtime::look::Response) -> String {
+    use runtime::look::Mode;
     let columns = response.columns.clone().unwrap_or_default();
     let mut text = String::new();
     match mode {
@@ -736,7 +772,7 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
             }
         }
     }
-    Ok((serde_json::to_value(&response).unwrap_or_default(), text))
+    text
 }
 
 /// The bytes that differ between two dumps, object by object.

@@ -54,6 +54,14 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 A development build of the runtime answers `angelica look` through the `look` folder of the installation: the command writes `look/request.json`, `{"format": 1, "id": "<random>", "query": "<query>"}`, and the host, between two frames, removes it, runs the [query](./plugin-api-v1.md#lens) with every domain readable, and writes `look/response.json` with the same `id` and either `columns` (each with `name`, `field`, `doc`, `domain`) and `rows` (each with `indexes` and `values` as JSON: numbers, booleans, plain text, `{"sheet", "row"}`, names, `{"names", "bits"}`, or `null`), or `error` with `kind` and `message`. Fields no plugin reads stay unread. A release build has no `look` folder and never reads one.
 
+A request may also have `mode`, `rows` by default:
+
+- `watch`: `query` is a [watch](./plugin-api-v1.md#lens) and `seconds` (1 to 60) how long it lasts; the response has `columns`, `firings` (the rows of each firing), and `dropped`.
+- `dump`: `query` is a path to objects and `bytes` (1 to 4096) how much of each object to read; the response has `objects`, each with `indexes`, `address`, and `bytes` as lowercase hexadecimal, or `null` where the memory cannot be read.
+- `trace`: `entries` lists up to 64 `function` and `location` entries and `seconds` (1 to 60) how long to count; the response has `calls`, the count of each entry.
+
+The host answers a `watch` or a `trace` when its seconds are over.
+
 ## Plugin settings
 
 `state/<plugin-id>.json` holds `{"format": 1, "enabled": false}` when the player turned the plugin off; without the file an approved plugin is enabled. Faults do not change it. An unreadable file or another format refuses the plugin.

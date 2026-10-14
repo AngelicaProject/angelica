@@ -44,7 +44,7 @@ angelica schema show <root or type> --map <map> --game <game folder>
 angelica query "<query>" --map <map> --game <game folder> --plugin .
 ```
 
-`search` lists the roots, types, fields, and domains with those words; `show` a type's fields with what they hold and their domains; `query` checks a query as the host will, including the domains the manifest's `[lens] read` lists. With a development installation, `angelica look "<query>" --installation <folder>` runs it in the running game.
+`search` lists the roots, types, fields, events, and domains with those words; `show` a type's fields or an event's arguments with what they hold and their domains; `query` checks a query as the host will, including the domains the manifest's `[lens] read` lists. With a development installation, `angelica look "<query>" --installation <folder>` runs it in the running game.
 
 When a piece is missing — a sheet column without a name, a field the object model lacks, an event, an operation on the game — the plugin does not work around it. File an [API request](./api-requests.md) and build the rest of the plugin meanwhile.
 
@@ -83,6 +83,7 @@ Rules that keep a plugin within its limits:
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
 | a sheet in the installed game | `game_files::FakeGame::new(version).with_text(sheet, &TextSheet::new(columns, &[text columns]).row(id, &[(column, text)]))` written to `test.game_folder()`, then `test.name_columns(sheet, &[(name, column)])`; `FakeSheet` with `ColumnKind` and `Language` for other column kinds |
 | the game's objects | `test.use_map(&files, &absent)` with the object model of a map (entries with constant offsets, types, enums, domains, roots), before the plugin is approved; then `test.game.set("<path>", &[("field", value.into())])` and `test.game.clear("<root>")` |
+| the game reaching an event | an event in the map given to `test.use_map`; then `test.fire("<event>", &[("<argument>", Fire::Value(…))])`, or `Fire::Object("<path>")` for a reference, and `test.frames(1)` to deliver it |
 | what the plugin printed | `test.game.printed_text()`; `test.game.clear_printed()` forgets it |
 | what the plugin shows | `test.texts(id)`: the headings and texts of its windows; `test.host.plugin(id).unwrap().windows()` for every widget (types in `angelica_fake_game::ui`) |
 

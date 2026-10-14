@@ -74,11 +74,10 @@ pub struct Row {
 }
 
 /// Memory read by page, each page at most once.
-#[allow(clippy::struct_field_names)]
 struct Pages<'a> {
     memory: &'a dyn Memory,
-    pages: RefCell<HashMap<u64, Option<Box<[u8; PAGE]>>>>,
-    most_pages: usize,
+    loaded: RefCell<HashMap<u64, Option<Box<[u8; PAGE]>>>>,
+    most: usize,
     /// The event's call, for a watch.
     call: Option<&'a Call>,
 }
@@ -93,14 +92,14 @@ impl Pages<'_> {
             let page = at / PAGE_BYTES * PAGE_BYTES;
             let start = usize::try_from(at - page).unwrap_or_default();
             let length = (PAGE - start).min(buffer.len() - done);
-            let mut pages = self.pages.borrow_mut();
+            let mut pages = self.loaded.borrow_mut();
             if !pages.contains_key(&page) {
-                if pages.len() >= self.most_pages {
+                if pages.len() >= self.most {
                     return Err(Error::new(
                         Kind::LimitExceeded,
                         format!(
                             "the query reads more than {} pages of the game's memory; narrow it with filters",
-                            self.most_pages
+                            self.most
                         ),
                     ));
                 }
@@ -426,8 +425,8 @@ fn signed(stored: Stored) -> bool {
 pub fn run(memory: &dyn Memory, prepared: &Prepared) -> Result<Vec<Row>> {
     let pages = Pages {
         memory,
-        pages: RefCell::new(HashMap::new()),
-        most_pages: MOST_PAGES,
+        loaded: RefCell::new(HashMap::new()),
+        most: MOST_PAGES,
         call: None,
     };
     let Start::Root(root) = &prepared.start else {
@@ -453,8 +452,8 @@ pub fn run(memory: &dyn Memory, prepared: &Prepared) -> Result<Vec<Row>> {
 pub fn run_call(memory: &dyn Memory, prepared: &Prepared, call: &Call) -> Result<Vec<Row>> {
     let pages = Pages {
         memory,
-        pages: RefCell::new(HashMap::new()),
-        most_pages: MOST_CALL_PAGES,
+        loaded: RefCell::new(HashMap::new()),
+        most: MOST_CALL_PAGES,
         call: Some(call),
     };
     rows(&pages, prepared, 0, MOST_CALL_ROWS)
@@ -525,8 +524,8 @@ pub type Dumped = (Vec<u32>, u64, Option<Vec<u8>>);
 pub fn objects(memory: &dyn Memory, prepared: &Prepared, bytes: usize) -> Result<Vec<Dumped>> {
     let pages = Pages {
         memory,
-        pages: RefCell::new(HashMap::new()),
-        most_pages: MOST_PAGES,
+        loaded: RefCell::new(HashMap::new()),
+        most: MOST_PAGES,
         call: None,
     };
     let Start::Root(root) = &prepared.start else {

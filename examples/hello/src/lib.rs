@@ -113,7 +113,6 @@ impl Hello {
         self.show_clicks();
     }
 
-    #[allow(clippy::too_many_lines)] // one arm per button of the example
     fn click(&mut self, id: &str) {
         match id {
             "click" => {
@@ -132,52 +131,16 @@ impl Hello {
                 Err(error) => self.say(format!("job refused: {}", error.message)),
             },
             "table" => {
-                let result = write_table().and_then(|()| {
-                    excel_text::activate("example", "example.table", 0).map_err(|e| e.message)
-                });
-                match result {
-                    Ok(info) => self.say(format!(
-                        "table active: {} sheets, {} cells",
-                        info.sheets, info.cells
-                    )),
-                    Err(error) => self.say(format!("table refused: {error}")),
-                }
+                let text = activate_table();
+                self.say(text);
             }
             "read" => {
-                let text = excel::row("Item", excel::ENGLISH, &["name"], 1)
-                    .map_err(|e| e.message)
-                    .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
-                    .map(|values| {
-                        values.first().and_then(excel::Value::text).map_or_else(
-                            || "not text".to_owned(),
-                            |bytes| String::from_utf8_lossy(bytes).into_owned(),
-                        )
-                    });
-                let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
-                match (text, font) {
-                    (Ok(text), Ok(size)) => {
-                        self.say(format!("Item 1 is {text}; the font file has {size} bytes"));
-                    }
-                    (Err(error), _) => self.say(format!("cannot read Item: {error}")),
-                    (_, Err(error)) => self.say(format!("cannot read the font: {}", error.message)),
-                }
+                let text = read_item_and_font();
+                self.say(text);
             }
             "texture" => {
-                // The font texture with its last pixel changed.
-                let result = game_files::read("common/font/font1.tex")
-                    .and_then(|mut texture| {
-                        if let Some(last) = texture.last_mut() {
-                            *last ^= 0xFF;
-                        }
-                        files::write("font1.tex", &texture)
-                    })
-                    .and_then(|()| {
-                        file_replacements::replace("common/font/font1.tex", "font1.tex")
-                    });
-                match result {
-                    Ok(()) => self.say("texture replaced"),
-                    Err(error) => self.say(format!("texture refused: {}", error.message)),
-                }
+                let text = replace_texture();
+                self.say(text);
             }
             "where" => match who() {
                 Ok(text) => self.say(text),
@@ -217,6 +180,51 @@ impl Hello {
             }
             _ => {}
         }
+    }
+}
+
+/// Writes the example table and turns it on.
+fn activate_table() -> String {
+    let result = write_table()
+        .and_then(|()| excel_text::activate("example", "example.table", 0).map_err(|e| e.message));
+    match result {
+        Ok(info) => format!("table active: {} sheets, {} cells", info.sheets, info.cells),
+        Err(error) => format!("table refused: {error}"),
+    }
+}
+
+/// Item 1's name and the size of a font file, read from the game's files.
+fn read_item_and_font() -> String {
+    let text = excel::row("Item", excel::ENGLISH, &["name"], 1)
+        .map_err(|e| e.message)
+        .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
+        .map(|values| {
+            values.first().and_then(excel::Value::text).map_or_else(
+                || "not text".to_owned(),
+                |bytes| String::from_utf8_lossy(bytes).into_owned(),
+            )
+        });
+    let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
+    match (text, font) {
+        (Ok(text), Ok(size)) => format!("Item 1 is {text}; the font file has {size} bytes"),
+        (Err(error), _) => format!("cannot read Item: {error}"),
+        (_, Err(error)) => format!("cannot read the font: {}", error.message),
+    }
+}
+
+/// Replaces the font texture with a copy whose last pixel is changed.
+fn replace_texture() -> String {
+    let result = game_files::read("common/font/font1.tex")
+        .and_then(|mut texture| {
+            if let Some(last) = texture.last_mut() {
+                *last ^= 0xFF;
+            }
+            files::write("font1.tex", &texture)
+        })
+        .and_then(|()| file_replacements::replace("common/font/font1.tex", "font1.tex"));
+    match result {
+        Ok(()) => "texture replaced".to_owned(),
+        Err(error) => format!("texture refused: {}", error.message),
     }
 }
 

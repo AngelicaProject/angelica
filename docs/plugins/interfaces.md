@@ -77,6 +77,17 @@ Read the player's character, where the player is, the bags, and whatever else th
 - Find roots, types, fields, and domains with `angelica schema search` and `schema show`; check a query with `angelica query`.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
+## The game's events
+
+Learn when the game does something the game map describes as an event, such as the player using an action, with the values of that moment.
+
+- SDK: `let watch = lens::Watch::new("action_used[kind in (action, item)] { kind, action }")?` in `start`, kept in the plugin; then in `Plugin::game_event`, `watch.decode::<T>(&event)` or `watch.rows(&event)` for the rows of one firing, and `watch.dropped(&event)` for firings that were left out. Dropping the `Watch` ends it.
+- Permission: each domain the watch reads, as for queries. Instance: main.
+- Firings arrive in the next frame, one game event each, in the order they happened. A watch keeps a limited number per frame, set by the event in the map; the rest arrive counted as dropped.
+- An event the running build lacks, or whose point the host cannot hook, fails with `unavailable`.
+- Find events and their arguments with `angelica schema search` and `schema show`; check a watch with `angelica query`; see it fire in the game with `angelica look --watch 10 "<watch>"`.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
+
 ## Sheets
 
 Read the game's data: items, actions, places, and the names the game shows.

@@ -329,7 +329,7 @@ impl Look {
         match request.mode {
             Mode::Rows | Mode::Dump => {
                 let response = answer(services, &request);
-                self.respond(&request, &response)
+                Some(self.respond(&request, &response))
             }
             Mode::Watch => self.start_watch(services, request),
             Mode::Trace => self.start_trace(services, request),
@@ -376,7 +376,7 @@ impl Look {
                 ));
                 None
             }
-            Err(error) => self.respond(&request, &Response::failed(&request.id, &error)),
+            Err(error) => Some(self.respond(&request, &Response::failed(&request.id, &error))),
         }
     }
 
@@ -410,7 +410,7 @@ impl Look {
                         crate::error::Kind::Unavailable,
                         format!("{entry}: {reason}"),
                     );
-                    return self.respond(&request, &Response::failed(&request.id, &error));
+                    return Some(self.respond(&request, &Response::failed(&request.id, &error)));
                 }
             }
         }
@@ -449,7 +449,7 @@ impl Look {
                     dropped: Some(dropped),
                     ..Response::new(&request.id)
                 };
-                self.respond(&request, &response)
+                Some(self.respond(&request, &response))
             }
             Lasting::Trace { request, points } => {
                 let calls = points
@@ -460,13 +460,12 @@ impl Look {
                     calls: Some(calls),
                     ..Response::new(&request.id)
                 };
-                self.respond(&request, &response)
+                Some(self.respond(&request, &response))
             }
         }
     }
 
-    #[allow(clippy::unnecessary_wraps)] // the same shape as `poll`
-    fn respond(&self, request: &Request, response: &Response) -> Option<String> {
+    fn respond(&self, request: &Request, response: &Response) -> String {
         let what = match (&response.error, request.mode) {
             (Some(error), _) => error.message.clone(),
             (None, Mode::Rows) => format!("{} rows", response.rows.as_ref().map_or(0, Vec::len)),
@@ -483,13 +482,13 @@ impl Look {
         };
         let bytes = serde_json::to_vec(response).unwrap_or_default();
         if let Err(error) = write_atomically(&self.folder.join(RESPONSE), &bytes) {
-            return Some(format!("look: the response was not written: {error}"));
+            return format!("look: the response was not written: {error}");
         }
         let subject = if request.mode == Mode::Trace {
             request.entries.join(", ")
         } else {
             request.query.clone()
         };
-        Some(format!("look: {subject}: {what}"))
+        format!("look: {subject}: {what}")
     }
 }
