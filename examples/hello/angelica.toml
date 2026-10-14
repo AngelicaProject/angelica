@@ -23,9 +23,13 @@ authors = ["AngelicaProject contributors"]
 "clipboard.write" = true
 "notifications" = true
 "sound.play" = true
+"storage.cache" = true
 
 [http]
 hosts = ["example.com"]
+
+[storage]
+cache = 1
 
 [messages]
 to = ["hello"]

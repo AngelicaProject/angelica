@@ -48,7 +48,7 @@ The installation key keeps packages from being swapped or damaged; it does not p
 {"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"], "lens_act": ["actions"], "lens_change": ["camera"]}
 ```
 
-`http_hosts` lists the approved hosts of `http.get`, `message_to` the approved receivers of `messages.send`, `lens_read` the domains of the game map approved for reading, `lens_act` those approved for acting in, and `lens_change` those approved for changing; each is left out when empty. A plugin runs only when its grant covers every permission, every `http.hosts` entry, and every `messages.to` entry its manifest declares, every domain of its `[lens] read` that the running game map describes in a class the host presents, every domain of its `[lens] act` that the map describes with words for acting, and every domain of its `[lens] change` that the map describes with words for changing. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+`http_hosts` lists the approved hosts of `http.get`, `message_to` the approved receivers of `messages.send`, `cache_gib` the approved size of the cache of `storage.cache`, `lens_read` the domains of the game map approved for reading, `lens_act` those approved for acting in, and `lens_change` those approved for changing; each is left out when empty. A plugin runs only when its grant covers every permission, every `http.hosts` entry, and every `messages.to` entry its manifest declares, a cache no larger than the approved one, every domain of its `[lens] read` that the running game map describes in a class the host presents, every domain of its `[lens] act` that the map describes with words for acting, and every domain of its `[lens] change` that the map describes with words for changing. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
 
 ## Lens requests
 
@@ -77,6 +77,8 @@ The host answers a `watch` or a `trace` when its seconds are over.
 ## Cache
 
 `cache/files/` holds the replacement game files plugins activated, named by the first 16 bytes of their SHA-256 in hex and their extension. The game reads them from there with its own disk reader, which takes paths of at most 259 characters; a cache path that would be longer refuses replacements. Files there are never trusted as input: each one is checked again when a plugin activates it.
+
+`cache/plugins/<plugin-id>/` is the plugin's [cache](./plugin-api-v1.md#storage), with the size its grant approves; it is removed with the plugin.
 
 ## Development installations
 

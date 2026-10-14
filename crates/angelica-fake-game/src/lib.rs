@@ -487,6 +487,7 @@ impl TestHost {
                 grants: root.join("grants"),
                 state: root.join("state"),
                 storage: root.join("storage"),
+                cache: root.join("cache").join("plugins"),
             },
             Arc::new(|_: &str| {}),
             Box::new(move |path: &Path| {

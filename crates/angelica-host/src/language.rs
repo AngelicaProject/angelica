@@ -251,6 +251,15 @@ impl Language {
         self.plural(n, [s.running_one, s.running_few, s.running_many])
     }
 
+    /// The most a plugin's cache holds, as the approval shows it.
+    #[must_use]
+    pub fn up_to_gib(self, gib: u32) -> String {
+        match self {
+            Self::English => format!("up to {gib} GB"),
+            Self::Russian => format!("до {gib} ГБ"),
+        }
+    }
+
     /// What the player is told a permission allows.
     #[must_use]
     pub fn permission(self, permission: Permission) -> &'static str {
@@ -274,6 +283,7 @@ impl Language {
                     "Показывает уведомления и мигает игрой на панели задач"
                 }
                 Permission::SoundPlay => "Проигрывает звуки",
+                Permission::StorageCache => "Хранит кеш файлов на вашем диске",
             },
         }
     }
@@ -438,6 +448,7 @@ mod tests {
             Permission::ClipboardWrite,
             Permission::Notifications,
             Permission::SoundPlay,
+            Permission::StorageCache,
         ];
         for permission in permissions {
             assert_ne!(

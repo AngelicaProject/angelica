@@ -71,6 +71,8 @@ An `entry` is a row of a list, drawn like the rows of Angelica's own list: a til
 
 Paths are relative, use `/`, and stay inside the plugin's folder: no empty, `.`, or `..` parts, no `\ : * ? " < > |` or control characters, no Windows device names (`con`, `prn`, `aux`, `nul`, `conin$`, `conout$`, `com` and `lpt` with a digit or a superscript ¹ ² ³, with any extension), no trailing dot or space, at most 512 bytes and 16 parts. Links are not followed. `write` replaces a file atomically; `append` and `write` create parent directories. `read` returns at most 64 MiB; `read-range` reads at most 16 MiB from an offset. A plugin's folder holds at most 4 GiB; a write past it returns `limit-exceeded`.
 
+Paths under `cache/` lead to the plugin's cache, for files it can fetch again, such as other players' files a synchronizing plugin downloads. The manifest names its size in `[storage] cache`, and the player approves it with `storage.cache`; without the grant these paths return `permission-denied`. The cache is a folder of its own outside the plugin's folder, with that size as its quota, so it never takes room from the plugin's data; files move inside it with `rename` but not between it and the rest of the folder, `invalid-argument` otherwise. Listing the root shows it as the directory `cache`. Angelica removes the cache with the plugin, whether or not the player keeps the plugin's data.
+
 The player can open the folder from the Angelica menu, for example to give the plugin a file.
 
 ## Game files and sheets

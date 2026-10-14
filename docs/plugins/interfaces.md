@@ -216,6 +216,7 @@ Keep settings and data across game starts.
 - SDK: `storage::load::<T>(path)` (`None` the first time) and `storage::save(path, &value)` keep serde values as JSON; `api::storage` reads and writes bytes, lists, renames, and removes.
 - Permission: none. Instance: main and job.
 - Paths are relative and stay in the plugin's folder; at most 4 GiB in total. The player can open the folder from the Angelica menu.
+- Files the plugin can fetch again go under `cache/`, with `storage.cache` and the size in the manifest's `[storage] cache = 64` (GiB); the cache has its own quota and goes away with the plugin.
 - Contract: [storage](../formats/plugin-api-v1.md#storage).
 
 ## The internet

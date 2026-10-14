@@ -1309,6 +1309,9 @@ impl Menu {
         } else if *asked == Asked::Permission(Permission::MessagesSend) {
             let receivers: Vec<String> = plugin.manifest.message_to().into_iter().collect();
             format!("{text}: {}", receivers.join(", "))
+        } else if *asked == Asked::Permission(Permission::StorageCache) {
+            let gib = plugin.manifest.cache_gib().unwrap_or_default();
+            format!("{text}: {}", self.language.up_to_gib(gib))
         } else {
             text
         }

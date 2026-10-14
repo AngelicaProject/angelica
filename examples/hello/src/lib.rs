@@ -285,6 +285,11 @@ fn around_lens(id: &str) -> Option<String> {
             "notified",
             "cannot notify",
         )),
+        "cache" => Some(said(
+            files::write("cache/hello.txt", b"fetched again when gone"),
+            "cached",
+            "cannot cache",
+        )),
         "beep" => Some(said(
             files::write("beep.wav", &beep())
                 .and_then(|()| angelica_sdk::sound::play("beep.wav", 0.5)),
@@ -624,6 +629,7 @@ impl Plugin for Hello {
                                 .button("copy", "Copy a greeting")
                                 .button("notify", "Notify me")
                                 .button("beep", "Beep")
+                                .button("cache", "Fill the cache")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

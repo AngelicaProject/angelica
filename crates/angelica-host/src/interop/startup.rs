@@ -651,6 +651,11 @@ fn directories(config: &Config, root: &Path) -> crate::host::Directories {
             .clone()
             .unwrap_or_else(|| root.join("state")),
         storage: config.storage_directory.clone(),
+        cache: config
+            .cache_directory
+            .clone()
+            .unwrap_or_else(|| root.join("cache"))
+            .join("plugins"),
     }
 }
 

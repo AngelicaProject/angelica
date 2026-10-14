@@ -33,6 +33,8 @@ pub struct Directories {
     pub grants: PathBuf,
     pub state: PathBuf,
     pub storage: PathBuf,
+    /// The plugins' caches, each in a folder named by its id.
+    pub cache: PathBuf,
 }
 
 /// A plugin's state as the menu shows it.
@@ -168,7 +170,8 @@ pub enum Action {
     Enable(String),
     Disable(String),
     OpenFolder(String),
-    /// Removes the plugin, and with `data` also its storage folder.
+    /// Removes the plugin and its cache, and with `data` also its storage
+    /// folder.
     Remove {
         id: String,
         data: bool,
@@ -494,6 +497,10 @@ impl Host {
             plugin.set_status(Status::AwaitingApproval);
             return;
         };
+        if let Err(error) = self.open_cache(plugin, &grants) {
+            plugin.set_status(Status::Faulted(error));
+            return;
+        }
         let jobs = Arc::new(Jobs::new(
             self.sandbox.clone(),
             plugin.pre.clone(),
@@ -1083,7 +1090,7 @@ impl Host {
 
     /// Stops `plugin`, takes it out of the list, and deletes its approval
     /// first, so a removal cut short never leaves it approved; then its
-    /// settings, its package, and with `data` its storage folder.
+    /// settings, its package, its cache, and with `data` its storage folder.
     fn remove(&self, plugin: &Plugin, data: bool) -> Result<(), String> {
         let id = plugin.manifest.id();
         if plugin.status() == Status::Running {
@@ -1104,7 +1111,12 @@ impl Host {
                 failed.push(format!("{}: {error}", file.display()));
             }
         }
-        let mut folders = vec![self.directories.plugins.join(id)];
+        // The cache goes with the plugin: it holds nothing the plugin
+        // cannot fetch again.
+        let mut folders = vec![
+            self.directories.plugins.join(id),
+            self.directories.cache.join(id),
+        ];
         if data {
             folders.push(plugin.storage.root().to_path_buf());
         }
@@ -1120,6 +1132,23 @@ impl Host {
         } else {
             Err(format!("removed from the list, but {}", failed.join("; ")))
         }
+    }
+
+    /// Opens the plugin's cache when it holds `storage.cache`, with the
+    /// size its manifest names; closes it otherwise.
+    fn open_cache(&self, plugin: &Plugin, grants: &Grants) -> Result<(), String> {
+        let cache = match plugin.manifest.cache_gib() {
+            Some(gib) if grants.permissions.contains(&Permission::StorageCache) => Some(Arc::new(
+                Storage::new(
+                    &self.directories.cache.join(plugin.manifest.id()),
+                    u64::from(gib) << 30,
+                )
+                .map_err(|error| format!("cache: {error}"))?,
+            )),
+            _ => None,
+        };
+        plugin.storage.set_cache(cache);
+        Ok(())
     }
 
     fn set_enabled(&self, plugin: &Plugin, enabled: bool) -> Result<(), String> {

@@ -20,6 +20,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `clipboard.write` | putting [text](../formats/plugin-api-v1.md#clipboard) on the clipboard, only while handling the player's click in its window or its command | only for you | Copies text to your clipboard when you ask it to |
 | `notifications` | showing [notifications](../formats/plugin-api-v1.md#notifications) at the top right of the screen under its name, and flashing the game on the taskbar while the player is elsewhere | only for you | Shows notifications and flashes the game on the taskbar |
 | `sound.play` | playing [sounds](../formats/plugin-api-v1.md#sound) from WAV files in its storage, which the host checks and re-encodes | only for you | Plays sounds |
+| `storage.cache` | a [cache](../formats/plugin-api-v1.md#storage) of files outside its folder, of the size `[storage] cache` names | only for you | Keeps a cache of files on your disk, followed by the size |
 | `draw.world` | [drawing](../formats/plugin-api-v1.md#drawing-over-the-world) marks, lines, and text over the game world | what you see | Draws marks, lines, and text over the game world |
 
 ## Domains of the game map

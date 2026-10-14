@@ -1206,6 +1206,43 @@ fn a_checked_sound_is_played() {
 }
 
 #[test]
+fn the_cache_is_kept_apart_and_removed_with_the_plugin() {
+    let test = approved(MANIFEST);
+    click(&test, "cache");
+    assert_eq!(message(&test), "cached");
+    let cached = test.folder.path().join("cache/plugins/hello/hello.txt");
+    assert!(cached.is_file(), "{}", cached.display());
+    assert!(!test.folder.path().join("storage/hello/cache").exists());
+    test.host.queue(Action::Remove {
+        id: "hello".into(),
+        data: false,
+    });
+    test.frames(1);
+    assert!(!cached.exists(), "the cache goes with the plugin");
+    assert!(test.folder.path().join("storage/hello").exists());
+
+    let test = approved(
+        &MANIFEST
+            .replace(
+                "\"storage.cache\" = true
+",
+                "",
+            )
+            .replace(
+                "[storage]
+cache = 1
+",
+                "",
+            ),
+    );
+    click(&test, "cache");
+    assert_eq!(
+        message(&test),
+        "cannot cache: cache/ is the plugin's cache, which needs storage.cache"
+    );
+}
+
+#[test]
 fn a_mark_is_drawn_around_the_character() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);

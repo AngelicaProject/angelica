@@ -66,6 +66,9 @@ pub enum Permission {
     /// Play sounds from the plugin's storage.
     #[serde(rename = "sound.play")]
     SoundPlay,
+    /// Keep a cache of files of the size `[storage] cache` names.
+    #[serde(rename = "storage.cache")]
+    StorageCache,
 }
 
 impl Permission {
@@ -87,6 +90,7 @@ impl Permission {
             Self::ClipboardWrite => "clipboard.write",
             Self::Notifications => "notifications",
             Self::SoundPlay => "sound.play",
+            Self::StorageCache => "storage.cache",
         }
     }
 
@@ -109,6 +113,7 @@ impl Permission {
             Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
             Self::Notifications => "Shows notifications and flashes the game on the taskbar",
             Self::SoundPlay => "Plays sounds",
+            Self::StorageCache => "Keeps a cache of files on your disk",
         }
     }
 
@@ -129,7 +134,8 @@ impl Permission {
             | Self::MessagesSend
             | Self::ClipboardWrite
             | Self::Notifications
-            | Self::SoundPlay => Class::YoursOnly,
+            | Self::SoundPlay
+            | Self::StorageCache => Class::YoursOnly,
         }
     }
 }
@@ -343,8 +349,15 @@ pub fn requests(
                 } else {
                     Vec::new()
                 };
+                let size_covered = *permission != Permission::StorageCache
+                    || manifest.cache_gib().is_none_or(|gib| {
+                        granted.is_some_and(|grants| {
+                            grants.cache_gib.is_some_and(|granted| gib <= granted)
+                        })
+                    });
                 (
-                    granted.is_some_and(|grants| grants.permissions.contains(permission)),
+                    size_covered
+                        && granted.is_some_and(|grants| grants.permissions.contains(permission)),
                     hosts,
                 )
             }
@@ -405,6 +418,17 @@ pub struct Http {
     pub hosts: Vec<String>,
 }
 
+/// The most gibibytes a plugin's cache holds.
+pub const MOST_CACHE_GIB: u32 = 1024;
+
+/// The size of the plugin's cache.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageSection {
+    /// In gibibytes.
+    pub cache: u32,
+}
+
 /// The plugins `messages.send` reaches.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -423,6 +447,8 @@ pub struct Manifest {
     http: Option<Http>,
     #[serde(default)]
     messages: Option<MessagesTo>,
+    #[serde(default)]
+    storage: Option<StorageSection>,
     #[serde(default)]
     lens: Option<Lens>,
     #[serde(skip)]
@@ -515,17 +541,28 @@ impl Manifest {
                 _ => return fail(format!("permission {name} is true or false")),
             }
         }
-        let hosts = manifest
-            .http
-            .as_ref()
-            .map_or(&[][..], |http| &http.hosts[..]);
+        manifest.check_sections(&declared)?;
+        if let Some(lens) = &manifest.lens {
+            check_domains("lens.read", &lens.read)?;
+            check_domains("lens.act", &lens.act)?;
+            check_domains("lens.change", &lens.change)?;
+        }
+        manifest.declared = declared;
+        Ok(manifest)
+    }
+
+    /// Checks the tables that come with permissions: `[http]`,
+    /// `[messages]`, and `[storage]`.
+    fn check_sections(&self, declared: &BTreeSet<Permission>) -> Result<(), ManifestError> {
+        let fail = |message: String| Err(ManifestError(message));
+        let hosts = self.http.as_ref().map_or(&[][..], |http| &http.hosts[..]);
         if declared.contains(&Permission::HttpGet) == hosts.is_empty() {
             return fail("http.get and a non-empty http.hosts come together".into());
         }
         if declared.contains(&Permission::HttpSend) && !declared.contains(&Permission::HttpGet) {
             return fail("http.send comes with http.get and its http.hosts".into());
         }
-        let receivers = manifest
+        let receivers = self
             .messages
             .as_ref()
             .map_or(&[][..], |messages| &messages.to[..]);
@@ -544,6 +581,13 @@ impl Manifest {
                 return fail(format!("messages.to lists {receiver} twice"));
             }
         }
+        let cache = self.storage.as_ref().map(|storage| storage.cache);
+        if declared.contains(&Permission::StorageCache) != cache.is_some() {
+            return fail("storage.cache and storage.cache's size come together".into());
+        }
+        if cache.is_some_and(|gib| !(1..=MOST_CACHE_GIB).contains(&gib)) {
+            return fail(format!("storage.cache is 1 to {MOST_CACHE_GIB} GiB"));
+        }
         if hosts.len() > MAX_HOSTS {
             return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
         }
@@ -555,13 +599,7 @@ impl Manifest {
                 return fail(format!("http.hosts lists {host} twice"));
             }
         }
-        if let Some(lens) = &manifest.lens {
-            check_domains("lens.read", &lens.read)?;
-            check_domains("lens.act", &lens.act)?;
-            check_domains("lens.change", &lens.change)?;
-        }
-        manifest.declared = declared;
-        Ok(manifest)
+        Ok(())
     }
 
     /// The hosts `http.get` reaches, as the manifest lists them.
@@ -571,6 +609,12 @@ impl Manifest {
             .iter()
             .flat_map(|http| http.hosts.iter().cloned())
             .collect()
+    }
+
+    /// The size of the cache `storage.cache` keeps, in gibibytes.
+    #[must_use]
+    pub fn cache_gib(&self) -> Option<u32> {
+        self.storage.as_ref().map(|storage| storage.cache)
     }
 
     /// The plugins `messages.send` reaches, as the manifest lists them.
@@ -660,6 +704,9 @@ pub struct Grants {
     /// The plugins approved for `messages.send`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub message_to: BTreeSet<String>,
+    /// The size approved for `storage.cache`, in gibibytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_gib: Option<u32>,
     /// The domains of the game map approved for reading through Lens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub lens_read: BTreeSet<String>,
@@ -681,6 +728,7 @@ impl Grants {
             permissions: manifest.permissions().clone(),
             http_hosts: manifest.http_hosts(),
             message_to: manifest.message_to(),
+            cache_gib: manifest.cache_gib(),
             lens_read: grantable(manifest, domains)
                 .into_iter()
                 .map(|domain| domain.name)
@@ -705,6 +753,9 @@ impl Grants {
             && manifest.permissions().is_subset(&self.permissions)
             && manifest.http_hosts().is_subset(&self.http_hosts)
             && manifest.message_to().is_subset(&self.message_to)
+            && manifest
+                .cache_gib()
+                .is_none_or(|gib| self.cache_gib.is_some_and(|granted| gib <= granted))
             && grantable(manifest, domains)
                 .iter()
                 .all(|domain| self.lens_read.contains(&domain.name))
@@ -953,6 +1004,58 @@ hosts = [\"example.com\"]
         ] {
             assert!(Manifest::parse(&VALID.replace(from, to)).is_err(), "{to}");
         }
+    }
+
+    #[test]
+    fn a_cache_names_its_size_and_a_larger_one_asks_again() {
+        let with = |gib: &str| {
+            VALID.replace(
+                "\"text.case\" = true
+",
+                &format!(
+                    "\"text.case\" = true
+\"storage.cache\" = true
+[storage]
+cache = {gib}
+"
+                ),
+            )
+        };
+        let manifest = Manifest::parse(&with("64")).unwrap();
+        assert_eq!(manifest.cache_gib(), Some(64));
+        let grants = Grants::for_manifest(&manifest, &none);
+        assert_eq!(grants.cache_gib, Some(64));
+        assert!(grants.cover(&Manifest::parse(&with("32")).unwrap(), &none));
+        let larger = Manifest::parse(&with("128")).unwrap();
+        assert!(!grants.cover(&larger, &none));
+        let asked = requests(&larger, Some(&grants), &none);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(
+            asked[0].1[0].asked,
+            Asked::Permission(Permission::StorageCache)
+        );
+        for gib in ["0", "1025"] {
+            assert!(Manifest::parse(&with(gib)).is_err(), "{gib}");
+        }
+        assert!(
+            Manifest::parse(&VALID.replace(
+                "[permissions]",
+                "[storage]
+cache = 1
+[permissions]"
+            ))
+            .is_err()
+        );
+        assert!(
+            Manifest::parse(&VALID.replace(
+                "\"text.case\" = true
+",
+                "\"text.case\" = true
+\"storage.cache\" = true
+"
+            ))
+            .is_err()
+        );
     }
 
     #[test]
