@@ -103,6 +103,14 @@ Every field belongs to a domain, and a query may read only the domains the manif
 
 When the game reaches the event's point, the host reads the rows at once, on the thread that reached it, and in the next frame delivers each firing as a `watched` [game event](#events) with the handle `watch` returned. A watch keeps at most the event's `rate` of firings between two frames; a firing past that, past 256 rows, or past 64 pages of 4 KiB is left out, and the plugin receives `watch-dropped` with how many before the firings it kept. `release` ends a watch; a watch ends when the plugin stops. After the game map is reloaded, a watch is planned again, and one that no longer fits receives nothing until the plugin watches again. Watches count toward the 256 held queries.
 
+`act` takes an [action](./game-map-v2.md#actions) of the map for the player now: `act("use_action", [("kind", named("general_action")), ("action", unsigned(4))])` uses Sprint as its hotbar slot does.
+
+- Each parameter is given by name, at most once; one left out takes the map's default, and one without a default must be given. An enum parameter takes the value's name or its number, flags their names or bits, a sheet row a `sheet` value of that sheet or a number, a float a number, a `bool` a boolean. A value outside the argument's kind or the map's range is `invalid-argument`.
+- The action's domain must be listed in the manifest's `[lens] act` and approved by the player; otherwise `permission-denied`. While the player has stopped plugins from acting, every action is `permission-denied`.
+- A plugin takes one action at most its `rate` of times in any second, refusals included; more is `limit-exceeded`.
+- Before the call, every condition of the action must hold; one that does not is `unavailable` with the condition's words, such as "you are in combat". The host then calls the game's function on the main thread, as the game's own interface does, and the game checks the action as for the player's own press. A return value other than the map's `ok` is `unavailable`: the game refused it now. Anything the running build lacks is `unavailable` too.
+- `act` works in the main instance after the game has started, from `tick`, a command, a window event, or a game event; jobs get `wrong-context`.
+
 ## Events
 
 `events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.

@@ -514,6 +514,12 @@ impl Host {
                 .intersection(&grants.lens_read)
                 .cloned()
                 .collect(),
+            lens_act: plugin
+                .manifest
+                .lens_act()
+                .intersection(&grants.lens_act)
+                .cloned()
+                .collect(),
             memory_bytes: plugin
                 .manifest
                 .plugin
@@ -621,6 +627,7 @@ impl Host {
         self.services.chat.remove_plugin(id);
         self.services.events.remove_plugin(id);
         self.services.lens.watches.remove_plugin(id);
+        self.services.lens.acting.remove_plugin(id);
         self.services.ui.remove_plugin(id);
     }
 

@@ -2,19 +2,21 @@
 
 Lens is how plugins reach the game's objects. The host is an engine with a few verbs over the game; everything the verbs apply to is described as data in the game map. A new readable structure is a description in the map's [object model](../formats/game-map-v2.md#object-model), not new host code. The plugin still holds no address and runs no code in the game: it names roots, fields, and domains, and the host reads by the map.
 
-The plugin API's `lens` interface offers `query`, reading objects by path, and `watch`, reading the objects the game's code works on when it reaches an event of the map ([contract](../formats/plugin-api-v1.md#lens)).
+The plugin API's `lens` interface offers `query`, reading objects by path, `watch`, reading the objects the game's code works on when it reaches an event of the map, and `act`, calling a function of the game for the player as the map's actions describe ([contract](../formats/plugin-api-v1.md#lens)).
 
 ## Parts
 
 | Part | Owns | Code |
 | --- | --- | --- |
-| object model | types, fields, roots, events, enums, domains, and their rules | `angelica-map` (`objects`, `events`) |
+| object model | types, fields, roots, events, actions, enums, domains, and their rules | `angelica-map` (`objects`, `events`, `actions`) |
 | schema | the model resolved for the running build: each root's address, each field's offset, or why the build lacks it | `angelica-host` (`lens::schema`) |
 | query language | the text of a query, parsed without the model | `angelica-host` (`lens::query`) |
 | planner | a query checked against the schema and the plugin's domains, turned into a plan of reads | `angelica-host` (`lens::plan`) |
 | reader | a plan run over the game's memory, from a root or from an event's call | `angelica-host` (`lens::read`) |
 | watches | the points of the game's code that watches use, their subscribers, and the firings kept for the next frame | `angelica-host` (`lens::watch`) |
 | watch hooks | a hook at each watched point that hands the registers to the watches | `angelica-host` (`interop::watch`), `test.fire` of the scripted game in tests |
+| acting | an action checked against the map and the plugin's domains, its rate, its conditions, the player's stop, and the call | `angelica-host` (`lens::act`) |
+| calls | a function of the game called with the Windows x64 convention | `angelica-host` (`interop::act`), the scripted game's record of calls in tests |
 | memory | reads of the game process that fail instead of faulting | `angelica-host` (`interop::game`), the scripted game in tests |
 
 All parts but the memory are platform independent and tested without the game; the Windows adapter only supplies the reads. The scripted game of `angelica-fake-game` lays out objects in memory as a test's map describes them, so a test runs a plugin's queries through the same planner and reader.
@@ -40,6 +42,12 @@ A watch is a query from an event of the map. Its plan starts at an argument of t
 
 Values read in a hook belong to the moment of the call, on whatever thread made it, not to a moment between frames.
 
+## Actions
+
+An action is a function of the game that the game's own interface calls, described in the map with how each argument is given: a parameter the plugin names, a constant, a global, or an object a path reaches. `act` checks the plugin's parameters against the map, then, in order: that the player has not stopped plugins acting, the action's rate for the plugin, and its conditions, each a path that must reach an object now, read like any query. Only then does the host call the function, on the game's main thread between frames, and compare its return value with the map's `ok`.
+
+The call passes every argument as 64 bits in both its general and its `xmm` register and on the stack past the fourth, so one routine calls every function the map describes; the function reads the register its own type uses. The game checks the action as it checks the player's own press, so a plugin can do only what the player could do at that moment, and the server never receives a request the game would not send.
+
 ## Domains
 
 Each field belongs to a domain of the map, by its type or its own `domain`. A query reads only the domains the plugin's manifest lists and the player approved ([permissions](./permissions.md#domains-of-the-game-map)). The root itself needs no domain: reading anything of it is reading one of its fields.
@@ -48,8 +56,8 @@ An array whose elements belong to different domains has a partition: the value o
 
 ## Tools
 
-- `angelica schema search <words> --map <map> [--game <game folder>]` lists the roots, types, fields, events, domains, and enums whose names or descriptions have every word; with a game folder, whether each is present in that build.
-- `angelica schema show <root, type, event, domain, or enum> --map <map> [--game <game folder>]` shows it with everything in it: a type's fields or an event's arguments with their shapes, domains, and descriptions.
+- `angelica schema search <words> --map <map> [--game <game folder>]` lists the roots, types, fields, events, actions, domains, and enums whose names or descriptions have every word; with a game folder, whether each is present in that build.
+- `angelica schema show <root, type, event, action, domain, or enum> --map <map> [--game <game folder>]` shows it with everything in it: a type's fields, an event's arguments, or an action's parameters and conditions, with their shapes, domains, and descriptions.
 - `angelica query "<query>" --map <map> [--game <game folder>] [--plugin <folder>]` checks a query as `prepare` does, or a watch as `watch` does, without the game: the columns, the domains it reads, and with a game folder whether the build has everything; with a plugin folder, against the domains its manifest lists.
 - `angelica look "<query>" --installation <folder>` runs a query in the running game through a development build of the host and prints the rows, for work on the map: describe a type, query it, compare with what the game shows. Every domain is readable; forbidden fields are not. A release build never answers ([format](../formats/host-installation-v1.md#lens-requests)). Its other modes help find what to describe:
   - `--watch <seconds> "<watch>"` watches an event for that long and prints each firing;

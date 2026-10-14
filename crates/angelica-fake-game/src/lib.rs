@@ -56,6 +56,12 @@ pub struct ScriptedGame {
     pub windows_available: AtomicBool,
     /// The elements of the game's own windows, by window name and id.
     pub windows: Mutex<std::collections::BTreeMap<(String, u32), WindowElement>>,
+    /// Every call of the game's functions an action made, in order: the
+    /// function's map entry and each argument's 64 bits.
+    pub acted: Mutex<Vec<(String, Vec<u64>)>>,
+    /// What the game's functions return to actions: `1` (taken) unless a
+    /// test says otherwise.
+    pub act_returns: Mutex<u64>,
 }
 
 /// An element of one of the game's own windows.
@@ -128,6 +134,8 @@ impl Default for ScriptedGame {
             watched: Mutex::new(Vec::new()),
             windows_available: AtomicBool::new(true),
             windows: Mutex::new(std::collections::BTreeMap::new()),
+            acted: Mutex::new(Vec::new()),
+            act_returns: Mutex::new(1),
         }
     }
 }
@@ -202,6 +210,29 @@ impl Game for ScriptedGame {
 
     fn memory(&self) -> &dyn runtime::lens::Memory {
         self
+    }
+
+    fn call(&self, address: u64, args: &[u64]) -> Result<runtime::lens::act::Returned, String> {
+        let entry = self
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .code
+            .get(&address)
+            .cloned()
+            .ok_or_else(|| format!("nothing in the scripted game at {address:#x}"))?;
+        self.acted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((entry, args.to_vec()));
+        let returned = *self
+            .act_returns
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Ok(runtime::lens::act::Returned {
+            integer: returned,
+            float: 0,
+        })
     }
 
     fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {

@@ -88,6 +88,16 @@ Learn when the game does something the game map describes as an event, such as t
 - Find events and their arguments with `angelica schema search` and `schema show`; check a watch with `angelica query`; see it fire in the game with `angelica look --watch 10 "<watch>"`.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
+## Acting in the game
+
+Do something in the game for the player, as the game's own interface would: use an action or an item, mount, teleport.
+
+- SDK: `lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4u32.into())])?`; parameters by name, numbers with `.into()`, enum values with `lens::named`. A parameter left out takes the map's default.
+- Permission: each domain the plugin acts in, listed in the manifest as `[lens] act = ["actions"]`; the player sees it under **Acts in the game for you**, with a warning that automation breaks the game's terms. Instance: main, from `tick`, a command, or an event.
+- `unavailable` is normal: a condition does not hold now ("you are in combat"), or the game refused. Say what happened to the player; do not retry every frame. `limit-exceeded` means the action's rate; `permission-denied` with the stop message means the player stopped plugins from acting, so stop until they let them act again.
+- Find actions and their parameters with `angelica schema search` and `schema show <action>`.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
+
 ## Sheets
 
 Read the game's data: items, actions, places, and the names the game shows.

@@ -575,7 +575,7 @@ fn jobs_fetch_from_the_listed_hosts() {
 
 /// The player's character, zone, and statuses, shaped like the game
 /// map's, with constant offsets.
-const CHARACTER_MAP: [(&str, &str); 6] = [
+const CHARACTER_MAP: [(&str, &str); 7] = [
     (
         "entries/test.toml",
         r#"
@@ -671,6 +671,10 @@ offset = 0x4108
 locator = { signature = "C3" }
 abi = { args = ["ptr", "u32", "u32", "u64"], ret = "bool" }
 thread = "main"
+
+[global."test.action_manager"]
+locator = { signature = "C3" }
+type = "struct"
 "#,
     ),
     (
@@ -789,6 +793,37 @@ read = { en = "Sees your statuses", ru = "Видит ваши эффекты" }
 doc = "Actions."
 class = "you"
 read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
+act = { en = "Uses actions for you", ru = "Использует действия за вас" }
+"#,
+    ),
+    (
+        "actions.toml",
+        r#"
+[actions.use_action]
+doc = "Uses an action as a hotbar slot does."
+call = "test.use_action"
+domain = "actions"
+rate = 3
+ok = true
+when = [{ path = "player", says = "you are not in the world" }]
+
+[actions.use_action.args.manager]
+arg = 0
+global = "test.action_manager"
+
+[actions.use_action.args.kind]
+arg = 1
+doc = "The kind."
+enum = "test.action_kind"
+
+[actions.use_action.args.action]
+arg = 2
+doc = "The id."
+
+[actions.use_action.args.target]
+arg = 3
+doc = "The target."
+default = 0xE0000000
 "#,
     ),
     (
@@ -815,7 +850,7 @@ arg = 3
     ),
     (
         "enums/test.action_kind.toml",
-        "doc = \"Kinds.\"\nvalues = { action = 1, item = 2, mount = 13 }\n",
+        "doc = \"Kinds.\"\nvalues = { action = 1, item = 2, general_action = 5, mount = 13 }\n",
     ),
     (
         "roots.toml",
@@ -844,9 +879,73 @@ fn with_character(manifest: &str, absent: &[&str]) -> TestHost {
 fn without_lens() -> String {
     MANIFEST
         .lines()
-        .filter(|line| *line != "[lens]" && !line.starts_with("read = "))
+        .filter(|line| {
+            *line != "[lens]" && !line.starts_with("read = ") && !line.starts_with("act = ")
+        })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn sprint_is_taken_through_the_map_under_its_domain() {
+    let test = approved(MANIFEST);
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: the game map has no action use_action"
+    );
+
+    let test = with_character(MANIFEST, &[]);
+    let plugin = test.host.plugin("hello").unwrap();
+    assert!(
+        plugin
+            .asked()
+            .iter()
+            .any(|asked| asked.name() == "actions.act")
+    );
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: action use_action: you are not in the world"
+    );
+    assert!(test.game.acted.lock().unwrap().is_empty());
+
+    test.game.set("player", &[("data.level", 90.into())]);
+    click(&test, "sprint");
+    assert_eq!(message(&test), "sprinting");
+    let acted = test.game.acted.lock().unwrap().clone();
+    assert_eq!(acted.len(), 1);
+    assert_eq!(acted[0].0, "test.use_action");
+    assert_eq!(acted[0].1[1..], [5, 4, 0xE000_0000]);
+    assert_ne!(acted[0].1[0], 0, "the action manager's address");
+
+    *test.game.act_returns.lock().unwrap() = 0;
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: action use_action: the game refused it now"
+    );
+    click(&test, "sprint");
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: action use_action is at its rate of 3 a second"
+    );
+
+    test.host.services().lens.acting.set_stopped(true);
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: the player stopped plugins from acting"
+    );
+
+    let test = with_character(&MANIFEST.replace("act = [\"actions\"]\n", ""), &[]);
+    test.game.set("player", &[("data.level", 90.into())]);
+    click(&test, "sprint");
+    assert_eq!(
+        message(&test),
+        "cannot sprint: action use_action acts in domain actions: list it in the manifest's [lens] act"
+    );
 }
 
 #[test]
@@ -984,6 +1083,7 @@ fn approval_names_the_domains_in_the_maps_words() {
         "Sees where you are",
         "Sees your statuses",
         "Sees the actions you use",
+        "Uses actions for you",
     ] {
         assert!(words.iter().any(|word| word == wording), "{words:?}");
     }
@@ -994,7 +1094,13 @@ fn approval_names_the_domains_in_the_maps_words() {
     bare.install(MANIFEST, component()).unwrap();
     assert_eq!(
         bare.host.plugin("hello").unwrap().ungranted(),
-        ["actions", "character", "location", "statuses"]
+        [
+            "actions",
+            "character",
+            "location",
+            "statuses",
+            "actions.act"
+        ]
     );
 }
 

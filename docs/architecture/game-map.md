@@ -33,7 +33,7 @@ A column is named when a plugin needs it, from the values it holds, never specul
 
 ## Object model
 
-Plugins read the game's objects through [Lens](./lens.md), by paths through the map's object model ([format](../formats/game-map-v2.md#object-model)): types whose fields are verified `field` entries, roots at verified `global` entries, enums, and the domains the fields belong to. The host resolves the model for the running build at start and with every map reload: a root or field whose entry is absent is unavailable, and the rest of the model works.
+Plugins read the game's objects through [Lens](./lens.md), by paths through the map's object model ([format](../formats/game-map-v2.md#object-model)): types whose fields are verified `field` entries, roots at verified `global` entries, events at verified code, actions that call verified functions, enums, and the domains everything belongs to. The host resolves the model for the running build at start and with every map reload: a root or field whose entry is absent is unavailable, and the rest of the model works.
 
 A field is visible to plugins because a type names it. Types and fields are a contract: they keep their names and meaning across builds, a field that would expose data that could compromise the account is never added or is marked forbidden, and a field's domain is one whose approved wording covers it. `angelica map verify` reports every root and field present or absent for the build; `angelica look` reads them in the running game with a development build, to confirm that a new type is what its `doc` says.
 

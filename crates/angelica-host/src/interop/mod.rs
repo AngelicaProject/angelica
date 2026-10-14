@@ -1,4 +1,5 @@
 //! Windows calls and game-memory access are confined to this module.
+mod act;
 mod chat;
 mod clipboard;
 mod component;

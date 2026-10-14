@@ -78,6 +78,7 @@ struct Verified {
     windows: SheetReport,
     roots: ObjectReport,
     events: ObjectReport,
+    actions: ObjectReport,
     fields: ObjectReport,
     written: Option<PathBuf>,
 }
@@ -176,16 +177,8 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         Some(Err(absence)) => Err(absence.to_string()),
         None => Err("not in the map".into()),
     });
-    let roots = schema
-        .roots
-        .iter()
-        .map(|(name, at)| (name.clone(), at.clone().map(drop)))
-        .collect();
-    let events = schema
-        .events
-        .iter()
-        .map(|(name, at)| (name.clone(), at.clone().map(drop)))
-        .collect();
+    let (roots, events) = (present(&schema.roots), present(&schema.events));
+    let actions = actions_report(&map, &schema);
     let mut fields = ObjectReport::new();
     for object in map.objects().types.values() {
         for field in object.fields.values() {
@@ -212,9 +205,54 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         windows,
         roots,
         events,
+        actions,
         fields,
         written,
     })
+}
+
+/// Which places a build has, and why it lacks the others.
+fn present<T>(places: &std::collections::BTreeMap<String, Result<T, String>>) -> ObjectReport {
+    places
+        .iter()
+        .map(|(name, at)| (name.clone(), at.as_ref().map(drop).map_err(Clone::clone)))
+        .collect()
+}
+
+/// Whether each action of the map is usable in the build `schema`
+/// describes.
+fn actions_report(map: &angelica_map::Map, schema: &runtime::lens::Schema) -> ObjectReport {
+    // An action is usable when its function and globals are present and
+    // every path it reads, in its conditions and its object arguments,
+    // fits the model.
+    map.objects()
+        .actions
+        .values()
+        .map(|action| {
+            let paths = action
+                .when
+                .iter()
+                .map(|condition| condition.path.as_str())
+                .chain(action.args.iter().filter_map(|arg| match &arg.source {
+                    angelica_map::ActSource::Object(path) => Some(path.as_str()),
+                    _ => None,
+                }));
+            let mut available = schema
+                .actions
+                .get(&action.name)
+                .cloned()
+                .unwrap_or_else(|| Err("not in the schema".into()))
+                .map(drop);
+            for path in paths {
+                if available.is_ok()
+                    && let Err(error) = runtime::lens::prepare_objects(schema, path)
+                {
+                    available = Err(format!("{path}: {}", error.message));
+                }
+            }
+            (action.name.clone(), available)
+        })
+        .collect()
 }
 
 fn schemas_json(report: &SheetReport) -> JsonObject<String, Json> {
@@ -267,7 +305,7 @@ fn report_json(verified: &Verified) -> Json {
         "constant_offsets": record.resolution.constant_offsets(),
         "sheets": sheets,
         "windows": windows,
-        "objects": {"roots": objects(&verified.roots), "fields": objects(&verified.fields), "events": objects(&verified.events)},
+        "objects": {"roots": objects(&verified.roots), "fields": objects(&verified.fields), "events": objects(&verified.events), "actions": objects(&verified.actions)},
         "written": verified
             .written
             .as_ref()
@@ -306,21 +344,27 @@ fn report_text(verified: &Verified) -> String {
             }
         }
     }
-    if !verified.roots.is_empty() || !verified.fields.is_empty() || !verified.events.is_empty() {
+    let reports = [
+        ("root", &verified.roots),
+        ("field", &verified.fields),
+        ("event", &verified.events),
+        ("action", &verified.actions),
+    ];
+    if reports.iter().any(|(_, report)| !report.is_empty()) {
         let absent = |report: &ObjectReport| report.values().filter(|found| found.is_err()).count();
         let _ = writeln!(
             text,
-            "objects: {} roots, {} fields, and {} events, {} absent",
+            "objects: {} roots, {} fields, {} events, and {} actions, {} absent",
             verified.roots.len(),
             verified.fields.len(),
             verified.events.len(),
-            absent(&verified.roots) + absent(&verified.fields) + absent(&verified.events)
+            verified.actions.len(),
+            reports
+                .iter()
+                .map(|(_, report)| absent(report))
+                .sum::<usize>()
         );
-        for (kind, report) in [
-            ("root", &verified.roots),
-            ("field", &verified.fields),
-            ("event", &verified.events),
-        ] {
+        for (kind, report) in reports {
             for (name, available) in report {
                 if let Err(reason) = available {
                     let _ = writeln!(text, "  absent {kind} {name}: {reason}");

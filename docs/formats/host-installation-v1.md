@@ -45,10 +45,10 @@ The installation key keeps packages from being swapped or damaged; it does not p
 `grants/<plugin-id>.json` records the player's approval:
 
 ```json
-{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"]}
+{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"], "lens_act": ["actions"]}
 ```
 
-`http_hosts` lists the approved hosts of `http.get` and `lens_read` the approved domains of the game map; each is left out when empty. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares, and every domain of its `[lens] read` that the running game map describes in a class the host presents. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+`http_hosts` lists the approved hosts of `http.get`, `lens_read` the domains of the game map approved for reading, and `lens_act` those approved for acting in; each is left out when empty. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares, every domain of its `[lens] read` that the running game map describes in a class the host presents, and every domain of its `[lens] act` that the map describes with words for acting. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
 
 ## Lens requests
 
@@ -68,7 +68,7 @@ The host answers a `watch` or a `trace` when its seconds are over.
 
 ## Angelica settings
 
-`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
+`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9", "stop_key": "End"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), `stop_key` the key that stops plugins acting, one of the same keys and not the menu key, and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
 
 ## Storage
 

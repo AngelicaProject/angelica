@@ -81,4 +81,14 @@ pub trait Game: Send + Sync {
     /// # Errors
     /// Why the point cannot be hooked in this build.
     fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String>;
+
+    /// Calls the game's function at `address` with `args`, each as its 64
+    /// bits, on the game's main thread, for a Lens action.
+    ///
+    /// # Errors
+    /// Why the call cannot be made.
+    fn call(&self, address: u64, args: &[u64]) -> Result<crate::lens::act::Returned, String> {
+        let _ = (address, args);
+        Err("this game cannot be acted in".into())
+    }
 }

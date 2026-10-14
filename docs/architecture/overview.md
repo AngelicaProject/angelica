@@ -66,8 +66,8 @@ Each crate owns one boundary:
 - `game_data` reads the installed game's files and sheets through `angelica-sqpack` and caches decoded sheets.
 - `excel_text` and `text_case` own the rules plugins activate and apply them to bytes: rewriting a row buffer, converting a string's letters. They read no game memory.
 - `game_ui` owns the rules for the game's own windows and applies them once per frame through `Screen`, the game's windows as the game adapter offers them.
-- `lens` resolves the map's object model for the build, plans plugins' queries, and runs them over the game's memory ([Lens](./lens.md)).
-- `game::Game` is the boundary to the game process: the version, the adapters a service needs, and the memory reads of Lens.
+- `lens` resolves the map's object model for the build, plans plugins' queries and watches, runs them over the game's memory, and takes plugins' actions ([Lens](./lens.md)).
+- `game::Game` is the boundary to the game process: the version, the adapters a service needs, and the memory reads, hooks, and calls of Lens.
 - `interop` (Windows only, the one module with `unsafe`) resolves map entries, installs the row and letter case detours through `angelica-hook`, reads and writes the game structures [their contracts](../formats/game-structures.md) describe, draws the overlay on the game's Direct3D 11 immediate context with its state saved and restored, and writes crash reports. Every detour catches panics and passes the call on unchanged on failure.
 
 `angelica-fake-game` implements `Game` from scripted data and drives rows and strings through the same `excel_text` and `text_case` code, so plugins and the host are tested without Windows or the game.

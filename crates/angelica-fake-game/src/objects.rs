@@ -88,6 +88,8 @@ pub struct Objects {
     used: usize,
     /// The address of each root's global, by entry name.
     globals: BTreeMap<String, u64>,
+    /// The entry of each function an action calls, by its address.
+    pub code: BTreeMap<u64, String>,
 }
 
 impl Memory for Objects {
@@ -145,6 +147,28 @@ impl Objects {
             let at = objects.allocate(16);
             objects.globals.insert(event.at.clone(), at);
         }
+        // Actions' functions get a place too, and their globals an object:
+        // 256 bytes for a structure, and for a pointer one to such.
+        for action in map.objects().actions.values() {
+            let at = objects.allocate(16);
+            objects.globals.insert(action.call.clone(), at);
+            objects.code.insert(at, action.call.clone());
+            for arg in &action.args {
+                if let angelica_map::ActSource::Global(global) = &arg.source
+                    && !objects.globals.contains_key(global)
+                {
+                    let at = if pointer(&map, global) {
+                        let at = objects.allocate(8);
+                        let target = objects.allocate(256);
+                        objects.write(at, &target.to_le_bytes());
+                        at
+                    } else {
+                        objects.allocate(256)
+                    };
+                    objects.globals.insert(global.clone(), at);
+                }
+            }
+        }
         let globals = objects.globals.clone();
         let schema = Schema::new(&map, BASE, |name| {
             if absent.contains(&name) {
@@ -162,7 +186,7 @@ impl Objects {
                     .get(name)
                     .and_then(|at| u32::try_from(at - BASE).ok())
                     .map(Resolved::Address)
-                    .ok_or_else(|| "not a root's global or an event's code".into()),
+                    .ok_or_else(|| "not a root's global, an event's code, or an action's".into()),
             }
         });
         objects.map = Some(map);

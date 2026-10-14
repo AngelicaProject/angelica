@@ -19,10 +19,10 @@ const EXECUTABLE: &str = "ffxiv_dx11.exe";
 
 #[derive(Debug, Subcommand)]
 pub enum SchemaCommand {
-    /// Roots, types, fields, domains, and enums whose names or descriptions
-    /// have every word.
+    /// Roots, types, fields, events, actions, domains, and enums whose
+    /// names or descriptions have every word.
     Search(SearchArgs),
-    /// A root, type, domain, or enum with everything in it.
+    /// A root, type, event, action, domain, or enum with everything in it.
     Show(ShowArgs),
 }
 
@@ -232,6 +232,85 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
     }
 }
 
+/// What a parameter of an action takes, as `schema show` prints it.
+fn param_shape(objects: &Objects, param: &angelica_map::Param) -> String {
+    let mut text = match &param.meaning {
+        Meaning::Plain => format!("{:?}", param.kind).to_lowercase(),
+        Meaning::Sheet(sheet) => format!("a row of {sheet}"),
+        Meaning::Enum(name) | Meaning::Flags(name) => {
+            let values = objects
+                .enums
+                .get(name)
+                .map(|found| found.values.keys().cloned().collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            let what = if matches!(param.meaning, Meaning::Flags(_)) {
+                "flags"
+            } else {
+                "one"
+            };
+            format!("{what} of {name} ({values})")
+        }
+    };
+    if let Some(unit) = &param.unit {
+        let _ = write!(text, ", in {unit}");
+    }
+    if let Some((least, most)) = param.range {
+        let _ = write!(text, ", {} to {}", least.float(), most.float());
+    }
+    match param.default {
+        Some(angelica_map::Number::Integer(value)) => {
+            let _ = write!(text, ", {value} when left out");
+        }
+        Some(number) => {
+            let _ = write!(text, ", {} when left out", number.float());
+        }
+        None => {}
+    }
+    text
+}
+
+/// An action, its parameters, and its conditions, for `show`.
+fn show_action(
+    objects: &Objects,
+    schema: Option<&Schema>,
+    action: &angelica_map::Action,
+) -> (Json, String) {
+    let available = schema.map(|schema| {
+        schema
+            .actions
+            .get(&action.name)
+            .cloned()
+            .unwrap_or_else(|| Err("not in the schema".into()))
+            .map(drop)
+    });
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "action {} calls {} [{}], at most {} a second: {}",
+        action.name, action.call, action.domain, action.rate, action.doc
+    );
+    if let Some(Err(reason)) = &available {
+        let _ = writeln!(text, "  absent in this build: {reason}");
+    }
+    let mut params = Vec::new();
+    for (name, param) in action.params() {
+        let shape = param_shape(objects, param);
+        let _ = writeln!(text, "  {}.{name}: {shape} {}", action.name, param.doc);
+        params.push(json!({"name": name, "doc": param.doc, "shape": shape}));
+    }
+    let mut when = Vec::new();
+    for condition in &action.when {
+        let _ = writeln!(text, "  when {} (else: {})", condition.path, condition.says);
+        when.push(json!({"path": condition.path, "says": condition.says}));
+    }
+    (
+        json!({"kind": "action", "name": action.name, "call": action.call, "doc": action.doc,
+               "domain": action.domain, "rate": action.rate, "params": params, "when": when,
+               "available": available.as_ref().map(Result::is_ok), "reason": available.and_then(Result::err)}),
+        text,
+    )
+}
+
 /// Whether a field is in the build: `None` without one.
 fn availability(schema: Option<&Schema>, entry: &str) -> Option<Result<(), String>> {
     schema.map(|schema| schema.offset(entry).map(drop))
@@ -311,6 +390,18 @@ fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
     }
     found_in_types(objects, schema, &matches, &mut found);
     found_in_events(objects, schema, &matches, &mut found);
+    for action in objects.actions.values() {
+        let params = action
+            .params()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if matches(&[&action.name, &action.doc, &action.call, &params]) {
+            let (json, text) = show_action(objects, schema, action);
+            let first = text.lines().next().unwrap_or_default().to_owned();
+            found.push((json, first));
+        }
+    }
     for found_enum in objects.enums.values() {
         let values = found_enum.values.keys().cloned().collect::<Vec<_>>();
         if matches(&[&found_enum.name, &found_enum.doc, &values.join(" ")]) {
@@ -370,6 +461,9 @@ fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
     if let Some(event) = objects.events.get(name) {
         return Ok(show_event(objects, schema, event));
     }
+    if let Some(action) = objects.actions.get(name) {
+        return Ok(show_action(objects, schema, action));
+    }
     if let Some(found) = objects.enums.get(name) {
         let _ = writeln!(text, "enum {}: {}", found.name, found.doc);
         for (value_name, value) in &found.values {
@@ -381,7 +475,7 @@ fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
         ));
     }
     Err(format!(
-        "the game map has no root, type, event, domain, or enum {name}; try `angelica schema search`"
+        "the game map has no root, type, event, action, domain, or enum {name}; try `angelica schema search`"
     ))
 }
 

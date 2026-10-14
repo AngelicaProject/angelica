@@ -93,7 +93,8 @@ pub fn lines(entries: &[Entry<'_>], query: &str, class: Option<Class>) -> Vec<Li
 }
 
 /// The classes of permissions, in the order they are shown.
-const CLASSES: [Class; 4] = [
+const CLASSES: [Class; 5] = [
+    Class::Acts,
     Class::Network,
     Class::OtherPlayers,
     Class::WhatYouSee,
@@ -104,6 +105,7 @@ const CLASSES: [Class; 4] = [
 #[must_use]
 pub fn class_icon(class: Class) -> Icon {
     match class {
+        Class::Acts => Icon::Acts,
         Class::Network => Icon::Network,
         Class::OtherPlayers => Icon::OtherPlayers,
         Class::WhatYouSee => Icon::WhatYouSee,
@@ -118,6 +120,13 @@ fn classes_of(held: impl IntoIterator<Item = Class>) -> Vec<Class> {
         .into_iter()
         .filter(|class| held.contains(class))
         .collect()
+}
+
+/// A key the player can choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyFor {
+    Menu,
+    Stop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,8 +193,9 @@ pub struct Menu {
     applied: Option<Theme>,
     settings: Settings,
     settings_path: PathBuf,
-    /// Whether the next key the player presses becomes the menu's key.
-    choosing_key: bool,
+    /// Which key the next key the player presses becomes: the menu's or
+    /// the one that stops plugins acting.
+    choosing: Option<KeyFor>,
     tab: Tab,
     section: Section,
     query: String,
@@ -266,7 +276,7 @@ impl Menu {
             applied: None,
             settings,
             settings_path,
-            choosing_key: false,
+            choosing: None,
             tab: Tab::Installed,
             section: Section::General,
             query: String::new(),
@@ -335,11 +345,17 @@ impl Menu {
         self.settings.key.unwrap_or_default()
     }
 
-    /// Whether the menu waits for the player to press its new key; the
-    /// next key pressed then comes to [`Self::key_pressed`] and nowhere else.
+    /// The key that stops every plugin acting, and lets them act again.
+    #[must_use]
+    pub fn stop_key(&self) -> MenuKey {
+        self.settings.stop_key.unwrap_or_else(MenuKey::stop)
+    }
+
+    /// Whether the menu waits for the player to press a new key; the next
+    /// key pressed then comes to [`Self::key_pressed`] and nowhere else.
     #[must_use]
     pub fn choosing_key(&self) -> bool {
-        self.choosing_key
+        self.choosing.is_some()
     }
 
     /// The key with the Windows virtual-key code `code` was pressed while
@@ -347,15 +363,22 @@ impl Menu {
     /// can be on becomes it, and any other key is waited out.
     pub fn key_pressed(&mut self, host: &Host, code: u32) {
         const ESCAPE: u32 = 0x1b;
-        if !self.choosing_key {
+        let Some(choosing) = self.choosing else {
             return;
-        }
+        };
         if code == ESCAPE {
-            self.choosing_key = false;
+            self.choosing = None;
         } else if let Some(key) = MenuKey::from_virtual_key(code) {
-            self.choosing_key = false;
-            if key != self.key() {
-                self.settings.key = Some(key);
+            self.choosing = None;
+            let (current, other, setting) = match choosing {
+                KeyFor::Menu => (self.key(), self.stop_key(), &mut self.settings.key),
+                KeyFor::Stop => (self.stop_key(), self.key(), &mut self.settings.stop_key),
+            };
+            // The two keys stay apart: a key already taken is waited out.
+            if key == other {
+                self.choosing = Some(choosing);
+            } else if key != current {
+                *setting = Some(key);
                 self.save(host);
             }
         }
@@ -399,7 +422,7 @@ impl Menu {
         } else {
             self.dialog = None;
             self.removing = None;
-            self.choosing_key = false;
+            self.choosing = None;
             self.draw_notes(context, &view);
             false
         }
@@ -434,7 +457,7 @@ impl Menu {
             });
         self.apply_withdrawals(view);
         if self.tab != Tab::Settings || self.section != Section::General {
-            self.choosing_key = false;
+            self.choosing = None;
         }
         if self.dialog.is_some() {
             self.draw_dialog(context, view);
@@ -1266,13 +1289,11 @@ impl Menu {
             );
         }
         for domain in &ungranted {
-            permission_line(
-                ui,
-                view,
-                None,
-                &fill(s.lens_ungranted, &[("domain", domain)]),
-                p.secondary,
-            );
+            let text = match domain.strip_suffix(".act") {
+                Some(acting) => fill(s.lens_act_ungranted, &[("domain", acting)]),
+                None => fill(s.lens_ungranted, &[("domain", domain)]),
+            };
+            permission_line(ui, view, None, &text, p.secondary);
         }
     }
 
@@ -1555,6 +1576,13 @@ impl Menu {
                         }
                     }
                 }
+                if requests.iter().any(|(class, _)| *class == Class::Acts) {
+                    ui.label(
+                        RichText::new(s.acts_warning)
+                            .size(view.at(12.0))
+                            .color(p.attention),
+                    );
+                }
             });
         let already: Vec<Asked> = plugin
             .asked()
@@ -1702,23 +1730,33 @@ impl Menu {
     fn general(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
-        let key = self.key().name();
-        setting(ui, view, s.setting_key, |ui| {
-            let text = if self.choosing_key { s.key_press } else { key };
-            if theme::key(ui, text, view.k).clicked() {
-                self.choosing_key = !self.choosing_key;
+        for (which, title, key, note) in [
+            (KeyFor::Menu, s.setting_key, self.key().name(), s.key_note),
+            (
+                KeyFor::Stop,
+                s.setting_stop_key,
+                self.stop_key().name(),
+                s.stop_key_note,
+            ),
+        ] {
+            let choosing = self.choosing == Some(which);
+            setting(ui, view, title, |ui| {
+                let text = if choosing { s.key_press } else { key };
+                if theme::key(ui, text, view.k).clicked() {
+                    self.choosing = if choosing { None } else { Some(which) };
+                }
+            });
+            if choosing {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(fill(note, &[("key", key)]))
+                            .font(sans(view.at(12.0)))
+                            .color(p.secondary),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(view.at(10.0));
             }
-        });
-        if self.choosing_key {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(fill(s.key_note, &[("key", key)]))
-                        .font(sans(view.at(12.0)))
-                        .color(p.secondary),
-                )
-                .wrap(),
-            );
-            ui.add_space(view.at(10.0));
         }
         let mut language = None;
         setting(ui, view, s.setting_language, |ui| {
@@ -2162,7 +2200,31 @@ impl Menu {
             .iter()
             .filter(|status| Group::of(status) == Group::Attention)
             .count();
-        let mut notes: Vec<(String, Tone, f32)> = Vec::new();
+        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
+        let mut notes: Vec<(String, Tone, f32, String)> = Vec::new();
+        let acting = &view.host.services().lens.acting;
+        let stop = self.stop_key().name();
+        if acting.stopped() {
+            notes.push((
+                self.strings().note_stopped.to_owned(),
+                Tone::Attention,
+                1.0,
+                fill(self.strings().hint_resume, &[("key", stop)]),
+            ));
+        } else if let Some(plugin) = acting.acting(std::time::Instant::now()) {
+            let shown = view
+                .host
+                .plugins()
+                .into_iter()
+                .find(|found| found.manifest.id() == plugin)
+                .map_or(plugin, |found| found.manifest.plugin.name.clone());
+            notes.push((
+                fill(self.strings().note_acting, &[("name", &shown)]),
+                Tone::Attention,
+                1.0,
+                fill(self.strings().hint_stop, &[("key", stop)]),
+            ));
+        }
         if !view.statuses.is_empty() && (waiting > 0 || view.time < START_TIME) {
             let fade = if waiting > 0 {
                 1.0
@@ -2174,7 +2236,7 @@ impl Menu {
             } else {
                 Tone::Good
             };
-            notes.push((self.pulse(view.statuses), tone, fade));
+            notes.push((self.pulse(view.statuses), tone, fade, hint.clone()));
         }
         for note in self.notes.iter().rev() {
             let (text, tone) = self.note_text(view.host, &note.report);
@@ -2183,11 +2245,11 @@ impl Menu {
                 text,
                 tone,
                 fraction((age / 0.25).min((NOTE_TIME - age) / 0.5)),
+                hint.clone(),
             ));
         }
-        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
         let mut top = view.screen.top() + view.at(24.0);
-        for (index, (text, tone, fade)) in notes.into_iter().enumerate() {
+        for (index, (text, tone, fade, hint)) in notes.into_iter().enumerate() {
             let area = egui::Area::new(Id::new(("angelica-note", index)))
                 .order(egui::Order::Foreground)
                 .interactable(false)

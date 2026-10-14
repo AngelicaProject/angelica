@@ -114,6 +114,10 @@ impl Game for WindowsGame {
         &ProcessMemory
     }
 
+    fn call(&self, address: u64, args: &[u64]) -> Result<crate::lens::act::Returned, String> {
+        super::act::call(address, args)
+    }
+
     fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
         hooked(
             "watched event",

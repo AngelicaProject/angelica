@@ -384,6 +384,10 @@ impl Overlay {
         if chosen != 0 {
             panel.key_pressed(&self.host, chosen);
         }
+        if self.input.stop_pressed.swap(false, Ordering::AcqRel) {
+            let acting = &self.host.services().lens.acting;
+            acting.set_stopped(!acting.stopped());
+        }
         let mut keep = menu;
         let mut output = frame.context.run_ui(input, |ui| {
             keep = panel.draw(&self.host, ui.ctx(), menu);
@@ -394,6 +398,9 @@ impl Overlay {
         let (key, choosing) = panel.menu_key();
         self.input.key.store(key, Ordering::Release);
         self.input.choosing_key.store(choosing, Ordering::Release);
+        self.input
+            .stop_key
+            .store(panel.stop_key(), Ordering::Release);
         self.copy(std::mem::take(&mut output.platform_output.commands));
         self.input
             .mouse

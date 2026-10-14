@@ -87,6 +87,8 @@ strings! {
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
     source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
     lens_ungranted: "Wants to read {domain}, which the game map does not offer: not allowed", "Хочет читать {domain}, чего карта игры не даёт: не разрешено";
+    lens_act_ungranted: "Wants to act in {domain}, which the game map does not offer: not allowed", "Хочет действовать в {domain}, чего карта игры не даёт: не разрешено";
+    acts_warning: "Acting for you in the game breaks its terms of service: the game's company can suspend your account for it.", "Действия за вас в игре нарушают её пользовательское соглашение: компания игры может за это заблокировать аккаунт.";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
     version: "version {version}", "версия {version}";
@@ -127,6 +129,12 @@ strings! {
     section_updates: "Updates", "Обновления";
     section_developers: "For developers", "Для разработчиков";
     setting_key: "Menu key", "Клавиша меню";
+    setting_stop_key: "Stop plugins acting", "Остановить действия плагинов";
+    stop_key_note: "Stops every plugin from acting in the game at once, and lets them act again. The same keys as the menu's; Esc keeps {key}.", "Сразу запрещает всем плагинам действовать в игре и снова разрешает. Те же клавиши, что для меню; Esc оставит {key}.";
+    note_acting: "{name} is acting in the game", "{name} действует в игре";
+    note_stopped: "Plugins are stopped from acting", "Плагинам запрещено действовать";
+    hint_stop: "{key} stops it", "{key} — остановить";
+    hint_resume: "{key} lets them act again", "{key} — снова разрешить";
     key_press: "Press a key…", "Нажмите клавишу…";
     key_note: "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock, or F1 to F12. Esc keeps {key}.", "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock или F1–F12. Esc оставит {key}.";
     setting_language: "Language", "Язык";
@@ -271,6 +279,13 @@ impl Language {
                 Self::English => domain.read.en.clone(),
                 Self::Russian => domain.read.ru.clone(),
             },
+            crate::manifest::Asked::Act(domain) => {
+                let words = domain.act.as_ref().unwrap_or(&domain.read);
+                match self {
+                    Self::English => words.en.clone(),
+                    Self::Russian => words.ru.clone(),
+                }
+            }
         }
     }
 
@@ -280,6 +295,7 @@ impl Language {
         match self {
             Self::English => class.title(),
             Self::Russian => match class {
+                Class::Acts => "Действует в игре за вас",
                 Class::Network => "Выходит в интернет",
                 Class::OtherPlayers => "Видит других игроков",
                 Class::WhatYouSee => "Меняет то, что вы видите",
@@ -318,6 +334,9 @@ pub struct Settings {
     /// The key the player chose for the menu; `Insert` without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<MenuKey>,
+    /// The key the player chose to stop plugins acting; `End` without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_key: Option<MenuKey>,
     /// The update channel; the one the build was released on without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<angelica_update::Channel>,

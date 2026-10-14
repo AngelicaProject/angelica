@@ -122,6 +122,12 @@ impl Panel {
         (self.menu.key().virtual_key(), self.menu.choosing_key())
     }
 
+    /// The Windows virtual-key code of the key that stops plugins acting.
+    #[must_use]
+    pub fn stop_key(&self) -> u32 {
+        self.menu.stop_key().virtual_key()
+    }
+
     /// The key with the Windows virtual-key code `code` was pressed while
     /// the menu waited for its new key.
     pub fn key_pressed(&mut self, host: &Host, code: u32) {

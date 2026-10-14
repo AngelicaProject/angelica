@@ -39,11 +39,20 @@
 //! }
 //! ```
 //!
-//! The manifest lists every domain a query reads:
+//! [`act`] takes an action of the map for the player, with its parameters
+//! by name:
+//!
+//! ```ignore
+//! lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4.into())])?;
+//! ```
+//!
+//! The manifest lists every domain a query reads and every domain the
+//! plugin acts in:
 //!
 //! ```toml
 //! [lens]
 //! read = ["inventory"]
+//! act = ["actions"]
 //! ```
 use crate::api::lens as api;
 pub use api::{Column, FlagSet, Row, SheetRow, Value};
@@ -333,6 +342,63 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
         unit unit_struct newtype_struct tuple tuple_struct map struct enum
         identifier ignored_any
+    }
+}
+
+/// Takes the map's action `action` for the player now, with each parameter
+/// by name; a parameter left out takes the map's default.
+///
+/// # Errors
+/// See `lens.act`: `unavailable` with the reason when the game cannot take
+/// it now, `permission-denied` while the player stopped plugins from
+/// acting.
+pub fn act(action: &str, params: &[(&str, Value)]) -> Result<(), crate::Error> {
+    let params: Vec<(String, Value)> = params
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), value.clone()))
+        .collect();
+    api::act(action, &params)
+}
+
+/// The value of an enum by its name, for a parameter of [`act`].
+#[must_use]
+pub fn named(name: &str) -> Value {
+    Value::Named(name.to_owned())
+}
+
+impl From<u32> for Value {
+    fn from(value: u32) -> Self {
+        Self::Unsigned(value.into())
+    }
+}
+
+impl From<u64> for Value {
+    fn from(value: u64) -> Self {
+        Self::Unsigned(value)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(value: i64) -> Self {
+        Self::Signed(value)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(value: f32) -> Self {
+        Self::Float(value.into())
+    }
+}
+
+impl From<f64> for Value {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
     }
 }
 

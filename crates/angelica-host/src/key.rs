@@ -35,6 +35,12 @@ const KEYS: [(u32, &str); 20] = [
 pub struct MenuKey(usize);
 
 impl MenuKey {
+    /// `End`: the key that stops plugins acting without the player's choice.
+    #[must_use]
+    pub fn stop() -> Self {
+        Self::from_virtual_key(0x23).unwrap_or_default()
+    }
+
     /// The key with the Windows virtual-key code `code`, when the menu can
     /// be on it.
     #[must_use]

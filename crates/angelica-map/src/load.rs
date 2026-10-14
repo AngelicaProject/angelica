@@ -80,7 +80,7 @@ impl Map {
                 }
             }
         }
-        for file in ["domains.toml", "roots.toml", "events.toml"] {
+        for file in ["domains.toml", "roots.toml", "events.toml", "actions.toml"] {
             let path = directory.join(file);
             if path.exists() {
                 files.push((file.to_owned(), read_text(&path)?));
@@ -200,6 +200,12 @@ impl Map {
                 message,
             }
         })?;
+        crate::actions::check(&mut objects, &entries).map_err(|message| {
+            MapError::InvalidObjects {
+                path: PathBuf::from("actions.toml"),
+                message,
+            }
+        })?;
         Ok(Self {
             entries,
             sheets,
@@ -286,6 +292,8 @@ fn object_model(files: &[(String, String)]) -> Result<crate::objects::Objects, M
             objects.roots = crate::objects::parse_roots(text).map_err(invalid)?;
         } else if relative == "events.toml" {
             objects.events = crate::events::parse(text).map_err(invalid)?;
+        } else if relative == "actions.toml" {
+            objects.actions = crate::actions::parse(text).map_err(invalid)?;
         } else if let Some(name) = relative
             .strip_prefix("enums/")
             .and_then(|name| name.strip_suffix(".toml"))
@@ -503,6 +511,7 @@ fn is_object_file(path: &str) -> bool {
     path == "domains.toml"
         || path == "roots.toml"
         || path == "events.toml"
+        || path == "actions.toml"
         || path.starts_with("types/")
         || path.starts_with("enums/")
 }

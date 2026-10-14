@@ -102,6 +102,8 @@ impl Permission {
 /// class first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Class {
+    /// Acts in the game for the player.
+    Acts,
     /// Reaches the internet.
     Network,
     /// Sees what other players say or do.
@@ -117,6 +119,7 @@ impl Class {
     pub fn title(self) -> &'static str {
         match self {
             Self::Network => "Uses the internet",
+            Self::Acts => "Acts in the game for you",
             Self::OtherPlayers => "Sees other players",
             Self::WhatYouSee => "Changes what you see",
             Self::YoursOnly => "Only for you",
@@ -147,6 +150,8 @@ pub enum Asked {
     Permission(Permission),
     /// Reading a domain of the game map through Lens.
     Read(angelica_map::Domain),
+    /// Acting in a domain of the game map through Lens.
+    Act(angelica_map::Domain),
 }
 
 impl Asked {
@@ -155,6 +160,7 @@ impl Asked {
         match self {
             Self::Permission(permission) => permission.class(),
             Self::Read(domain) => domain_class(domain.class).unwrap_or(Class::YoursOnly),
+            Self::Act(_) => Class::Acts,
         }
     }
 
@@ -164,6 +170,7 @@ impl Asked {
         match self {
             Self::Permission(permission) => permission.name().to_owned(),
             Self::Read(domain) => format!("{}.read", domain.name),
+            Self::Act(domain) => format!("{}.act", domain.name),
         }
     }
 }
@@ -186,11 +193,28 @@ fn grantable(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Dom
         .collect()
 }
 
-/// The domains of `[lens] read` that are not granted now: the map does not
-/// describe them, or this host does not present their class.
+/// The domains of `[lens] act` that can be granted: those the map
+/// describes with words for acting in them.
+fn grantable_act(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Domain> {
+    manifest
+        .lens_act()
+        .iter()
+        .filter_map(|name| domains(name))
+        .filter(|domain| domain.act.is_some())
+        .collect()
+}
+
+/// The domains of `[lens] read` and `[lens] act` that are not granted now:
+/// the map does not describe them, this host does not present their class,
+/// or the map has no words for acting in them. Acting is named
+/// `<domain>.act`.
 #[must_use]
 pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
     let grantable: BTreeSet<String> = grantable(manifest, domains)
+        .into_iter()
+        .map(|domain| domain.name)
+        .collect();
+    let acting: BTreeSet<String> = grantable_act(manifest, domains)
         .into_iter()
         .map(|domain| domain.name)
         .collect();
@@ -198,6 +222,13 @@ pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
         .lens_read()
         .into_iter()
         .filter(|name| !grantable.contains(name))
+        .chain(
+            manifest
+                .lens_act()
+                .into_iter()
+                .filter(|name| !acting.contains(name))
+                .map(|name| format!("{name}.act")),
+        )
         .collect()
 }
 
@@ -209,6 +240,7 @@ pub fn asked(manifest: &Manifest, domains: Domains<'_>) -> Vec<Asked> {
         .iter()
         .map(|permission| Asked::Permission(*permission))
         .chain(grantable(manifest, domains).into_iter().map(Asked::Read))
+        .chain(grantable_act(manifest, domains).into_iter().map(Asked::Act))
         .collect()
 }
 
@@ -246,6 +278,10 @@ pub fn requests(
                 granted.is_some_and(|grants| grants.lens_read.contains(&domain.name)),
                 Vec::new(),
             ),
+            Asked::Act(domain) => (
+                granted.is_some_and(|grants| grants.lens_act.contains(&domain.name)),
+                Vec::new(),
+            ),
         };
         if !covered || !hosts.is_empty() {
             classes
@@ -257,12 +293,14 @@ pub fn requests(
     classes.into_iter().collect()
 }
 
-/// The domains a plugin reads through Lens.
+/// The domains a plugin reads and acts in through Lens.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lens {
     #[serde(default)]
     pub read: Vec<String>,
+    #[serde(default)]
+    pub act: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -406,28 +444,9 @@ impl Manifest {
                 return fail(format!("http.hosts lists {host} twice"));
             }
         }
-        let read = manifest
-            .lens
-            .as_ref()
-            .map_or(&[][..], |lens| &lens.read[..]);
-        if read.len() > MAX_DOMAINS {
-            return fail(format!("lens.read lists at most {MAX_DOMAINS} domains"));
-        }
-        let mut domains = BTreeSet::new();
-        for domain in read {
-            let word = domain.len() <= 64
-                && domain.starts_with(|c: char| c.is_ascii_lowercase())
-                && domain
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-            if !word {
-                return fail(format!(
-                    "lens.read: {domain:?} is not a domain name: lowercase letters, digits, and underscores"
-                ));
-            }
-            if !domains.insert(domain) {
-                return fail(format!("lens.read lists {domain} twice"));
-            }
+        if let Some(lens) = &manifest.lens {
+            check_domains("lens.read", &lens.read)?;
+            check_domains("lens.act", &lens.act)?;
         }
         manifest.declared = declared;
         Ok(manifest)
@@ -457,10 +476,45 @@ impl Manifest {
             .collect()
     }
 
+    /// The domains the manifest's `[lens] act` lists.
+    #[must_use]
+    pub fn lens_act(&self) -> BTreeSet<String> {
+        self.lens
+            .iter()
+            .flat_map(|lens| lens.act.iter().cloned())
+            .collect()
+    }
+
     #[must_use]
     pub fn id(&self) -> &str {
         &self.plugin.id
     }
+}
+
+/// Checks a list of domain names of `[lens]`, called `what`.
+fn check_domains(what: &str, listed: &[String]) -> Result<(), ManifestError> {
+    if listed.len() > MAX_DOMAINS {
+        return Err(ManifestError(format!(
+            "{what} lists at most {MAX_DOMAINS} domains"
+        )));
+    }
+    let mut domains = BTreeSet::new();
+    for domain in listed {
+        let word = domain.len() <= 64
+            && domain.starts_with(|c: char| c.is_ascii_lowercase())
+            && domain
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !word {
+            return Err(ManifestError(format!(
+                "{what}: {domain:?} is not a domain name: lowercase letters, digits, and underscores"
+            )));
+        }
+        if !domains.insert(domain) {
+            return Err(ManifestError(format!("{what} lists {domain} twice")));
+        }
+    }
+    Ok(())
 }
 
 /// The player's approval of a plugin: `grants/<id>.json`.
@@ -476,6 +530,9 @@ pub struct Grants {
     /// The domains of the game map approved for reading through Lens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub lens_read: BTreeSet<String>,
+    /// The domains of the game map approved for acting in through Lens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub lens_act: BTreeSet<String>,
 }
 
 impl Grants {
@@ -488,6 +545,10 @@ impl Grants {
             permissions: manifest.permissions().clone(),
             http_hosts: manifest.http_hosts(),
             lens_read: grantable(manifest, domains)
+                .into_iter()
+                .map(|domain| domain.name)
+                .collect(),
+            lens_act: grantable_act(manifest, domains)
                 .into_iter()
                 .map(|domain| domain.name)
                 .collect(),
@@ -505,6 +566,9 @@ impl Grants {
             && grantable(manifest, domains)
                 .iter()
                 .all(|domain| self.lens_read.contains(&domain.name))
+            && grantable_act(manifest, domains)
+                .iter()
+                .all(|domain| self.lens_act.contains(&domain.name))
     }
 }
 

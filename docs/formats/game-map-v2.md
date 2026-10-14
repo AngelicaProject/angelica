@@ -8,6 +8,7 @@ entries/<area>.toml      hand-maintained entries, one file per area
 domains.toml             the object model's domains: what plugins ask the player to read
 roots.toml               the object model's roots: where paths through the objects start
 events.toml              the object model's events: points of the game's code that plugins watch
+actions.toml             the object model's actions: functions of the game plugins call for the player
 types/<area>.toml        the object model's types: the game's structures and their fields
 enums/<name>.toml        the object model's enums: names for the values of a field
 sheets/<sheet>.toml      sheet schemas: names for the columns of the game's Excel sheets
@@ -143,7 +144,7 @@ read = { en = "Sees the items you carry", ru = "Видит предметы, к�
 - A domain is named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
 - `doc`: what the domain holds; not blank.
 - `class`: how far the domain reaches, as the player sees it: `you` (only about the player), `display` (changes what the player sees), `others` (sees other players), `acts` (acts in the game for the player), or `acts_on_others` (acts toward other players). A host grants a domain only of a class it presents.
-- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `change` and `act`, in the same form, say what changing the domain and acting in it allow; the plugin API does not use them yet.
+- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `act`, in the same form, says what acting in the domain allows; a domain without it has no actions. `change`, in the same form, says what changing the domain allows; the plugin API does not use it yet.
 
 A new domain and its wording are approved by the maintainer once; types and fields join a domain without a new approval. A domain is narrow: what one kind of plugin needs, not everything about the player.
 
@@ -252,11 +253,54 @@ An argument gives where its value is and what it is:
 - Its shape: a value, with `sheet`, `enum`, `flags`, and `unit` as for a field; `text = n`, NUL-terminated UTF-8 of at most `n` bytes behind a pointer; or `ref = "<type>"`, a pointer to an object of the type, from which a watch's path goes on. Text and references have the kind `ptr`.
 - `domain` and `forbidden`, as for a field.
 
+### Actions
+
+`actions.toml` lists what plugins may do in the game for the player. An action is a `function` entry of the main thread that the game's own interface calls, and how each of its arguments is given.
+
+```toml
+[actions.teleport]
+doc = "Teleports to an aetheryte the player has attuned to, paying the fee, as the teleport window does."
+call = "teleport.telepo.teleport"
+domain = "teleport"
+rate = 1
+ok = true
+when = [
+    { path = "player", says = "your character is not in the world" },
+    { path = "activity[in_combat = false]", says = "you are in combat" },
+]
+
+[actions.teleport.args.manager]
+arg = 0
+global = "teleport.telepo.instance"
+
+[actions.teleport.args.aetheryte]
+arg = 1
+doc = "The aetheryte."
+sheet = "Aetheryte"
+
+[actions.teleport.args.shard]
+arg = 2
+doc = "The index of an aethernet shard within the aetheryte; 0 for the aetheryte itself."
+default = 0
+```
+
+- An action is named like a domain. `doc` is not blank.
+- `call`: a `function` entry with `thread = "main"`, of at most 16 arguments.
+- `domain`: a domain with `act` wording; acting in it is the plugin's permission.
+- `rate`: optional, 1 to 20, 2 by default: the most times a second one plugin takes the action.
+- `ok`: optional, a number or a boolean: the return value that means the game took the action; any other is a refusal. Only for a function that returns an integer or a `bool`.
+- `when`: optional, at most 16 conditions, each a `path` through the object model, as a query's path without braces, that must reach an object for the action to be taken, and what the plugin is told when it reaches none (`says`). Conditions read every domain: they are the host's checks, not the plugin's reads.
+- `args`: every argument of the function, each once, by its position `arg` from 0. Its kind comes from the function's `abi`. It is one of:
+  - a parameter the plugin gives, with `doc`: a number or a `bool`, never a pointer, with `sheet`, `enum`, `flags`, and `unit` as for a field, an optional `default` used when the plugin gives none, and an optional `range = [least, most]`;
+  - `value`: always this number or boolean;
+  - `global = "<entry>"`: a `global` entry of type `struct`, passed as its address, or `ptr`, passed as the pointer it holds; the kind is `ptr`;
+  - `object = "<path>"`: the address of the first object a path through the object model reaches; the kind is `ptr`.
+
 ### Rules and resolution
 
-The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind.
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large. It is invalid too when an event's `at` is not a function or a location, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
 
-In a build, a root is absent when its global is absent, a field when its entry is absent, and an event when its `at` is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, and events under `objects`.
+In a build, a root is absent when its global is absent, a field when its entry is absent, an event when its `at` is absent, and an action when its function or a global it passes is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, events, and actions under `objects`, and an action whose condition or object path does not fit the model as absent.
 
 ## Window schemas
 

@@ -231,6 +231,8 @@ pub struct Context {
     /// The domains the manifest's `[lens] read` lists and the player
     /// granted.
     pub lens_read: BTreeSet<String>,
+    /// The domains it may act in through Lens.
+    pub lens_act: BTreeSet<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -1233,6 +1235,36 @@ impl api::lens::Host for State {
         })
     }
 
+    fn act(&mut self, action: String, params: Vec<(String, api::lens::Value)>) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        if services.starting.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::new(
+                Kind::Unavailable,
+                "the game is still starting: act from tick or a player's action",
+            )
+            .into());
+        }
+        let params: Vec<(String, crate::lens::Value)> = params
+            .into_iter()
+            .map(|(name, value)| (name, value_from_api(value)))
+            .collect();
+        self.host(|_| {
+            let (schema, _) = services.lens.schema();
+            let ready = crate::lens::act::prepare(&schema, &action, &params, &|domain| {
+                context.lens_act.contains(domain)
+            })?;
+            services.lens.acting.take(
+                &context.id,
+                &ready,
+                &GameCaller(services.game.as_ref()),
+                Instant::now(),
+            )
+        })
+        .map_err(Into::into)
+    }
+
     fn release(&mut self, query: u32) {
         if self.queries.release(query) {
             self.context
@@ -1295,6 +1327,45 @@ pub fn row_to_api(row: crate::lens::Row) -> api::lens::Row {
                 })
             })
             .collect(),
+    }
+}
+
+/// A value a plugin gave, as Lens takes it.
+fn value_from_api(value: api::lens::Value) -> crate::lens::Value {
+    use crate::lens::Value as V;
+    use api::lens::Value;
+    match value {
+        Value::Boolean(value) => V::Boolean(value),
+        Value::Signed(value) => V::Signed(value),
+        Value::Unsigned(value) => V::Unsigned(value),
+        Value::Float(value) => V::Float(value),
+        Value::Text(bytes) => V::Text(bytes),
+        Value::Sheet(row) => V::Row {
+            sheet: row.sheet,
+            row: row.row,
+        },
+        Value::Named(name) => V::Named(name),
+        Value::Flags(flags) => V::Flags {
+            names: flags.names,
+            bits: flags.bits,
+        },
+    }
+}
+
+/// The game as Lens actions call it.
+struct GameCaller<'a>(&'a dyn crate::game::Game);
+
+impl crate::lens::act::Caller for GameCaller<'_> {
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        self.0.memory()
+    }
+
+    fn call(
+        &self,
+        address: u64,
+        args: &[u64],
+    ) -> std::result::Result<crate::lens::act::Returned, String> {
+        self.0.call(address, args)
     }
 }
 

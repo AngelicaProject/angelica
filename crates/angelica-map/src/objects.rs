@@ -175,6 +175,7 @@ pub struct Objects {
     pub types: BTreeMap<String, Type>,
     pub roots: BTreeMap<String, Root>,
     pub events: BTreeMap<String, crate::events::Event>,
+    pub actions: BTreeMap<String, crate::actions::Action>,
 }
 
 impl Objects {

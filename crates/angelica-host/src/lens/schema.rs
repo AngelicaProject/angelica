@@ -29,6 +29,9 @@ pub struct Schema {
     /// The address of every `function` and `location` entry, or why it is
     /// absent: the points `angelica look` can count the calls of.
     pub code: BTreeMap<String, Result<u64, String>>,
+    /// Where every action's function and globals are, or why the build
+    /// lacks one.
+    pub actions: BTreeMap<String, Result<super::act::ActionAt, String>>,
 }
 
 impl Schema {
@@ -85,6 +88,7 @@ impl Schema {
                 (event.name.clone(), at)
             })
             .collect();
+        let actions = actions_at(map, base, &entry);
         let code = map
             .entries()
             .filter(|found| {
@@ -108,6 +112,7 @@ impl Schema {
             roots,
             events,
             code,
+            actions,
         }
     }
 
@@ -134,4 +139,63 @@ impl Schema {
             .cloned()
             .unwrap_or_else(|| Err(format!("map entry {entry} is not in the object model")))
     }
+}
+
+/// Where each action's function and globals are in the build `entry`
+/// resolves, or why the build lacks one.
+fn actions_at(
+    map: &Map,
+    base: u64,
+    entry: &dyn Fn(&str) -> Result<Value, String>,
+) -> BTreeMap<String, Result<super::act::ActionAt, String>> {
+    map.objects()
+        .actions
+        .values()
+        .map(|action| (action.name.clone(), action_at(map, base, entry, action)))
+        .collect()
+}
+
+fn action_at(
+    map: &Map,
+    base: u64,
+    entry: &dyn Fn(&str) -> Result<Value, String>,
+    action: &angelica_map::Action,
+) -> Result<super::act::ActionAt, String> {
+    let function = match entry(&action.call) {
+        Ok(Value::Address(rva)) => base + u64::from(rva),
+        Ok(Value::Offset(_)) => return Err(format!("map entry {} is not code", action.call)),
+        Err(reason) => return Err(format!("map entry {} is absent: {reason}", action.call)),
+    };
+    let ret = match map.get(&action.call).map(|found| &found.kind) {
+        Some(EntryKind::Function { abi, .. }) => abi.ret,
+        _ => ValueKind::Void,
+    };
+    let mut globals = BTreeMap::new();
+    for arg in &action.args {
+        let angelica_map::ActSource::Global(global) = &arg.source else {
+            continue;
+        };
+        let pointer = map.get(global).is_some_and(|found| {
+            matches!(
+                found.kind,
+                EntryKind::Global {
+                    value: ValueKind::Ptr
+                }
+            )
+        });
+        let at = match entry(global) {
+            Ok(Value::Address(rva)) => RootAt {
+                address: base + u64::from(rva),
+                pointer,
+            },
+            Ok(Value::Offset(_)) => return Err(format!("map entry {global} is not a global")),
+            Err(reason) => return Err(format!("map entry {global} is absent: {reason}")),
+        };
+        globals.insert(global.clone(), at);
+    }
+    Ok(super::act::ActionAt {
+        function,
+        ret,
+        globals,
+    })
 }

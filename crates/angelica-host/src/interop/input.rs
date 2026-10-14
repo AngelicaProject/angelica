@@ -26,6 +26,10 @@ pub struct Input {
     pub choosing_key: AtomicBool,
     /// The virtual-key code pressed while the menu waited; 0 for none.
     pub chosen_key: AtomicU32,
+    /// The virtual-key code of the key that stops plugins acting.
+    pub stop_key: AtomicU32,
+    /// Whether the stop key was pressed since the last frame.
+    pub stop_pressed: AtomicBool,
     pub mouse: AtomicBool,
     pub keyboard: AtomicBool,
     window: AtomicUsize,
@@ -39,6 +43,8 @@ impl Default for Input {
             key: AtomicU32::new(crate::key::MenuKey::default().virtual_key()),
             choosing_key: AtomicBool::new(false),
             chosen_key: AtomicU32::new(0),
+            stop_key: AtomicU32::new(crate::key::MenuKey::stop().virtual_key()),
+            stop_pressed: AtomicBool::new(false),
             mouse: AtomicBool::new(false),
             keyboard: AtomicBool::new(false),
             window: AtomicUsize::new(0),
@@ -106,6 +112,12 @@ impl Input {
         }
         if self.choosing_key.load(Ordering::Acquire) {
             self.chosen_key.store(code, Ordering::Release);
+            return true;
+        }
+        if code == self.stop_key.load(Ordering::Acquire) {
+            if lparam.cast_unsigned() & (1 << 30) == 0 {
+                self.stop_pressed.store(true, Ordering::Release);
+            }
             return true;
         }
         if code != self.key.load(Ordering::Acquire) {

@@ -2,7 +2,7 @@
 
 A plugin's manifest declares its permissions ([manifest](../formats/plugin-manifest-v1.md)). The player sees them before approving the plugin, and approval grants exactly those. A new version that declares a permission or an `http.hosts` entry the grant does not cover waits for approval again.
 
-Every plugin, once approved, has its own windows, log, storage folder, and jobs; these need no permission. Everything that reaches the game needs one: a permission of the host for what the host does for the plugin, and a [domain of the game map](#domains-of-the-game-map) for what the plugin reads of the game.
+Every plugin, once approved, has its own windows, log, storage folder, and jobs; these need no permission. Everything that reaches the game needs one: a permission of the host for what the host does for the plugin, and a [domain of the game map](#domains-of-the-game-map) for what the plugin reads of the game or does in it.
 
 | Permission | Allows | Class | Shown to the player as |
 | --- | --- | --- | --- |
@@ -20,11 +20,21 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 
 Reading the game's objects through [Lens](./lens.md) needs a permission per domain of the game map's [object model](../formats/game-map-v2.md#domains), such as `inventory` (the items the player carries) or `character` (the player's name, class, level, HP, and MP). A plugin lists them in its manifest's `[lens] read`; the player sees each in the words the map gives it, in the group of its class. A query may read only fields of the domains the plugin holds; for an array whose elements belong to different domains, only the elements of those domains. The map's maintainer approves a new domain and its wording once; fields and types join a domain without a new approval, so what a domain lets a plugin read grows only within what its wording says.
 
+Acting in a domain through Lens [actions](../formats/plugin-api-v1.md#lens) is a permission of its own: the manifest lists the domain in `[lens] act`, and the player sees the domain's `act` words in the class **Acts in the game for you**, above every other class, with a warning that acting for the player in the game breaks the game's terms of service and the game's company can suspend the account for it. A domain the map describes without `act` words has no actions and is never granted for acting.
+
+## Acting for the player
+
+Whatever a plugin does in the game for the player, the player sees and stops at once:
+
+- While a plugin has acted in the last 3 seconds, a note at the top right names it and the stop key.
+- The stop key, `End` unless the player chose another in Settings, stops every plugin from acting at once: every action is refused until the player presses it again. A note says so while plugins are stopped.
+- An action is taken only as the map describes it: one function the game's own interface calls, its conditions, and its rate.
+
 A domain is shown only when the running game map describes it, in a class the host presents: `you` as **Only for you**, `display` as **Changes what you see**, `others` as **Sees other players**. A domain of another class, or one the map does not describe, is listed as not allowed and is never granted; when the map later describes it, the plugin asks again.
 
 ## Classes
 
-The player sees permissions in plain words, grouped by class, the most serious first: **Uses the internet**, **Sees other players**, **Changes what you see**, **Only for you**. Permission names stay with authors and are not shown. Every new permission belongs to one class; operations that act for the player will form a class of their own, above the others.
+The player sees permissions in plain words, grouped by class, the most serious first: **Acts in the game for you**, **Uses the internet**, **Sees other players**, **Changes what you see**, **Only for you**. Permission names stay with authors and are not shown. Every new permission belongs to one class.
 
 Permissions follow game domains and are as narrow as the domain allows: reading a domain of the game map, receiving its events, and each kind of operation on it are separate permissions. Automation is the use of operations, so each kind of action a plugin may take for the player is its own permission, shown to the player in plain words.
 

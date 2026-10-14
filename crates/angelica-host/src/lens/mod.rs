@@ -7,6 +7,7 @@
 //! independent: the Windows adapter only supplies the memory reads and the
 //! hooks.
 #![forbid(unsafe_code)]
+pub mod act;
 pub mod plan;
 pub mod query;
 pub mod read;
@@ -36,6 +37,8 @@ pub struct Lens {
     generation: AtomicU64,
     /// The plugins' watches of events.
     pub watches: Watches,
+    /// Whether plugins may act, and how often each acted.
+    pub acting: act::Acting,
 }
 
 impl Lens {
@@ -45,6 +48,7 @@ impl Lens {
             schema: RwLock::new(Arc::new(schema)),
             generation: AtomicU64::new(0),
             watches: Watches::default(),
+            acting: act::Acting::default(),
         }
     }
 

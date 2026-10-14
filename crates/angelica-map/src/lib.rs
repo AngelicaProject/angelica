@@ -5,6 +5,7 @@
 //! resolution runs offline over the executable file and in the game over the
 //! mapped module, so both always agree on what an entry means.
 
+mod actions;
 mod error;
 mod events;
 mod load;
@@ -15,6 +16,9 @@ mod resolve;
 mod sheets;
 mod windows;
 
+pub use actions::{
+    ActArg, Action, Condition as ActCondition, MOST_ACT_RATE, Number, Param, Source as ActSource,
+};
 pub use error::MapError;
 pub use events::{Arg, Event, MOST_RATE, Register, Source as ArgSource};
 pub use load::{FORMAT, Map};

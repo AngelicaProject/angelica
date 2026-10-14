@@ -157,6 +157,17 @@ impl Hello {
                 let text = self.used_text();
                 self.say(text);
             }
+            "sprint" => {
+                // Sprint is general action 4, used as its hotbar slot does.
+                let sprint = [
+                    ("kind", lens::named("general_action")),
+                    ("action", 4u32.into()),
+                ];
+                match lens::act("use_action", &sprint) {
+                    Ok(()) => self.say("sprinting"),
+                    Err(error) => self.say(format!("cannot sprint: {}", error.message)),
+                }
+            }
             "statuses" => match statuses() {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the statuses: {error}")),
@@ -463,6 +474,7 @@ impl Plugin for Hello {
                                 .button("statuses", "My statuses")
                                 .button("heard", "Last chat message")
                                 .button("used", "Last action used")
+                                .button("sprint", "Sprint")
                                 .button("texture", "Replace a texture")
                         })
                         .row(|row| {

@@ -1,6 +1,7 @@
 package angelica:plugin@1.0.0;
 
-/// Lens: the game's objects, read by path, and the game's events watched.
+/// Lens: the game's objects, read by path, the game's events watched, and
+/// the game's actions taken for the player.
 ///
 /// The game map describes the game's objects: their types and fields, the
 /// roots where paths start, and the domain each field belongs to. A query
@@ -23,8 +24,12 @@ package angelica:plugin@1.0.0;
 /// and the objects they point to, and delivers them in the next frame as a
 /// `watched` game event.
 ///
-/// Every function runs in the main instance and never writes; `prepare`
-/// and `run` run on the game's main thread between frames. Jobs get
+/// An action is a function of the game the map describes, such as
+/// `use_action`, which `act` calls for the player with named parameters, as
+/// the game's own interface calls it.
+///
+/// Every function runs in the main instance, on the game's main thread
+/// between frames; only `act` changes anything in the game. Jobs get
 /// `wrong-context`.
 interface lens {
     use types.{error};
@@ -104,4 +109,18 @@ interface lens {
 
     /// Forgets a prepared query, and ends a watch.
     release: func(query: u32);
+
+    /// Takes the map's action `action` for the player now, with each
+    /// parameter by name; a parameter left out takes the map's default.
+    /// An enum parameter takes `named`, a sheet row `sheet` or a number, a
+    /// float `float` or a number, a bool `boolean`. The action's domain
+    /// must be listed in the manifest's `[lens] act` and approved by the
+    /// player. An unknown action returns `not-found`; a parameter that does
+    /// not fit, `invalid-argument`; a domain the plugin may not act in, or
+    /// acting while the player stopped plugins from acting,
+    /// `permission-denied`; more often than the map's rate,
+    /// `limit-exceeded`; a condition of the action that does not hold now
+    /// (the message says which), something the build lacks, or the game
+    /// refusing the action, `unavailable`.
+    act: func(action: string, params: list<tuple<string, value>>) -> result<_, error>;
 }

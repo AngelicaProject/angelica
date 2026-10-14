@@ -24,3 +24,4 @@ hosts = ["example.com"]
 
 [lens]
 read = ["actions", "character", "location", "statuses"]
+act = ["actions"]
