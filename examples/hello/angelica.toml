@@ -21,6 +21,7 @@ authors = ["AngelicaProject contributors"]
 "draw.world" = true
 "messages.send" = true
 "clipboard.write" = true
+"notifications" = true
 
 [http]
 hosts = ["example.com"]

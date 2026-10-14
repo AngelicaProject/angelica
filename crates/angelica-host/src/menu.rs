@@ -2208,6 +2208,7 @@ impl Menu {
             .count();
         let hint = fill(self.strings().hint, &[("key", self.key().name())]);
         let mut notes: Vec<(String, Tone, f32, String)> = Vec::new();
+        let mut heads: Vec<Option<String>> = Vec::new();
         let acting = &view.host.services().lens.acting;
         let stop = self.stop_key().name();
         if acting.stopped() {
@@ -2254,8 +2255,29 @@ impl Menu {
                 hint.clone(),
             ));
         }
+        heads.resize(notes.len(), None);
+        let now = std::time::Instant::now();
+        for shown in view.host.services().notifications.current(now) {
+            let age = now.duration_since(shown.at).as_secs_f64();
+            let shown_for = crate::notifications::SHOWN.as_secs_f64();
+            notes.push((
+                shown.text,
+                if shown.attention {
+                    Tone::Attention
+                } else {
+                    Tone::Good
+                },
+                fraction((age / 0.25).min((shown_for - age) / 0.5)),
+                String::new(),
+            ));
+            heads.push(Some(
+                view.host
+                    .plugin(&shown.plugin)
+                    .map_or(shown.plugin, |plugin| plugin.manifest.plugin.name.clone()),
+            ));
+        }
         let mut top = view.screen.top() + view.at(24.0);
-        for (index, (text, tone, fade, hint)) in notes.into_iter().enumerate() {
+        for (index, ((text, tone, fade, hint), head)) in notes.into_iter().zip(heads).enumerate() {
             let area = egui::Area::new(Id::new(("angelica-note", index)))
                 .order(egui::Order::Foreground)
                 .interactable(false)
@@ -2263,7 +2285,7 @@ impl Menu {
                 .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
                 .show(context, |ui| {
                     ui.multiply_opacity(fade);
-                    note(ui, view, &text, tone, &hint);
+                    note(ui, view, head.as_deref(), &text, tone, &hint);
                 });
             top = area.response.rect.bottom() + view.at(8.0);
         }
@@ -2936,9 +2958,9 @@ fn setting(ui: &mut Ui, view: &View<'_>, name: &str, value: impl FnOnce(&mut Ui)
     });
 }
 
-/// A note over the game: the word `angelica`, a mark, one line, and how to
-/// open Angelica.
-fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
+/// A note over the game: the word `angelica`, or the name of the plugin
+/// that notifies, a mark, one line, and how to open Angelica, when given.
+fn note(ui: &mut Ui, view: &View<'_>, plugin: Option<&str>, text: &str, tone: Tone, hint: &str) {
     let p = view.p;
     egui::Frame::new()
         .fill(p.window)
@@ -2952,11 +2974,14 @@ fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
         .show(ui, |ui| {
             ui.set_max_width(view.at(320.0));
             ui.spacing_mut().item_spacing.y = view.at(5.0);
-            ui.label(
-                RichText::new("angelica")
+            ui.label(match plugin {
+                Some(name) => RichText::new(name)
+                    .font(strong(view.at(12.0)))
+                    .color(p.secondary),
+                None => RichText::new("angelica")
                     .font(wordmark(view.at(12.0)))
                     .color(p.secondary),
-            );
+            });
             ui.horizontal(|ui| {
                 let (rect, _) =
                     ui.allocate_exact_size(vec2(view.at(14.0), view.at(16.0)), Sense::hover());
@@ -2973,7 +2998,9 @@ fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
                         .wrap(),
                 );
             });
-            ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
+            if !hint.is_empty() {
+                ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
+            }
         });
 }
 

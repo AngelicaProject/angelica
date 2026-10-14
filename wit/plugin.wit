@@ -56,5 +56,6 @@ world plugin {
     import draw;
     import messages;
     import clipboard;
+    import notifications;
     export guest;
 }

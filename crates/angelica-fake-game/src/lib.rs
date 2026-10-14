@@ -458,6 +458,7 @@ impl TestHost {
             draw: Arc::new(runtime::draw::Drawings::default()),
             messages: Arc::new(runtime::messages::Messages::default()),
             clipboard: Arc::new(runtime::clipboard::Clipboard::default()),
+            notifications: Arc::new(runtime::notifications::Notifications::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
             russian: AtomicBool::new(false),

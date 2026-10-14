@@ -1132,6 +1132,49 @@ fn a_greeting_is_copied_for_the_players_click() {
 }
 
 #[test]
+fn a_notification_is_shown_under_the_plugins_name() {
+    let test = approved(MANIFEST);
+    click(&test, "notify");
+    assert_eq!(message(&test), "notified");
+    let shown = test
+        .host
+        .services()
+        .notifications
+        .current(std::time::Instant::now());
+    assert_eq!(shown.len(), 1);
+    assert_eq!(
+        (shown[0].plugin.as_str(), shown[0].text.as_str()),
+        ("hello", "Hello from Angelica")
+    );
+    click(&test, "notify");
+    assert_eq!(
+        message(&test),
+        "cannot notify: a plugin notifies at most once in 2 seconds"
+    );
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert!(
+        test.host
+            .services()
+            .notifications
+            .current(std::time::Instant::now())
+            .is_empty(),
+        "a stopped plugin's notifications leave"
+    );
+
+    let test = approved(&MANIFEST.replace(
+        "\"notifications\" = true
+",
+        "",
+    ));
+    click(&test, "notify");
+    assert_eq!(
+        message(&test),
+        "cannot notify: the plugin does not hold notifications"
+    );
+}
+
+#[test]
 fn a_mark_is_drawn_around_the_character() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);

@@ -37,7 +37,8 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::GetDpiForWindow,
         WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect,
+            CreateWindowExW, DefWindowProcW, DestroyWindow, FLASHW_ALL, FLASHW_TIMERNOFG,
+            FLASHWINFO, FlashWindowEx, GetClientRect, GetForegroundWindow,
             GetWindowThreadProcessId, PostMessageW, RegisterClassW, RegisterWindowMessageW,
             WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
@@ -402,6 +403,9 @@ impl Overlay {
             .stop_key
             .store(panel.stop_key(), Ordering::Release);
         self.copy(std::mem::take(&mut output.platform_output.commands));
+        if self.host.services().notifications.take_attention() {
+            flash(self.input.window());
+        }
         self.input
             .mouse
             .store(frame.context.egui_wants_pointer_input(), Ordering::Release);
@@ -486,7 +490,7 @@ impl Overlay {
         })
     }
 
-    /// Puts the text the player copied on the clipboard.
+    /// Puts the text the player or a plugin copied on the clipboard.
     fn copy(&self, commands: Vec<egui::OutputCommand>) {
         for command in commands {
             if let egui::OutputCommand::CopyText(text) = command {
@@ -608,4 +612,23 @@ unsafe extern "system" fn resize(
         unsafe { std::mem::transmute(RESIZE.load(Ordering::Acquire)) };
     // SAFETY: forward original arguments after releasing every owned back-buffer reference.
     unsafe { original(raw, count, width, height, format, flags) }
+}
+
+/// Flashes the game's button on the taskbar until the player returns to the
+/// game, when the game is in the background.
+fn flash(window: windows_sys::Win32::Foundation::HWND) {
+    // SAFETY: GetForegroundWindow has no preconditions.
+    if unsafe { GetForegroundWindow() } == window {
+        return;
+    }
+    let info = FLASHWINFO {
+        cbSize: u32::try_from(std::mem::size_of::<FLASHWINFO>()).unwrap_or(u32::MAX),
+        hwnd: window,
+        dwFlags: FLASHW_ALL | FLASHW_TIMERNOFG,
+        uCount: 0,
+        dwTimeout: 0,
+    };
+    // SAFETY: info is a filled FLASHWINFO of the game's window; a window
+    // that is gone fails harmlessly.
+    unsafe { FlashWindowEx(&raw const info) };
 }

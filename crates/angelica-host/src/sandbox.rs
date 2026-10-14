@@ -167,6 +167,8 @@ pub struct Services {
     pub messages: Arc<crate::messages::Messages>,
     /// Text plugins put on the clipboard this frame.
     pub clipboard: Arc<crate::clipboard::Clipboard>,
+    /// Plugins' notifications on the screen.
+    pub notifications: Arc<crate::notifications::Notifications>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -1426,6 +1428,21 @@ impl api::messages::Host for State {
                 },
                 &|receiver| context.message_to.contains(receiver),
             )
+        })
+        .map_err(Into::into)
+    }
+}
+
+impl api::notifications::Host for State {
+    fn show(&mut self, text: String, attention: bool) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::Notifications))?;
+        let context = self.context.clone();
+        self.host(|_| {
+            context
+                .services
+                .notifications
+                .show(&context.id, &text, attention, Instant::now())
         })
         .map_err(Into::into)
     }

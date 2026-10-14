@@ -270,6 +270,9 @@ impl Language {
                 Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
                 Permission::MessagesSend => "Отправляет сообщения этим плагинам",
                 Permission::ClipboardWrite => "Копирует текст в буфер обмена, когда вы просите",
+                Permission::Notifications => {
+                    "Показывает уведомления и мигает игрой на панели задач"
+                }
             },
         }
     }
@@ -432,6 +435,7 @@ mod tests {
             Permission::DrawWorld,
             Permission::MessagesSend,
             Permission::ClipboardWrite,
+            Permission::Notifications,
         ];
         for permission in permissions {
             assert_ne!(

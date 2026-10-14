@@ -36,6 +36,7 @@ pub mod menu;
 pub mod messages;
 #[cfg(test)]
 mod mutations;
+pub mod notifications;
 pub mod package;
 pub mod panel;
 pub mod plugin_installer;

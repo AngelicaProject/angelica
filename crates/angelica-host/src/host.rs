@@ -627,6 +627,7 @@ impl Host {
         self.services.lens.acting.remove_plugin(id);
         self.services.lens.decisions.remove_plugin(id);
         self.services.draw.remove_plugin(id);
+        self.services.notifications.remove_plugin(id);
         self.services.messages.remove_plugin(id);
         self.services
             .lens

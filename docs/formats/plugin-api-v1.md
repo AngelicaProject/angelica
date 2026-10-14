@@ -26,6 +26,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
 | `clipboard` | text put on the player's clipboard for the player's action | `clipboard.write` |
+| `notifications` | one line at the top right of the screen under the plugin's name | `notifications` |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -205,6 +206,10 @@ A plugin sends to the plugins its manifest lists in `[messages] to`, which the p
 ## Clipboard
 
 `clipboard.copy` puts text of at most 64 KiB without NUL characters on the player's clipboard at the end of the frame, replacing what was there; the last text of a frame wins. A plugin copies only for an action of the player: from the main instance while it handles `ui-event` or `command`, and `wrong-context` anywhere else, so no plugin changes the clipboard on its own. No plugin reads the clipboard; the player pastes into a plugin's text fields as anywhere else.
+
+## Notifications
+
+`notifications.show` shows one line of 1 to 200 characters without control characters at the top right of the screen for 7 seconds, drawn by the host as Angelica's own notes are, under the plugin's name and with a mark: the attention mark when `attention` is set, the running mark otherwise. With `attention`, the game's button on the taskbar also flashes while the game is in the background, until the player returns to it. A plugin notifies at most once in 2 seconds, `limit-exceeded` otherwise; at most 3 notifications of all plugins are shown at once, the oldest leaving first, and a stopped plugin's notifications leave with it. Notes are drawn while the menu is closed. Main instance only.
 
 ## Drawing over the world
 

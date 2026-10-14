@@ -130,6 +130,7 @@ mod tests {
             Permission::DrawWorld,
             Permission::MessagesSend,
             Permission::ClipboardWrite,
+            Permission::Notifications,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

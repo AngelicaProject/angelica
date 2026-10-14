@@ -116,6 +116,10 @@ impl Hello {
     }
 
     fn click(&mut self, id: &str) {
+        if let Some(text) = around_lens(id) {
+            self.say(text);
+            return;
+        }
         match id {
             "click" => {
                 self.clicks += 1;
@@ -159,9 +163,6 @@ impl Hello {
                 let text = self.used_text();
                 self.say(text);
             }
-            "mark" => self.say(mark_where_i_am()),
-            "ping" => self.say(ping_myself()),
-            "copy" => self.say(copy_greeting()),
             "yes" => self.say(answer_yes()),
             "quiet" => {
                 if self.quiet.take().is_some() {
@@ -263,20 +264,37 @@ fn replace_texture() -> String {
     }
 }
 
-/// Sends a message to the example itself; a plugin lists the others it
-/// talks to.
-fn ping_myself() -> String {
-    match angelica_sdk::messages::send("hello", "ping", b"ping") {
-        Ok(_) => "ping sent".to_owned(),
-        Err(error) => format!("cannot send: {}", error.message),
+/// What the buttons of the host's services beside Lens say: drawing,
+/// messages, the clipboard, and notifications.
+fn around_lens(id: &str) -> Option<String> {
+    match id {
+        "mark" => Some(mark_where_i_am()),
+        // The example sends to itself; a plugin lists the others it talks to.
+        "ping" => Some(said(
+            angelica_sdk::messages::send("hello", "ping", b"ping"),
+            "ping sent",
+            "cannot send",
+        )),
+        "copy" => Some(said(
+            angelica_sdk::clipboard::copy("Hello from Angelica"),
+            "copied",
+            "cannot copy",
+        )),
+        "notify" => Some(said(
+            angelica_sdk::notifications::show("Hello from Angelica"),
+            "notified",
+            "cannot notify",
+        )),
+        _ => None,
     }
 }
 
-/// Puts a greeting on the clipboard, for the player's click.
-fn copy_greeting() -> String {
-    match angelica_sdk::clipboard::copy("Hello from Angelica") {
-        Ok(()) => "copied".to_owned(),
-        Err(error) => format!("cannot copy: {}", error.message),
+/// The line shown for an operation's result: `done`, or `failed` with the
+/// reason.
+fn said<T>(result: Result<T, angelica_sdk::Error>, done: &str, failed: &str) -> String {
+    match result {
+        Ok(_) => done.to_owned(),
+        Err(error) => format!("{failed}: {}", error.message),
     }
 }
 
@@ -570,6 +588,7 @@ impl Plugin for Hello {
                                 .button("mark", "Mark where I am")
                                 .button("ping", "Ping myself")
                                 .button("copy", "Copy a greeting")
+                                .button("notify", "Notify me")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

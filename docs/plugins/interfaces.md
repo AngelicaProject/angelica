@@ -246,6 +246,15 @@ Give the player text to paste elsewhere: a position, a link, a macro.
 - The text reaches the clipboard at the end of the frame, at most 64 KiB.
 - Contract: [clipboard](../formats/plugin-api-v1.md#clipboard).
 
+## Notifying the player
+
+Tell the player something happened: a duty is ready, a timer ran out.
+
+- SDK: `notifications::show("The duty is ready")?`, or `notifications::alert(...)` to also flash the game on the taskbar while the player is in another window.
+- Permission: `notifications`. Instance: main.
+- One line of at most 200 characters, at most one every 2 seconds; the host draws it under the plugin's name for 7 seconds.
+- Contract: [notifications](../formats/plugin-api-v1.md#notifications).
+
 ## Drawing over the world
 
 Mark places in the game world: a circle on the ground, a line between two places, a label above a spot.

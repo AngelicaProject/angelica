@@ -60,6 +60,9 @@ pub enum Permission {
     /// Put text on the player's clipboard for the player's action.
     #[serde(rename = "clipboard.write")]
     ClipboardWrite,
+    /// Show notifications at the top right of the screen.
+    #[serde(rename = "notifications")]
+    Notifications,
 }
 
 impl Permission {
@@ -79,6 +82,7 @@ impl Permission {
             Self::DrawWorld => "draw.world",
             Self::MessagesSend => "messages.send",
             Self::ClipboardWrite => "clipboard.write",
+            Self::Notifications => "notifications",
         }
     }
 
@@ -99,6 +103,7 @@ impl Permission {
             Self::DrawWorld => "Draws marks, lines, and text over the game world",
             Self::MessagesSend => "Sends messages to these plugins",
             Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
+            Self::Notifications => "Shows notifications and flashes the game on the taskbar",
         }
     }
 
@@ -114,9 +119,11 @@ impl Permission {
             | Self::GameUiHide
             | Self::GameUiText
             | Self::DrawWorld => Class::WhatYouSee,
-            Self::ChatCommands | Self::ChatPrint | Self::MessagesSend | Self::ClipboardWrite => {
-                Class::YoursOnly
-            }
+            Self::ChatCommands
+            | Self::ChatPrint
+            | Self::MessagesSend
+            | Self::ClipboardWrite
+            | Self::Notifications => Class::YoursOnly,
         }
     }
 }
