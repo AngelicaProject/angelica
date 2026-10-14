@@ -1306,6 +1306,9 @@ impl Menu {
         if *asked == Asked::Permission(Permission::HttpGet) {
             let hosts: Vec<String> = plugin.manifest.http_hosts().into_iter().collect();
             format!("{text}: {}", hosts.join(", "))
+        } else if *asked == Asked::Permission(Permission::MessagesSend) {
+            let receivers: Vec<String> = plugin.manifest.message_to().into_iter().collect();
+            format!("{text}: {}", receivers.join(", "))
         } else {
             text
         }

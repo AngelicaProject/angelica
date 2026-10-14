@@ -13,7 +13,7 @@
 //! }
 //! ```
 use crate::api::events as api;
-pub use api::{ChatMessage, EventKind, GameEvent, WatchDropped, Watched};
+pub use api::{ChatMessage, EventKind, GameEvent, PluginMessage, WatchDropped, Watched};
 
 /// Replaces the plugin's subscriptions; an empty slice ends them.
 ///

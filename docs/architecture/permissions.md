@@ -16,6 +16,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | other players | Reads the messages in your chat log, including other players' |
 | `gameui.hide` | keeping named elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) hidden | what you see | Hides parts of the game's interface |
 | `gameui.text` | putting text in named text elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) | what you see | Puts its own text in the game's windows |
+| `messages.send` | sending [messages](../formats/plugin-api-v1.md#messages-between-plugins) to the plugins the manifest lists in `messages.to`; answering a message needs nothing | only for you | Sends messages to these plugins, followed by the list |
 | `draw.world` | [drawing](../formats/plugin-api-v1.md#drawing-over-the-world) marks, lines, and text over the game world | what you see | Draws marks, lines, and text over the game world |
 
 ## Domains of the game map

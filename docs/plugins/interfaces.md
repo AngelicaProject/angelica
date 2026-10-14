@@ -228,6 +228,15 @@ Fetch data from the plugin's own servers, and send data to them.
 - Data from the internet is untrusted: parse it in the job and handle malformed input as an error.
 - Contract: [HTTP](../formats/plugin-api-v1.md#http).
 
+## Talking to other plugins
+
+Exchange data with another plugin, such as asking an appearance plugin for a character's state.
+
+- SDK: `messages::send("glamourer", "state", &payload)?`; the answer arrives in `Plugin::game_event` as `GameEvent::Message` with `in_reply_to` set. Answer a message with `messages::reply(&message, &payload)?`.
+- Permission: `messages.send`, with each plugin listed in the manifest's `[messages] to = ["glamourer"]`; answering needs none. Instance: main.
+- Delivery is in the next frame, never inside the sender's call. Agree on names and payloads with the other plugin's author, and treat a payload as untrusted input.
+- Contract: [messages](../formats/plugin-api-v1.md#messages-between-plugins).
+
 ## Drawing over the world
 
 Mark places in the game world: a circle on the ground, a line between two places, a label above a spot.

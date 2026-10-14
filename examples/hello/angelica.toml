@@ -19,9 +19,13 @@ authors = ["AngelicaProject contributors"]
 "gameui.hide" = true
 "gameui.text" = true
 "draw.world" = true
+"messages.send" = true
 
 [http]
 hosts = ["example.com"]
+
+[messages]
+to = ["hello"]
 
 [lens]
 read = ["actions", "character", "location", "statuses", "windows"]

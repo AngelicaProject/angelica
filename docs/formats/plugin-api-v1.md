@@ -24,6 +24,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
 | `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
+| `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -133,6 +134,7 @@ When the game reaches the event's point, the host reads the rows at once, on the
 `events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.
 
 - `watched` and `watch-dropped`: the firings of a [Lens watch](#lens), delivered without a subscription, after the subscribed events of the frame.
+- `message` and `messages-dropped`: [messages](#messages-between-plugins) from other plugins, delivered without a subscription, after the watches' firings.
 - `chat-message` (`chat.read`): a message the game added to the chat log, whatever the channel, with its kind (a row of the LogKind sheet), the game's full log information, the sender's name and the message as game text of at most 8192 bytes each, and the time in seconds since 1970. Messages printed by Angelica's plugins are not delivered, so a plugin that answers messages never hears itself.
 
 The host keeps at most 256 events between two frames, for all plugins together; when more arrive, every subscribed plugin first receives `dropped` with how many were left out. A subscription ends when the plugin stops. Subscribing to a kind whose map entries the game build lacks returns `unavailable`.
@@ -192,6 +194,12 @@ Before anything is sent, the host checks the request: an absolute `https://` URL
 The same rules hold for every connection, including each of at most 5 redirects: the scheme is `https`, the port 443, and the host a listed one. A request goes through the proxy Windows uses for its URL, as the browser's do: the player's proxy settings, with automatic detection and a configuration script, or the manual proxy and its bypass list; it tunnels with `CONNECT`, and the proxy resolves the host. Without a proxy, the host name is resolved by the system, the `hosts` file included, and only public addresses, this computer's (`127.0.0.0/8`, `::1`), and the range VPNs hand out in place of real addresses (`198.18.0.0/15`) are used; a name that resolves only to private, shared, link-local, multicast, documentation, or reserved addresses is refused with `permission-denied`, so a plugin cannot reach the player's home network. TLS is the operating system's, with its certificate store and TLS 1.2 or later; a certificate the system does not trust for the requested host fails the request, so a service on the player's computer or network that holds no certificate for a listed host never receives a request, through a proxy or not.
 
 `get` returns the final response's status, headers (names in lower case), and body, at most 16 MiB, within 60 seconds. `download` writes a 2xx response's body to a file in the plugin's storage, at most 1 GiB and within the storage quota, within 15 minutes; the file is replaced only when the whole body arrived, and another status leaves it as it was. `send` sends a body of at most 16 MiB with the method, none with `DELETE`, and returns the response as `get` does, within 60 seconds. Any status is a response, not an error. A request that does not complete — the name does not resolve, the connection or TLS fails, the time runs out, the job is cancelled — returns `network`; a body over its limit returns `limit-exceeded`. Resolution and connection each take at most 15 seconds, and the response's head arrives within 30.
+
+## Messages between plugins
+
+`messages.send` sends a payload of at most 1 MiB under a name of 1 to 64 ASCII letters, digits, dots, underscores, and hyphens to another plugin, and returns the message's id. In the next frame the receiver gets it in `on-game-event` as `message`, with the sender's plugin id, the name, the payload, and the id; it keeps at most 256 messages between two frames and is told how many more were left out with `messages-dropped`. No plugin runs another's code: each reads its messages in its own calls, and what a payload means is between the two plugins.
+
+A plugin sends to the plugins its manifest lists in `[messages] to`, which the player approves with `messages.send`; another receiver is `permission-denied`. Any plugin answers a message it received by naming it in `in-reply-to`: the answer goes to the message's sender, listed or not, and needs no permission; naming a message the plugin did not receive from that plugin is `invalid-argument`. A receiver that does not run is `unavailable`. Main instance only.
 
 ## Drawing over the world
 

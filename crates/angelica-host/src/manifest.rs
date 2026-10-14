@@ -54,6 +54,9 @@ pub enum Permission {
     /// Draw marks, lines, and text over the game world.
     #[serde(rename = "draw.world")]
     DrawWorld,
+    /// Send messages to the plugins the manifest lists.
+    #[serde(rename = "messages.send")]
+    MessagesSend,
 }
 
 impl Permission {
@@ -71,6 +74,7 @@ impl Permission {
             Self::GameUiHide => "gameui.hide",
             Self::GameUiText => "gameui.text",
             Self::DrawWorld => "draw.world",
+            Self::MessagesSend => "messages.send",
         }
     }
 
@@ -89,6 +93,7 @@ impl Permission {
             Self::GameUiHide => "Hides parts of the game's interface",
             Self::GameUiText => "Puts its own text in the game's windows",
             Self::DrawWorld => "Draws marks, lines, and text over the game world",
+            Self::MessagesSend => "Sends messages to these plugins",
         }
     }
 
@@ -104,7 +109,7 @@ impl Permission {
             | Self::GameUiHide
             | Self::GameUiText
             | Self::DrawWorld => Class::WhatYouSee,
-            Self::ChatCommands | Self::ChatPrint => Class::YoursOnly,
+            Self::ChatCommands | Self::ChatPrint | Self::MessagesSend => Class::YoursOnly,
         }
     }
 }
@@ -309,6 +314,12 @@ pub fn requests(
                             granted.is_none_or(|grants| !grants.http_hosts.contains(host))
                         })
                         .collect()
+                } else if *permission == Permission::MessagesSend {
+                    manifest
+                        .message_to()
+                        .into_iter()
+                        .filter(|to| granted.is_none_or(|grants| !grants.message_to.contains(to)))
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -374,6 +385,13 @@ pub struct Http {
     pub hosts: Vec<String>,
 }
 
+/// The plugins `messages.send` reaches.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessagesTo {
+    pub to: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -383,6 +401,8 @@ pub struct Manifest {
     permissions: toml::Table,
     #[serde(default)]
     http: Option<Http>,
+    #[serde(default)]
+    messages: Option<MessagesTo>,
     #[serde(default)]
     lens: Option<Lens>,
     #[serde(skip)]
@@ -485,6 +505,25 @@ impl Manifest {
         if declared.contains(&Permission::HttpSend) && !declared.contains(&Permission::HttpGet) {
             return fail("http.send comes with http.get and its http.hosts".into());
         }
+        let receivers = manifest
+            .messages
+            .as_ref()
+            .map_or(&[][..], |messages| &messages.to[..]);
+        if declared.contains(&Permission::MessagesSend) == receivers.is_empty() {
+            return fail("messages.send and a non-empty messages.to come together".into());
+        }
+        if receivers.len() > MAX_HOSTS {
+            return fail(format!("messages.to lists at most {MAX_HOSTS} plugins"));
+        }
+        let mut listed = BTreeSet::new();
+        for receiver in receivers {
+            if !valid_id(receiver) {
+                return fail(format!("messages.to: {receiver:?} is not a plugin id"));
+            }
+            if !listed.insert(receiver) {
+                return fail(format!("messages.to lists {receiver} twice"));
+            }
+        }
         if hosts.len() > MAX_HOSTS {
             return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
         }
@@ -511,6 +550,15 @@ impl Manifest {
         self.http
             .iter()
             .flat_map(|http| http.hosts.iter().cloned())
+            .collect()
+    }
+
+    /// The plugins `messages.send` reaches, as the manifest lists them.
+    #[must_use]
+    pub fn message_to(&self) -> BTreeSet<String> {
+        self.messages
+            .iter()
+            .flat_map(|messages| messages.to.iter().cloned())
             .collect()
     }
 
@@ -589,6 +637,9 @@ pub struct Grants {
     /// The hosts approved for `http.get`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub http_hosts: BTreeSet<String>,
+    /// The plugins approved for `messages.send`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub message_to: BTreeSet<String>,
     /// The domains of the game map approved for reading through Lens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub lens_read: BTreeSet<String>,
@@ -609,6 +660,7 @@ impl Grants {
             plugin_id: manifest.id().into(),
             permissions: manifest.permissions().clone(),
             http_hosts: manifest.http_hosts(),
+            message_to: manifest.message_to(),
             lens_read: grantable(manifest, domains)
                 .into_iter()
                 .map(|domain| domain.name)
@@ -632,6 +684,7 @@ impl Grants {
             && self.plugin_id == manifest.id()
             && manifest.permissions().is_subset(&self.permissions)
             && manifest.http_hosts().is_subset(&self.http_hosts)
+            && manifest.message_to().is_subset(&self.message_to)
             && grantable(manifest, domains)
                 .iter()
                 .all(|domain| self.lens_read.contains(&domain.name))

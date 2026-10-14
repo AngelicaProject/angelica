@@ -160,6 +160,11 @@ impl Hello {
                 self.say(text);
             }
             "mark" => self.say(mark_where_i_am()),
+            // The example sends to itself; a plugin lists the others it talks to.
+            "ping" => match angelica_sdk::messages::send("hello", "ping", b"ping") {
+                Ok(_) => self.say("ping sent"),
+                Err(error) => self.say(format!("cannot send: {}", error.message)),
+            },
             "yes" => self.say(answer_yes()),
             "quiet" => {
                 if self.quiet.take().is_some() {
@@ -549,6 +554,7 @@ impl Plugin for Hello {
                                 .button("zoom", "Zoom out further")
                                 .button("yes", "Say yes")
                                 .button("mark", "Mark where I am")
+                                .button("ping", "Ping myself")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {
@@ -626,6 +632,17 @@ impl Plugin for Hello {
                 .and_then(lens::Value::unsigned)
                 .unwrap_or(0);
             self.last_used = Some(format!("{kind} {action} on {target:#x}"));
+        }
+        if let GameEvent::Message(message) = &event {
+            if message.in_reply_to.is_some() {
+                self.say(format!(
+                    "{} answered {}",
+                    message.sender,
+                    String::from_utf8_lossy(&message.payload)
+                ));
+            } else if let Err(error) = angelica_sdk::messages::reply(message, b"pong") {
+                self.say(format!("cannot answer: {}", error.message));
+            }
         }
         if let GameEvent::ChatMessage(message) = event {
             self.heard = Some(format!(

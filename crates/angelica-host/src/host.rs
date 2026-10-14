@@ -508,24 +508,14 @@ impl Host {
                 .intersection(&grants.permissions)
                 .copied()
                 .collect(),
-            lens_read: plugin
-                .manifest
-                .lens_read()
-                .intersection(&grants.lens_read)
-                .cloned()
-                .collect(),
-            lens_act: plugin
-                .manifest
-                .lens_act()
-                .intersection(&grants.lens_act)
-                .cloned()
-                .collect(),
-            lens_change: plugin
-                .manifest
-                .lens_change()
-                .intersection(&grants.lens_change)
-                .cloned()
-                .collect(),
+            lens_read: held(plugin.manifest.lens_read(), &grants.lens_read),
+            lens_act: held(plugin.manifest.lens_act(), &grants.lens_act),
+            lens_change: held(plugin.manifest.lens_change(), &grants.lens_change),
+            message_to: if grants.permissions.contains(&Permission::MessagesSend) {
+                held(plugin.manifest.message_to(), &grants.message_to)
+            } else {
+                std::collections::BTreeSet::new()
+            },
             memory_bytes: plugin
                 .manifest
                 .plugin
@@ -566,6 +556,7 @@ impl Host {
         });
         match result {
             Ok(bindings) => {
+                self.services.messages.started(&id);
                 *plugin.jobs.lock().unwrap_or_else(PoisonError::into_inner) = Some(jobs);
                 *plugin
                     .running
@@ -636,6 +627,7 @@ impl Host {
         self.services.lens.acting.remove_plugin(id);
         self.services.lens.decisions.remove_plugin(id);
         self.services.draw.remove_plugin(id);
+        self.services.messages.remove_plugin(id);
         self.services
             .lens
             .changes
@@ -803,6 +795,41 @@ impl Host {
         }
     }
 
+    /// The messages other plugins sent the plugin since the last frame,
+    /// delivered to `on-game-event`; the reason to fault it, if any.
+    fn deliver_messages(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use sandbox::bindings::angelica::plugin::events::{GameEvent, PluginMessage};
+        let (messages, dropped) = self.services.messages.take(id);
+        let mut calls = Vec::new();
+        if dropped > 0 {
+            calls.push(GameEvent::MessagesDropped(dropped));
+        }
+        calls.extend(messages.into_iter().map(|message| {
+            GameEvent::Message(PluginMessage {
+                id: message.id,
+                sender: message.from,
+                name: message.name,
+                payload: message.payload,
+                in_reply_to: message.in_reply_to,
+            })
+        }));
+        for event in &calls {
+            if let Err(trap) = sandbox::call(store, |store| guest.call_on_game_event(store, event))
+            {
+                return Some(format!(
+                    "on-game-event trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        None
+    }
+
     /// What the plugin's watches received since the last frame, delivered to
     /// `on-game-event`; the reason to fault it, if any.
     fn deliver_watched(
@@ -915,6 +942,9 @@ impl Host {
             }
         }
         if let Some(fault) = self.deliver_watched(id, guest, store) {
+            return Some(fault);
+        }
+        if let Some(fault) = self.deliver_messages(id, guest, store) {
             return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {
@@ -1093,4 +1123,15 @@ fn write_json(directory: &Path, id: &str, value: &impl Serialize) -> Result<(), 
         .and_then(|()| std::fs::write(&temporary, bytes))
         .and_then(|()| std::fs::rename(&temporary, &path))
         .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// What a manifest lists that the player granted.
+fn held(
+    listed: std::collections::BTreeSet<String>,
+    granted: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    listed
+        .into_iter()
+        .filter(|name| granted.contains(name))
+        .collect()
 }

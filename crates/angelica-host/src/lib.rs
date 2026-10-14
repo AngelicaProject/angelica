@@ -32,6 +32,7 @@ pub mod lens;
 pub mod look;
 pub mod manifest;
 pub mod menu;
+pub mod messages;
 #[cfg(test)]
 mod mutations;
 pub mod package;

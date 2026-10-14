@@ -163,6 +163,8 @@ pub struct Services {
     pub ui: Arc<crate::game_ui::GameUi>,
     /// What plugins draw over the game world.
     pub draw: Arc<crate::draw::Drawings>,
+    /// Messages between plugins.
+    pub messages: Arc<crate::messages::Messages>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -237,6 +239,8 @@ pub struct Context {
     pub lens_act: BTreeSet<String>,
     /// The domains it may change through Lens.
     pub lens_change: BTreeSet<String>,
+    /// The plugins it may send messages to.
+    pub message_to: BTreeSet<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -1378,6 +1382,35 @@ impl api::lens::Host for State {
             Some(HeldKind::Rule) => lens.decisions.remove(&self.context.id, query),
             Some(HeldKind::Query) | None => {}
         }
+    }
+}
+
+impl api::messages::Host for State {
+    fn send(
+        &mut self,
+        to: String,
+        name: String,
+        payload: Vec<u8>,
+        in_reply_to: Option<u32>,
+    ) -> ApiResult<u32> {
+        api(self.main_only())?;
+        if in_reply_to.is_none() {
+            api(self.permitted(Permission::MessagesSend))?;
+        }
+        let context = self.context.clone();
+        self.host(|_| {
+            context.services.messages.send(
+                &context.id,
+                crate::messages::Outgoing {
+                    to: &to,
+                    name: &name,
+                    payload,
+                    in_reply_to,
+                },
+                &|receiver| context.message_to.contains(receiver),
+            )
+        })
+        .map_err(Into::into)
     }
 }
 

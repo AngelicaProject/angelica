@@ -268,6 +268,7 @@ impl Language {
                 Permission::GameUiHide => "Скрывает части интерфейса игры",
                 Permission::GameUiText => "Вписывает свой текст в окна игры",
                 Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
+                Permission::MessagesSend => "Отправляет сообщения этим плагинам",
             },
         }
     }
@@ -428,6 +429,7 @@ mod tests {
             Permission::GameUiHide,
             Permission::GameUiText,
             Permission::DrawWorld,
+            Permission::MessagesSend,
         ];
         for permission in permissions {
             assert_ne!(

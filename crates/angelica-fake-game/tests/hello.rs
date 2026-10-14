@@ -1092,6 +1092,23 @@ fn without_lens() -> String {
 }
 
 #[test]
+fn a_message_is_delivered_and_answered_in_the_next_frames() {
+    let test = approved(MANIFEST);
+    click(&test, "ping");
+    assert_eq!(message(&test), "ping sent");
+    test.frames(1);
+    test.frames(1);
+    assert_eq!(message(&test), "hello answered pong");
+
+    let test = approved(&MANIFEST.replace("to = [\"hello\"]", "to = [\"other\"]"));
+    click(&test, "ping");
+    assert_eq!(
+        message(&test),
+        "cannot send: hello is not a plugin the manifest lists in [messages] to"
+    );
+}
+
+#[test]
 fn a_mark_is_drawn_around_the_character() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);

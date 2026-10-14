@@ -128,6 +128,7 @@ mod tests {
             Permission::GameUiHide,
             Permission::GameUiText,
             Permission::DrawWorld,
+            Permission::MessagesSend,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

@@ -54,5 +54,6 @@ world plugin {
     import events;
     import game-ui;
     import draw;
+    import messages;
     export guest;
 }

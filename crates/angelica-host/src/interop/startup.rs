@@ -343,6 +343,7 @@ fn services(
         events,
         ui,
         draw: Arc::new(crate::draw::Drawings::default()),
+        messages: Arc::new(crate::messages::Messages::default()),
         game,
         starting: AtomicBool::new(false),
         russian: AtomicBool::new(false),

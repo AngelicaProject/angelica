@@ -40,6 +40,19 @@ interface events {
         rows: list<row>,
     }
 
+    /// A message another plugin sent this one; see the `messages`
+    /// interface.
+    record plugin-message {
+        /// The message's id, which a reply names.
+        id: u32,
+        /// The sending plugin's id.
+        sender: string,
+        name: string,
+        payload: list<u8>,
+        /// The id of this plugin's message it answers.
+        in-reply-to: option<u32>,
+    }
+
     /// Firings of a watched event left out since the last delivery.
     record watch-dropped {
         query: u32,
@@ -52,6 +65,11 @@ interface events {
         /// subscription.
         watched(watched),
         watch-dropped(watch-dropped),
+        /// A message from another plugin; needs no subscription.
+        message(plugin-message),
+        /// The host kept at most 256 messages for the plugin between two
+        /// frames; this many more were left out.
+        messages-dropped(u32),
         /// The host kept at most 256 events between two frames; this many
         /// more were left out since the last delivery.
         dropped(u32),
