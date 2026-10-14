@@ -1,5 +1,5 @@
 ---
-order: 2
+order: 3
 section: Build
 kicker: Get started
 meta: About 5 minutes · Angelica installed · The game

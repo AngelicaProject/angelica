@@ -376,7 +376,7 @@ footer .big span:hover { color: var(--red); }
 <header class="hero" data-pace="1.7" data-ideas='${JSON.stringify(ideas)}'>
   <div class="grid"></div>${lily("hero", [0.184, 0.435, 0.62], [0.659, 0.263, 0.184], true)}<div class="ground"></div>
   <div class="card"><div class="cardtop"><span class="kicker">Tell your coding agent</span><button class="copy" type="button">Copy prompt</button></div>
-    <p class="pre">Read angelicaproject.github.io/angelica/llms.txt, then build an Angelica plugin that</p>
+    <p class="pre">Read angelicaproject.github.io/angelica/agent.md and follow it to build an Angelica plugin that</p>
     <p class="idea"><span class="field" contenteditable="plaintext-only" spellcheck="false" role="textbox" aria-label="What your plugin does"></span><i class="caret"></i></p></div>
   <div class="mid">
     <h1 class="word">angelica</h1>
@@ -417,7 +417,7 @@ footer .big span:hover { color: var(--red); }
     <div><span>01</span><h3>Describe</h3><p>Write what the plugin does, in your own words. What it reads, what it changes, how you use it.</p></div>
     <div><span>02</span><h3>Build</h3><p>The agent finds the interfaces, writes the plugin, and tests it against a scripted game. No game client needed.</p></div>
     <div class="yours"><span>03</span><h3>Approve</h3><p>The plugin loads into the running game. It starts only after you approve what it asked for.</p>
-      <a class="more" href="first-plugin.html">Write your first plugin →</a></div>
+      <a class="more" href="agent.html">Build a plugin with an agent →</a></div>
   </div>
 </div>
 
@@ -437,7 +437,7 @@ footer .big span:hover { color: var(--red); }
     <p data-r style="--d:2">If you are reading this yourself, start with a guide. If an agent is reading for you, point it at <code>llms.txt</code>, which lists every page as plain Markdown.</p></div>
   <div class="shelves">
     <div class="shelf" data-r><span class="kicker">Players</span><h3>Play</h3><ul><li><a href="install.html">Install Angelica</a></li><li><a href="turn-on-a-plugin.html">Turn on a plugin</a></li><li><a href="patch-day.html">Patch day</a></li><li><a href="remove.html">Remove Angelica</a></li><li><a href="troubleshooting.html">When something goes wrong</a></li></ul></div>
-    <div class="shelf" data-r style="--d:1"><span class="kicker">Authors</span><h3>Build</h3><ul><li><a href="first-plugin.html">Write your first plugin</a></li><li><a href="run-in-the-game.html">Run your plugin in the game</a></li><li><a href="publish.html">Publish a plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md">Interface cards</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/api-requests.md">Request an API</a></li></ul></div>
+    <div class="shelf" data-r style="--d:1"><span class="kicker">Authors</span><h3>Build</h3><ul><li><a href="agent.html">Build a plugin with an agent</a></li><li><a href="first-plugin.html">Write your first plugin</a></li><li><a href="run-in-the-game.html">Run your plugin in the game</a></li><li><a href="publish.html">Publish a plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md">Interface cards</a></li></ul></div>
     <div class="shelf" data-r style="--d:2"><span class="kicker">Internals</span><h3>Understand</h3><ul><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/lens.md">How plugins see the game</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/game-map.md">The game map</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/permissions.md">The sandbox and permissions</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/loading.md">How Angelica loads into the game</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/development/README.md">Contribute</a></li></ul></div>
   </div>
 </section>
@@ -485,7 +485,7 @@ function flower(art, pace) {
 
 // Hero: the sentence in the card drives the lily. It types examples until the visitor writes their own.
 {
-  const PREFIX = "Read https://angelicaproject.github.io/angelica/llms.txt, then build an Angelica plugin that ";
+  const PREFIX = "Read https://angelicaproject.github.io/angelica/agent.md and follow it to build an Angelica plugin that ";
   const hero = document.querySelector(".hero"), field = hero.querySelector(".field"), copy = hero.querySelector(".copy");
   const ideas = JSON.parse(hero.dataset.ideas), pace = Number(hero.dataset.pace), want = flower(hero.querySelector(".art"), pace);
   let idea = 0, at = 0, erasing = false, timer = 0, own = false;

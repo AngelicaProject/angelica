@@ -1,5 +1,5 @@
 ---
-order: 1
+order: 2
 section: Build
 meta: About 20 minutes · No game needed · Rust
 prev: 

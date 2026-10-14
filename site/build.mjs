@@ -43,6 +43,8 @@ writeFileSync(join(dist, "llms.txt"), `# Angelica
 
 > A plugin platform for FINAL FANTASY XIV. A plugin is a Rust WebAssembly component that runs in a sandbox and can do only what the player allowed. It names entries of the game map instead of game addresses, so it keeps working across game patches.
 
+To build a plugin, follow [Build a plugin with an agent](${site}agent.md).
+
 ## Players
 
 ${listed("Play").join("\n")}

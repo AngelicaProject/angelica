@@ -1,5 +1,5 @@
 ---
-order: 3
+order: 4
 section: Build
 kicker: Get started
 meta: About 10 minutes · GitHub · The gh command
