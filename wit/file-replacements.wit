@@ -8,7 +8,9 @@ package angelica:plugin@1.0.0;
 /// font's atlas; textures (`.tex`) stay 2D, 3D, or cube as the original
 /// is, in a format the game uses, with every mip level inside the file
 /// (font textures keep the original's header and size, so only their
-/// pixels change). When the game then loads the file, it reads
+/// pixels change); materials (`.mtrl`) fill their size exactly, keep
+/// every name, constant, and sampler inside it, and use a shader package
+/// of the game's materials. When the game then loads the file, it reads
 /// the replacement. Files the game loaded before keep what it read until it
 /// loads them again; a plugin that replaces files in `start` while the game
 /// starts covers everything the game loads.

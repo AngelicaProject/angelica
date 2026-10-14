@@ -8,7 +8,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | --- | --- | --- | --- |
 | `excel.text` | activating [text tables](../formats/plugin-api-v1.md#text-tables) that replace text of the game's data sheets | what you see | Replaces text the game shows from its data sheets |
 | `text.case` | adding letters to the game's [letter case conversion](../formats/plugin-api-v1.md#letter-case) | what you see | Changes how the game capitalizes letters |
-| `files.replace` | serving [replacement game files](../formats/plugin-api-v1.md#replacement-files) of formats the host checks | what you see | Replaces game files: fonts and textures |
+| `files.replace` | serving [replacement game files](../formats/plugin-api-v1.md#replacement-files) of formats the host checks | what you see | Replaces game files: fonts, textures, and materials |
 | `chat.commands` | defining [chat commands](../formats/plugin-api-v1.md#commands) the host parses for the plugin; the game's own commands stay the game's | only for you | Adds its own chat commands |
 | `chat.print` | printing [messages](../formats/plugin-api-v1.md#chat) in the chat log, always under the plugin's name | only for you | Prints its messages in your chat log |
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the hosts the manifest lists in `http.hosts` | internet | Downloads from these internet hosts, followed by the list |

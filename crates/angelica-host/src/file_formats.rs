@@ -18,7 +18,7 @@ const FDT_MAX_GLYPHS: usize = 0x10000;
 const FDT_MAX_PAGES: u16 = 4 * 7;
 
 /// The file extensions the host can check.
-pub const FORMATS: &[&str] = &["fdt", "tex"];
+pub const FORMATS: &[&str] = &["fdt", "mtrl", "tex"];
 
 /// Checks `replacement` for the game file at `path`, whose original bytes
 /// are `original`.
@@ -33,6 +33,7 @@ pub fn check(path: &str, original: &[u8], replacement: &[u8]) -> Result<(), Stri
         }
         Some("tex") => check_texture(original, replacement),
         Some("fdt") => check_font_table(original, replacement),
+        Some("mtrl") => check_material(original, replacement),
         _ => Err(format!(
             "{path}: the host can check only these file formats: {}",
             FORMATS.join(", ")
@@ -167,6 +168,183 @@ fn check_texture(original: &[u8], replacement: &[u8]) -> Result<(), String> {
     let replacement = texture(replacement)?;
     if replacement.kind != original.kind {
         return Err("a texture stays 2D, 3D, or cube as the original is".into());
+    }
+    Ok(())
+}
+
+/// The version word of every material the game ships.
+const MATERIAL_VERSION: u32 = 0x0103_0000;
+/// The shader packages the game's materials use.
+const MATERIAL_SHADERS: [&str; 23] = [
+    "bg.shpk",
+    "bgcolorchange.shpk",
+    "bgcrestchange.shpk",
+    "bgprop.shpk",
+    "bguvscroll.shpk",
+    "character.shpk",
+    "characterglass.shpk",
+    "characterinc.shpk",
+    "characterlegacy.shpk",
+    "characterocclusion.shpk",
+    "characterreflection.shpk",
+    "characterscroll.shpk",
+    "characterstockings.shpk",
+    "charactertattoo.shpk",
+    "charactertransparency.shpk",
+    "crystal.shpk",
+    "hair.shpk",
+    "iris.shpk",
+    "lightshaft.shpk",
+    "river.shpk",
+    "skin.shpk",
+    "verticalfog.shpk",
+    "water.shpk",
+];
+
+/// What a material names, for comparing a replacement with its original.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Material {
+    shader: Vec<u8>,
+}
+
+/// Reads and checks a material: the version, a size that the header
+/// states and its sections fill exactly, strings that end inside the
+/// string table, texture paths of plain lower-case ASCII, a color table
+/// whose size its flags give (the 16-row layout or 8 by 32 values, with a
+/// dye table or without), constants inside the value list on 4-byte
+/// boundaries, and samplers that name one of the textures or none. Every
+/// material the game ships passes these checks.
+fn material(bytes: &[u8]) -> Result<Material, String> {
+    let short = || "a material ends before its sections do".to_owned();
+    if bytes.len() < 16 {
+        return Err(short());
+    }
+    let half = |at: usize| usize::from(u16_at(bytes, at));
+    if u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != MATERIAL_VERSION {
+        return Err("not a material of the game's version".into());
+    }
+    if half(4) != bytes.len() {
+        return Err(format!(
+            "a material states {} bytes and has {}",
+            half(4),
+            bytes.len()
+        ));
+    }
+    let (data_size, strings_size, shader_name) = (half(6), half(8), half(10));
+    let (textures, uv_sets, color_sets, extra) = (
+        usize::from(bytes[12]),
+        usize::from(bytes[13]),
+        usize::from(bytes[14]),
+        usize::from(bytes[15]),
+    );
+    let mut at = 16;
+    let names_at = at;
+    at += 4 * (textures + uv_sets + color_sets);
+    let strings = at;
+    at += strings_size;
+    let flags_at = at;
+    at += extra + data_size;
+    if at + 12 > bytes.len() {
+        return Err(short());
+    }
+    let string = |offset: usize| -> Result<&[u8], String> {
+        let table = &bytes[strings..strings + strings_size];
+        let rest = table
+            .get(offset..)
+            .filter(|rest| !rest.is_empty())
+            .ok_or("a name starts outside the string table")?;
+        let end = rest
+            .iter()
+            .position(|&byte| byte == 0)
+            .ok_or("a name does not end inside the string table")?;
+        Ok(&rest[..end])
+    };
+    for index in 0..textures + uv_sets + color_sets {
+        let name = string(half(names_at + 4 * index))?;
+        let path = index < textures;
+        if path
+            && (name.is_empty()
+                || name.len() >= 260
+                || !name
+                    .iter()
+                    .all(|byte| byte.is_ascii_graphic() && !byte.is_ascii_uppercase()))
+        {
+            return Err("a texture path is 1 to 259 lower-case ASCII characters".into());
+        }
+    }
+    let shader = string(shader_name)?.to_vec();
+    // The flags are the first bytes of the extra data, as many as there are.
+    let flags = (0..extra.min(4)).fold(0usize, |flags, byte| {
+        flags | usize::from(bytes[flags_at + byte]) << (8 * byte)
+    });
+    color_tables(flags, data_size)?;
+    let (values, keys, constants, samplers) = (half(at), half(at + 2), half(at + 4), half(at + 6));
+    at += 12;
+    let constants_at = at + 8 * keys;
+    let samplers_at = constants_at + 8 * constants;
+    if samplers_at + 12 * samplers + values != bytes.len() {
+        return Err("a material's sections do not fill it exactly".into());
+    }
+    if values % 4 != 0 {
+        return Err("shader values are whole 4-byte words".into());
+    }
+    for constant in 0..constants {
+        let (offset, size) = (
+            half(constants_at + 8 * constant + 4),
+            half(constants_at + 8 * constant + 6),
+        );
+        if offset % 4 != 0 || size % 4 != 0 || offset + size > values {
+            return Err("a constant lies outside the shader values".into());
+        }
+    }
+    for sampler in 0..samplers {
+        let texture = usize::from(bytes[samplers_at + 12 * sampler + 8]);
+        if texture >= textures && texture != 0xFF {
+            return Err(format!("a sampler names texture {texture} of {textures}"));
+        }
+    }
+    Ok(Material { shader })
+}
+
+/// Checks that the color tables the flags of a material name take
+/// `data_size` bytes: none, or the table of the 16-row layout or of 8
+/// values by 32 rows, with its dye table when the flags say so.
+fn color_tables(flags: usize, data_size: usize) -> Result<(), String> {
+    if data_size == 0 {
+        return Ok(());
+    }
+    let (width, height) = ((flags >> 4) & 0xF, (flags >> 8) & 0xF);
+    let (table, dye) = match (width, height) {
+        (0, 0) => (512, 32),
+        (3, 5) => (2048, 128),
+        _ => return Err("a color table is 16 rows or 8 values by 32".into()),
+    };
+    let expected = if flags & 0x4 == 0 {
+        0
+    } else {
+        table + if flags & 0x8 == 0 { 0 } else { dye }
+    };
+    if data_size != expected {
+        return Err(format!(
+            "the color tables the flags name take {expected} bytes, not {data_size}"
+        ));
+    }
+    Ok(())
+}
+
+/// A material may change everything it names but its shader package,
+/// which stays one the game's materials use, or the original's.
+fn check_material(original: &[u8], replacement: &[u8]) -> Result<(), String> {
+    let original = material(original).map_err(|problem| format!("the original: {problem}"))?;
+    let replacement = material(replacement)?;
+    let known = MATERIAL_SHADERS
+        .iter()
+        .any(|shader| shader.as_bytes() == replacement.shader.as_slice());
+    if !known && replacement.shader != original.shader {
+        return Err(format!(
+            "{} is not a shader package the game's materials use",
+            String::from_utf8_lossy(&replacement.shader)
+        ));
     }
     Ok(())
 }
@@ -435,6 +613,111 @@ pub(crate) mod tests {
         );
     }
 
+    /// A material with one texture and sampler, the color table of the
+    /// current layout with its dye table, and a constant, using `shader`.
+    fn material_file(shader: &str) -> Vec<u8> {
+        let texture = b"chara/common/texture/skin_d.tex\0";
+        let mut strings = texture.to_vec();
+        let shader_at = u16::try_from(strings.len()).unwrap();
+        strings.extend_from_slice(shader.as_bytes());
+        strings.push(0);
+        let data = vec![0x11u8; 2048 + 128];
+        let values = [0u8; 16];
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MATERIAL_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0]); // size, filled in below
+        bytes.extend_from_slice(&u16::try_from(data.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&u16::try_from(strings.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&shader_at.to_le_bytes());
+        bytes.extend_from_slice(&[1, 0, 0, 4]);
+        bytes.extend_from_slice(&[0, 0, 0, 0x80]); // the texture's name at 0
+        bytes.extend_from_slice(&strings);
+        bytes.extend_from_slice(&0x0000_053Cu32.to_le_bytes()); // a table 8 by 32, with dyes
+        bytes.extend_from_slice(&data);
+        for value in [16u16, 1, 1, 1, 0, 0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]); // a shader key
+        bytes.extend_from_slice(&[9, 0, 0, 0, 4, 0, 8, 0]); // a constant at 4, 8 bytes
+        bytes.extend_from_slice(&[7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // a sampler of texture 0
+        bytes.extend_from_slice(&values);
+        let size = u16::try_from(bytes.len()).unwrap();
+        bytes[4..6].copy_from_slice(&size.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn materials_are_whole_and_name_what_they_have() {
+        let path = "chara/equipment/e0001/material/v0001/mt_c0101e0001_top_a.mtrl";
+        let original = material_file("character.shpk");
+        check(path, &original, &original).unwrap();
+        check(path, &original, &material_file("skin.shpk")).unwrap();
+        let refused = |replacement: &[u8], problem: &str| {
+            let error = check(path, &original, replacement).unwrap_err();
+            assert!(error.contains(problem), "{error}");
+        };
+        refused(&material_file("mine.shpk"), "not a shader package");
+        let mut version = original.clone();
+        version[2] = 4;
+        refused(&version, "version");
+        refused(&original[..original.len() - 4], "states");
+        let mut longer = original.clone();
+        longer.extend_from_slice(&[0; 4]);
+        let size = u16::try_from(longer.len()).unwrap();
+        longer[4..6].copy_from_slice(&size.to_le_bytes());
+        refused(&longer, "fill it exactly");
+        let mut name = original.clone();
+        name[16] = 200;
+        refused(&name, "outside the string table");
+        let mut upper = original.clone();
+        upper[24] = b'C';
+        refused(&upper, "lower-case");
+        // The header, one name entry, then the two strings.
+        let flags = 20 + 32 + 15;
+        let mut table = original.clone();
+        table[flags] = 0x34; // a table 8 by 32 without dyes, with the dyes' bytes
+        refused(&table, "take 2048 bytes, not 2176");
+        let mut shape = original.clone();
+        shape[flags + 1] = 0x06;
+        refused(&shape, "16 rows");
+        let constant = original.len() - 16 - 12 - 8 + 4;
+        let mut outside = original.clone();
+        outside[constant] = 12;
+        refused(&outside, "outside the shader values");
+        let sampler = original.len() - 16 - 12 + 8;
+        let mut texture = original.clone();
+        texture[sampler] = 1;
+        refused(&texture, "names texture 1 of 1");
+        texture[sampler] = 0xFF;
+        check(path, &original, &texture).unwrap();
+    }
+
+    /// Every material the installed game ships passes the checks and may
+    /// replace itself: `ANGELICA_GAME_PATH` is its `game` folder.
+    #[test]
+    #[ignore = "needs ANGELICA_GAME_PATH"]
+    fn every_material_of_the_installed_game_passes() {
+        let game = std::path::PathBuf::from(
+            std::env::var("ANGELICA_GAME_PATH").expect("ANGELICA_GAME_PATH"),
+        );
+        let data = angelica_sqpack::GameData::open(game.parent().unwrap()).unwrap();
+        let mut checked = 0;
+        for category in ["bg", "bgcommon", "chara", "common", "vfx"] {
+            data.each_file("ffxiv", category, |file| {
+                let Ok(bytes) = file else { return };
+                if !bytes.starts_with(&MATERIAL_VERSION.to_le_bytes()) {
+                    return;
+                }
+                checked += 1;
+                if let Err(problem) = check_material(&bytes, &bytes) {
+                    panic!("{category}: {problem}");
+                }
+            })
+            .unwrap();
+        }
+        assert!(checked > 50_000, "{checked}");
+    }
+
     #[test]
     fn font_textures_keep_their_header_and_size() {
         let original = texture_file(TEXTURE_2D, 0x1440, 8, 8, 1);
@@ -496,6 +779,7 @@ pub(crate) mod tests {
         let font_original = font(&[(0x41, 0, 0), (0x42, 10, 0)]);
         let font_added = font(&[(0x41, 0, 0), (0x42, 10, 0), (0xD090, 20, 9)]);
         let texture = texture_file(TEXTURE_2D, 0x3420, 64, 64, 4);
+        let material = material_file("character.shpk");
         let mut mutator = crate::mutations::Mutator::new(7);
         for _ in 0..50_000 {
             let _ = check(
@@ -511,6 +795,8 @@ pub(crate) mod tests {
             let _ = check("common/font/font1.tex", &texture, &mutator.mutate(&texture));
             let _ = check("chara/a.tex", &texture, &mutator.mutate(&texture));
             let _ = check("chara/a.tex", &mutator.mutate(&texture), &texture);
+            let _ = check("chara/a.mtrl", &material, &mutator.mutate(&material));
+            let _ = check("chara/a.mtrl", &mutator.mutate(&material), &material);
         }
     }
 }
