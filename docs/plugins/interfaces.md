@@ -223,7 +223,7 @@ Keep settings and data across game starts.
 
 Fetch data from the plugin's own servers, and send data to them.
 
-- SDK: `http::get(url)`, or `http::Request::new(url).header(..).get()`; `.download(path)` writes a large body to storage; `.header("content-type", ..).send(http::Method::Post, &body)` sends data. A response has `is_success`, `header`, `text`, and `json`.
+- SDK: `http::get(url)`, or `http::Request::new(url).header(..).get()`; `.download(path)` writes a large body to storage; `.header("content-type", ..).send(http::Method::Post, &body)` sends data, and `.upload(http::Method::Put, path)` sends a file from storage of up to 1 GiB. A response has `is_success`, `header`, `text`, and `json`.
 - Permission: `http.get`, with each host listed in the manifest's `[http] hosts`; `http.send` too for sending data. Instance: job only.
 - HTTPS only, to the listed hosts, also after redirects, through the player's proxy when Windows has one; never to the player's home network. Any status is a response; `network` means the request did not complete.
 - Data from the internet is untrusted: parse it in the job and handle malformed input as an error.

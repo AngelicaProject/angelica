@@ -79,6 +79,16 @@ impl Request {
         api::send(method, self, body)
     }
 
+    /// Sends the file at `path` in the plugin's storage, at most 1 GiB, with
+    /// `method` and returns the response, whatever its status. Called from
+    /// a job; needs `http.send`.
+    ///
+    /// # Errors
+    /// See `http.upload`.
+    pub fn upload(&self, method: Method, path: &str) -> Result<Response, crate::Error> {
+        api::upload(method, self, path)
+    }
+
     /// Sends the request and writes a 2xx body to `path`; see [`download`].
     ///
     /// # Errors

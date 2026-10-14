@@ -67,4 +67,11 @@ interface http {
     /// MiB each; the request takes at most 60 seconds. Requires
     /// `http.send`.
     send: func(method: method, request: request, body: list<u8>) -> result<response, error>;
+
+    /// Sends the file at `path` in the plugin's storage, at most 1 GiB,
+    /// with `method`, not `delete`, and its length as `content-length`,
+    /// and returns the response, whatever its status. The request may set
+    /// the headers of `send`; the body received is at most 16 MiB; the
+    /// request takes at most 15 minutes. Requires `http.send`.
+    upload: func(method: method, request: request, path: string) -> result<response, error>;
 }

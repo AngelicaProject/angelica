@@ -1101,6 +1101,15 @@ pub fn invocation_to_api(invocation: crate::commands::Invocation) -> api::comman
     }
 }
 
+fn http_method(method: api::http::Method) -> crate::http::Method {
+    match method {
+        api::http::Method::Post => crate::http::Method::Post,
+        api::http::Method::Put => crate::http::Method::Put,
+        api::http::Method::Patch => crate::http::Method::Patch,
+        api::http::Method::Delete => crate::http::Method::Delete,
+    }
+}
+
 fn http_request(request: api::http::Request) -> crate::http::Request {
     crate::http::Request {
         url: request.url,
@@ -1142,15 +1151,30 @@ impl api::http::Host for State {
     ) -> ApiResult<api::http::Response> {
         let (client, slot) = api(self.http())?;
         api(self.permitted(Permission::HttpSend))?;
-        let method = match method {
-            api::http::Method::Post => crate::http::Method::Post,
-            api::http::Method::Put => crate::http::Method::Put,
-            api::http::Method::Patch => crate::http::Method::Patch,
-            api::http::Method::Delete => crate::http::Method::Delete,
-        };
+        let method = http_method(method);
         let request = http_request(request);
         let (head, body) = self
             .host(|_| api(client.send_data(method, &request, &body, move || slot.cancelled())))?;
+        Ok(api::http::Response {
+            head: http_head(head),
+            body,
+        })
+    }
+
+    fn upload(
+        &mut self,
+        method: api::http::Method,
+        request: api::http::Request,
+        path: String,
+    ) -> ApiResult<api::http::Response> {
+        let (client, slot) = api(self.http())?;
+        api(self.permitted(Permission::HttpSend))?;
+        let method = http_method(method);
+        let request = http_request(request);
+        let (head, body) = self.host(|state| {
+            let (file, size) = api(state.context.storage.open(&path))?;
+            api(client.upload(method, &request, file, size, move || slot.cancelled()))
+        })?;
         Ok(api::http::Response {
             head: http_head(head),
             body,

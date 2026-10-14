@@ -229,6 +229,20 @@ impl Storage {
         Ok(bytes)
     }
 
+    /// The file opened for reading, and its size.
+    ///
+    /// # Errors
+    /// Fails for invalid paths and missing files.
+    pub fn open(&self, path: &str) -> Result<(fs::File, u64)> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.open(rest);
+        }
+        let location = self.resolve(path)?;
+        let size = Self::file_size(path, &location)?;
+        let file = fs::File::open(&location).map_err(|e| io(path, &e))?;
+        Ok((file, size))
+    }
+
     /// # Errors
     /// Fails for invalid paths and missing files.
     pub fn size(&self, path: &str) -> Result<u64> {

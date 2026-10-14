@@ -48,6 +48,8 @@ pub const REQUEST_HEADERS: [&str; 5] = [
 pub const SEND_HEADERS: [&str; 2] = ["authorization", "content-type"];
 /// Bytes of a body a plugin sends.
 pub const MAX_SENT: usize = 16 * 1024 * 1024;
+/// The largest file an upload sends.
+pub const MAX_UPLOAD: u64 = 1024 * 1024 * 1024;
 pub const GET_TIME: Duration = Duration::from_secs(60);
 pub const DOWNLOAD_TIME: Duration = Duration::from_mins(15);
 const CONNECT_TIME: Duration = Duration::from_secs(15);
@@ -709,6 +711,61 @@ impl Client {
         Ok((head, received))
     }
 
+    /// Sends `size` bytes of `file` with `method`, which is not `DELETE`,
+    /// with their length, within [`DOWNLOAD_TIME`], and reads the whole
+    /// response's body, at most [`MAX_BODY`].
+    ///
+    /// # Errors
+    /// See [`Client::send_data`]; a file over [`MAX_UPLOAD`] is
+    /// `limit-exceeded`.
+    pub fn upload(
+        &self,
+        method: Method,
+        request: &Request,
+        file: std::fs::File,
+        size: u64,
+        cancelled: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Result<(Head, Vec<u8>)> {
+        self.check(request, true)?;
+        if size > MAX_UPLOAD {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("an upload sends at most {MAX_UPLOAD} bytes"),
+            ));
+        }
+        let url = request.url.as_str();
+        let mut builder = match method {
+            Method::Post => self.agent.post(url),
+            Method::Put => self.agent.put(url),
+            Method::Patch => self.agent.patch(url),
+            Method::Delete => return Err(Error::invalid("DELETE sends no file")),
+        };
+        if cancelled() {
+            return Err(cancelled_error());
+        }
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let cancelled = std::sync::Arc::new(cancelled);
+        let sending = cancelled.clone();
+        let body = Sent {
+            inner: std::io::Read::take(file, size),
+            cancelled: Box::new(move || sending()),
+        };
+        let response = builder
+            .header("content-length", size.to_string())
+            .config()
+            .timeout_global(Some(DOWNLOAD_TIME))
+            .proxy(proxy_for(url))
+            .build()
+            .send(ureq::SendBody::from_owned_reader(body))
+            .map_err(failure)?;
+        let (head, mut reader) = received(response, MAX_BODY, move || cancelled());
+        let mut received = Vec::new();
+        reader.read_to_end(&mut received).map_err(read_failure)?;
+        Ok((head, received))
+    }
+
     /// Sends the request and reads the whole body, at most [`MAX_BODY`].
     ///
     /// # Errors
@@ -751,6 +808,21 @@ fn received(
         cancelled: Box::new(cancelled),
     };
     (head, reader)
+}
+
+/// A file being sent, which stops when its job is cancelled.
+struct Sent {
+    inner: std::io::Take<std::fs::File>,
+    cancelled: Box<dyn Fn() -> bool + Send>,
+}
+
+impl Read for Sent {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if (self.cancelled)() {
+            return Err(std::io::Error::other(Cancelled));
+        }
+        self.inner.read(buffer)
+    }
 }
 
 /// The body of a response.
@@ -1180,6 +1252,28 @@ mod tests {
     }
 
     #[test]
+    fn uploads_are_checked_before_anything_is_sent() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("pack.bin");
+        std::fs::write(&path, b"data").unwrap();
+        let open = || std::fs::File::open(&path).unwrap();
+        let client = client();
+        let upload = |method, url: &str, size, cancelled: bool| {
+            client
+                .upload(method, &request(url), open(), size, move || cancelled)
+                .unwrap_err()
+        };
+        let error = upload(Method::Delete, "https://example.com/", 4, false);
+        assert_eq!(error.kind, Kind::InvalidArgument);
+        let error = upload(Method::Put, "https://example.net/", 4, false);
+        assert_eq!(error.kind, Kind::PermissionDenied);
+        let error = upload(Method::Put, "https://example.com/", MAX_UPLOAD + 1, false);
+        assert_eq!(error.kind, Kind::LimitExceeded);
+        let error = upload(Method::Post, "https://example.com/", 4, true);
+        assert_eq!(error.message, "the job was cancelled");
+    }
+
+    #[test]
     fn a_cancelled_job_sends_nothing() {
         let error = client()
             .get(&request("https://example.com/"), || true)
@@ -1199,6 +1293,30 @@ mod tests {
         assert_eq!(head.status, 200);
         assert!(String::from_utf8_lossy(&body).contains("Example Domain"));
         assert!(head.headers.iter().any(|(name, _)| name == "content-type"));
+    }
+
+    /// Needs the internet: an echo service reports the body and its
+    /// length.
+    #[test]
+    #[ignore = "needs the internet"]
+    fn uploads_a_file_with_its_length_over_the_internet() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("pack.bin");
+        std::fs::write(&path, b"angelica upload").unwrap();
+        let client = Client::new(vec!["httpbin.org".into()], "p", "1.0.0");
+        let (head, body) = client
+            .upload(
+                Method::Put,
+                &request("https://httpbin.org/put"),
+                std::fs::File::open(&path).unwrap(),
+                15,
+                || false,
+            )
+            .unwrap();
+        assert_eq!(head.status, 200);
+        let echo: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(echo["data"], "angelica upload");
+        assert_eq!(echo["headers"]["Content-Length"], "15");
     }
 
     /// Needs the internet.
