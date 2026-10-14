@@ -4,7 +4,7 @@ section: Build
 kicker: Get started
 meta: About 5 minutes · Angelica installed · The game
 prev: Write your first plugin
-next: 
+next: Publish a plugin
 ---
 
 # Run your plugin in the game
