@@ -1,6 +1,6 @@
 package angelica:plugin@1.0.0;
 
-/// Lens: the game's objects, read by path.
+/// Lens: the game's objects, read by path, and the game's events watched.
 ///
 /// The game map describes the game's objects: their types and fields, the
 /// roots where paths start, and the domain each field belongs to. A query
@@ -17,8 +17,15 @@ package angelica:plugin@1.0.0;
 /// approved by the player. The language is specified in
 /// `docs/formats/plugin-api-v1.md`.
 ///
-/// Both run in the main instance, on the game's main thread between
-/// frames, and never write; jobs get `wrong-context`.
+/// A watch is a query that starts at an event of the map instead of a
+/// root, such as `action_used { kind, action }`: when the game reaches the
+/// event's point, the host reads the query's rows from the call's arguments
+/// and the objects they point to, and delivers them in the next frame as a
+/// `watched` game event.
+///
+/// Every function runs in the main instance and never writes; `prepare`
+/// and `run` run on the game's main thread between frames. Jobs get
+/// `wrong-context`.
 interface lens {
     use types.{error};
 
@@ -84,6 +91,17 @@ interface lens {
     /// returns `limit-exceeded`. An unknown handle returns `not-found`.
     run: func(query: u32) -> result<list<row>, error>;
 
-    /// Forgets a prepared query.
+    /// Checks and plans a watch: a query that starts at an event, with a
+    /// filter on the event's arguments in brackets after its name, and
+    /// starts it. The rows of each firing arrive in the next frame as a
+    /// `watched` game event with the returned handle; a firing whose filter
+    /// leaves everything out arrives as nothing. An event keeps at most its
+    /// map's rate of firings per watch between two frames; more, and
+    /// firings past 256 rows or 256 KiB of memory read, arrive counted as
+    /// `watch-dropped`. Errors as for `prepare`; `unavailable` also when the
+    /// host cannot hook the event's point in this build.
+    watch: func(query: string) -> result<prepared, error>;
+
+    /// Forgets a prepared query, and ends a watch.
     release: func(query: u32);
 }

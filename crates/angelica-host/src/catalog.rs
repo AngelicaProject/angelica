@@ -134,7 +134,7 @@ impl Catalog {
                 ["entries/", "sheets/", "types/", "enums/", "windows/"]
                     .iter()
                     .any(|folder| name.starts_with(folder))
-                    || ["domains.toml", "roots.toml"].contains(&name.as_str())
+                    || ["domains.toml", "roots.toml", "events.toml"].contains(&name.as_str())
             })
             .map(|(name, bytes)| Ok((name.clone(), text(bytes)?)))
             .collect::<Result<Vec<_>, String>>()?;

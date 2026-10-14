@@ -73,12 +73,32 @@ pub struct QueryArgs {
 
 #[derive(Debug, Args)]
 pub struct LookArgs {
-    /// The query.
-    query: String,
+    /// The query; with `--watch`, from an event; with `--dump`, a path to
+    /// objects.
+    query: Option<String>,
     /// The installation folder `angelica.json` in the game folder names.
-    #[arg(long)]
-    installation: PathBuf,
-    /// Seconds to wait for the game's answer.
+    #[arg(long, required_unless_present = "compare")]
+    installation: Option<PathBuf>,
+    /// Watch the event of the query for this many seconds and print every
+    /// firing.
+    #[arg(long, value_name = "SECONDS", conflicts_with_all = ["dump", "trace"])]
+    watch: Option<u32>,
+    /// Print this many bytes of each object the path reaches; save the
+    /// JSON with `--json` to compare it later.
+    #[arg(long, value_name = "BYTES", conflicts_with = "trace")]
+    dump: Option<u32>,
+    /// Count how many times the game's code reaches this function or
+    /// location entry of the map; repeatable.
+    #[arg(long, value_name = "ENTRY")]
+    trace: Vec<String>,
+    /// How many seconds `--trace` counts.
+    #[arg(long, default_value_t = 10)]
+    seconds: u32,
+    /// Compare two dumps saved with `--dump --json`, before and after
+    /// something happened in the game, and print the bytes that changed.
+    #[arg(long, num_args = 2, value_names = ["BEFORE", "AFTER"], conflicts_with_all = ["watch", "dump", "trace", "installation"])]
+    compare: Vec<PathBuf>,
+    /// Seconds to wait for the game's answer, after a watch or a trace.
     #[arg(long, default_value_t = 10)]
     timeout: u64,
     #[command(flatten)]
@@ -190,6 +210,28 @@ fn shape(objects: &Objects, field: &Field) -> String {
     }
 }
 
+/// What an event's argument holds, in words.
+fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
+    let field = Field {
+        name: arg.name.clone(),
+        doc: arg.doc.clone(),
+        at: String::new(),
+        shape: arg.shape.clone(),
+        domain: arg.domain.clone(),
+        forbidden: arg.forbidden,
+    };
+    let held = match &arg.shape {
+        Shape::Text(length) => format!("text of at most {length} bytes, behind a pointer"),
+        _ => shape(objects, &field),
+    };
+    match arg.source {
+        angelica_map::ArgSource::Argument(position) => format!("argument {position}, {held}"),
+        angelica_map::ArgSource::Register(register) => {
+            format!("{}, {held}", format!("{register:?}").to_lowercase())
+        }
+    }
+}
+
 /// Whether a field is in the build: `None` without one.
 fn availability(schema: Option<&Schema>, entry: &str) -> Option<Result<(), String>> {
     schema.map(|schema| schema.offset(entry).map(drop))
@@ -229,6 +271,7 @@ fn field_line(objects: &Objects, owner: &str, field: &Field, schema: Option<&Sch
 
 /// Everything in the object model whose name or description has every
 /// word.
+#[allow(clippy::too_many_lines)]
 fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
     let objects = loaded.map.objects();
     let schema = loaded.schema.as_ref();
@@ -288,6 +331,39 @@ fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
             }
         }
     }
+    for event in objects.events.values() {
+        let available = schema.and_then(|schema| schema.events.get(&event.name).cloned());
+        if matches(&[&event.name, &event.doc, &event.at]) {
+            let mut line = format!(
+                "event {} at {} [{}] {}",
+                event.name, event.at, event.domain, event.doc
+            );
+            if let Some(Err(reason)) = &available {
+                let _ = write!(line, " (absent in this build: {reason})");
+            }
+            found.push((
+                json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
+                       "available": available.as_ref().map(Result::is_ok), "reason": available.clone().and_then(Result::err)}),
+                line,
+            ));
+        }
+        for arg in event.args.values() {
+            if matches(&[&event.name, &arg.name, &arg.doc]) {
+                found.push((
+                    json!({"kind": "argument", "name": format!("{}.{}", event.name, arg.name), "doc": arg.doc,
+                           "domain": arg.domain, "shape": arg_shape(objects, arg)}),
+                    format!(
+                        "argument {}.{}: {} [{}] {}",
+                        event.name,
+                        arg.name,
+                        arg_shape(objects, arg),
+                        arg.domain,
+                        arg.doc
+                    ),
+                ));
+            }
+        }
+    }
     for found_enum in objects.enums.values() {
         let values = found_enum.values.keys().cloned().collect::<Vec<_>>();
         if matches(&[&found_enum.name, &found_enum.doc, &values.join(" ")]) {
@@ -300,6 +376,7 @@ fn search(loaded: &Loaded, words: &[String]) -> Vec<(Json, String)> {
     found
 }
 
+#[allow(clippy::too_many_lines)]
 fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
     let objects = loaded.map.objects();
     let schema = loaded.schema.as_ref();
@@ -369,6 +446,36 @@ fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
             text,
         ));
     }
+    if let Some(event) = objects.events.get(name) {
+        let available = schema.and_then(|schema| schema.events.get(name).cloned());
+        let _ = writeln!(
+            text,
+            "event {} at {} [{}], at most {} firings a frame: {}",
+            event.name, event.at, event.domain, event.rate, event.doc
+        );
+        if let Some(Err(reason)) = &available {
+            let _ = writeln!(text, "  absent in this build: {reason}");
+        }
+        let mut args = Vec::new();
+        for arg in event.args.values() {
+            let _ = writeln!(
+                text,
+                "  {}.{}: {} [{}] {}",
+                event.name,
+                arg.name,
+                arg_shape(objects, arg),
+                arg.domain,
+                arg.doc
+            );
+            args.push(json!({"name": arg.name, "doc": arg.doc, "domain": arg.domain, "shape": arg_shape(objects, arg)}));
+        }
+        return Ok((
+            json!({"kind": "event", "name": event.name, "at": event.at, "doc": event.doc, "domain": event.domain,
+                   "rate": event.rate, "available": available.as_ref().map(Result::is_ok),
+                   "reason": available.and_then(Result::err), "args": args}),
+            text,
+        ));
+    }
     if let Some(found) = objects.enums.get(name) {
         let _ = writeln!(text, "enum {}: {}", found.name, found.doc);
         for (value_name, value) in &found.values {
@@ -380,7 +487,7 @@ fn show(loaded: &Loaded, name: &str) -> Result<(Json, String), String> {
         ));
     }
     Err(format!(
-        "the game map has no root, type, domain, or enum {name}; try `angelica schema search`"
+        "the game map has no root, type, event, domain, or enum {name}; try `angelica schema search`"
     ))
 }
 
@@ -423,9 +530,14 @@ fn query(args: &QueryArgs) -> Result<(Json, String), (Json, String)> {
         .schema
         .clone()
         .unwrap_or_else(|| unchecked(&loaded.map));
-    let prepared = runtime::lens::prepare(&schema, &args.query, &|domain| {
-        permitted.as_ref().is_none_or(|read| read.contains(domain))
-    })
+    let permitted = |domain: &str| permitted.as_ref().is_none_or(|read| read.contains(domain));
+    let watch = runtime::lens::query::parse(&args.query)
+        .is_ok_and(|query| loaded.map.objects().events.contains_key(&query.root));
+    let prepared = if watch {
+        runtime::lens::prepare_watch(&schema, &args.query, &permitted)
+    } else {
+        runtime::lens::prepare(&schema, &args.query, &permitted)
+    }
     .map_err(|error| {
         let code = format!("{:?}", error.kind);
         failure(&code, error.message)
@@ -484,45 +596,9 @@ fn request_id() -> String {
     runtime::package::hex(&bytes)
 }
 
-fn look(args: &LookArgs) -> Result<(Json, String), String> {
-    use runtime::look::{REQUEST, RESPONSE, Request, Response, write_atomically};
-    let folder = args.installation.join("look");
-    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let response_path = folder.join(RESPONSE);
-    let _ = std::fs::remove_file(&response_path);
-    let request = Request {
-        format: 1,
-        id: request_id(),
-        query: args.query.clone(),
-    };
-    let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
-    write_atomically(&folder.join(REQUEST), &bytes)?;
-    let started = Instant::now();
-    let response = loop {
-        if let Ok(bytes) = std::fs::read(&response_path)
-            && let Ok(response) = serde_json::from_slice::<Response>(&bytes)
-            && response.id == request.id
-        {
-            let _ = std::fs::remove_file(&response_path);
-            break response;
-        }
-        if started.elapsed() > Duration::from_secs(args.timeout) {
-            let _ = std::fs::remove_file(folder.join(REQUEST));
-            return Err(format!(
-                "no answer in {} s: the game must be running with a development build of Angelica from {}",
-                args.timeout,
-                args.installation.display()
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    if let Some(error) = &response.error {
-        return Err(format!("{}: {}", error.kind, error.message));
-    }
-    let columns = response.columns.clone().unwrap_or_default();
-    let rows = response.rows.clone().unwrap_or_default();
-    let mut text = String::new();
-    for row in &rows {
+/// Rows as lines: positions in brackets, then `column=value`.
+fn row_lines(text: &mut String, columns: &[runtime::look::Column], rows: &[runtime::look::Row]) {
+    for row in rows {
         let indexes = row
             .indexes
             .iter()
@@ -541,8 +617,200 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
             let _ = writeln!(text, "[{indexes}] {values}");
         }
     }
-    let _ = writeln!(text, "{} rows", rows.len());
+}
+
+#[allow(clippy::too_many_lines)]
+fn look(args: &LookArgs) -> Result<(Json, String), String> {
+    use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response, write_atomically};
+    if let [before, after] = args.compare.as_slice() {
+        return compare(before, after);
+    }
+    let installation = args
+        .installation
+        .as_ref()
+        .ok_or("--installation names the installation the game runs")?;
+    let (mode, lasts) = match (&args.watch, &args.dump, args.trace.is_empty()) {
+        (Some(seconds), _, _) => (Mode::Watch, u64::from(*seconds)),
+        (None, Some(_), _) => (Mode::Dump, 0),
+        (None, None, false) => (Mode::Trace, u64::from(args.seconds)),
+        (None, None, true) => (Mode::Rows, 0),
+    };
+    let query = args.query.clone().unwrap_or_default();
+    if mode != Mode::Trace && query.is_empty() {
+        return Err("give the query".into());
+    }
+    let folder = installation.join("look");
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let response_path = folder.join(RESPONSE);
+    let _ = std::fs::remove_file(&response_path);
+    let request = Request {
+        format: 1,
+        id: request_id(),
+        mode,
+        query,
+        seconds: (mode == Mode::Watch || mode == Mode::Trace)
+            .then_some(u32::try_from(lasts).unwrap_or(u32::MAX)),
+        bytes: args.dump,
+        entries: args.trace.clone(),
+    };
+    let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
+    write_atomically(&folder.join(REQUEST), &bytes)?;
+    let started = Instant::now();
+    let wait = Duration::from_secs(args.timeout + lasts);
+    let response = loop {
+        if let Ok(bytes) = std::fs::read(&response_path)
+            && let Ok(response) = serde_json::from_slice::<Response>(&bytes)
+            && response.id == request.id
+        {
+            let _ = std::fs::remove_file(&response_path);
+            break response;
+        }
+        if started.elapsed() > wait {
+            let _ = std::fs::remove_file(folder.join(REQUEST));
+            return Err(format!(
+                "no answer in {} s: the game must be running with a development build of Angelica from {}",
+                wait.as_secs(),
+                installation.display()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    if let Some(error) = &response.error {
+        return Err(format!("{}: {}", error.kind, error.message));
+    }
+    let columns = response.columns.clone().unwrap_or_default();
+    let mut text = String::new();
+    match mode {
+        Mode::Rows => {
+            let rows = response.rows.clone().unwrap_or_default();
+            row_lines(&mut text, &columns, &rows);
+            let _ = writeln!(text, "{} rows", rows.len());
+        }
+        Mode::Watch => {
+            let firings = response.firings.clone().unwrap_or_default();
+            for (number, rows) in firings.iter().enumerate() {
+                let _ = writeln!(text, "firing {}:", number + 1);
+                row_lines(&mut text, &columns, rows);
+            }
+            let _ = writeln!(
+                text,
+                "{} firings, {} left out",
+                firings.len(),
+                response.dropped.unwrap_or(0)
+            );
+        }
+        Mode::Dump => {
+            for object in response.objects.clone().unwrap_or_default() {
+                let indexes = object
+                    .indexes
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let _ = writeln!(text, "[{indexes}] at {:#x}", object.address);
+                match &object.bytes {
+                    None => text.push_str("  unreadable\n"),
+                    Some(hex) => {
+                        for (line, chunk) in hex.as_bytes().chunks(32).enumerate() {
+                            let pairs = chunk
+                                .chunks(2)
+                                .map(|pair| String::from_utf8_lossy(pair).into_owned())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let _ = writeln!(text, "  +{:04x}  {pairs}", line * 16);
+                        }
+                    }
+                }
+            }
+        }
+        Mode::Trace => {
+            let mut calls: Vec<(String, u64)> = response
+                .calls
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            calls.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+            for (entry, count) in calls {
+                let _ = writeln!(text, "{count:>8}  {entry}");
+            }
+        }
+    }
     Ok((serde_json::to_value(&response).unwrap_or_default(), text))
+}
+
+/// The bytes that differ between two dumps, object by object.
+fn compare(before: &PathBuf, after: &PathBuf) -> Result<(Json, String), String> {
+    use runtime::look::Response;
+    let read = |path: &PathBuf| -> Result<Response, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        serde_json::from_slice::<Response>(&bytes)
+            .ok()
+            .filter(|response| response.objects.is_some())
+            .ok_or_else(|| format!("{}: not a dump saved with --dump --json", path.display()))
+    };
+    let (before, after) = (read(before)?, read(after)?);
+    let decode = |hex: &str| -> Vec<u8> {
+        hex.as_bytes()
+            .chunks(2)
+            .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+            .collect()
+    };
+    let mut text = String::new();
+    let mut changes = Vec::new();
+    for old in before.objects.unwrap_or_default() {
+        let Some(new) = after
+            .objects
+            .iter()
+            .flatten()
+            .find(|new| new.indexes == old.indexes)
+        else {
+            continue;
+        };
+        let (Some(old_bytes), Some(new_bytes)) = (&old.bytes, &new.bytes) else {
+            continue;
+        };
+        let (old_bytes, new_bytes) = (decode(old_bytes), decode(new_bytes));
+        let indexes = old
+            .indexes
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        // Runs of changed bytes, each shown once.
+        let mut offset = 0;
+        while offset < old_bytes.len().min(new_bytes.len()) {
+            if old_bytes[offset] == new_bytes[offset] {
+                offset += 1;
+                continue;
+            }
+            let start = offset;
+            while offset < old_bytes.len().min(new_bytes.len())
+                && old_bytes[offset] != new_bytes[offset]
+            {
+                offset += 1;
+            }
+            let show = |bytes: &[u8]| {
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let _ = writeln!(
+                text,
+                "[{indexes}] +{start:#06x}: {} -> {}",
+                show(&old_bytes[start..offset]),
+                show(&new_bytes[start..offset])
+            );
+            changes.push(json!({"indexes": old.indexes, "offset": start,
+                "before": show(&old_bytes[start..offset]), "after": show(&new_bytes[start..offset])}));
+        }
+    }
+    if changes.is_empty() {
+        text.push_str("nothing changed\n");
+    }
+    Ok((json!({"changes": changes}), text))
 }
 
 fn finish(result: Result<(Json, String), (Json, String)>, output: &Output) -> ExitCode {

@@ -174,6 +174,7 @@ pub struct Objects {
     pub enums: BTreeMap<String, Enum>,
     pub types: BTreeMap<String, Type>,
     pub roots: BTreeMap<String, Root>,
+    pub events: BTreeMap<String, crate::events::Event>,
 }
 
 impl Objects {
@@ -334,7 +335,7 @@ pub const MOST_TEXT: u16 = 4096;
 
 /// A lowercase letter, then lowercase letters, digits, and underscores, at
 /// most 64 bytes.
-fn is_word(word: &str) -> bool {
+pub(crate) fn is_word(word: &str) -> bool {
     word.len() <= 64
         && word.starts_with(|first: char| first.is_ascii_lowercase())
         && word
@@ -347,7 +348,7 @@ fn is_dotted(name: &str) -> bool {
     name.split('.').count() >= 2 && name.split('.').all(is_word)
 }
 
-fn not_blank(what: &str, text: &str) -> Result<(), String> {
+pub(crate) fn not_blank(what: &str, text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
         Err(format!("{what} is blank"))
     } else {
@@ -765,7 +766,7 @@ fn check_partition(
     Ok(())
 }
 
-fn is_integer(kind: ValueKind) -> bool {
+pub(crate) fn is_integer(kind: ValueKind) -> bool {
     matches!(
         kind,
         ValueKind::I8

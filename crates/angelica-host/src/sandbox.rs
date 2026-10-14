@@ -1183,8 +1183,6 @@ impl api::lens::Host for State {
     }
 
     fn run(&mut self, query: u32) -> ApiResult<Vec<api::lens::Row>> {
-        use crate::lens::Value as V;
-        use api::lens::Value;
         api(self.main_only())?;
         let context = self.context.clone();
         let permitted = |domain: &str| context.lens_read.contains(domain);
@@ -1196,36 +1194,53 @@ impl api::lens::Host for State {
                 context.services.game.query(&prepared)
             })
             .map_err(api::types::Error::from)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| api::lens::Row {
-                indexes: row.indexes,
-                values: row
-                    .values
-                    .into_iter()
-                    .map(|value| {
-                        value.map(|value| match value {
-                            V::Boolean(value) => Value::Boolean(value),
-                            V::Signed(value) => Value::Signed(value),
-                            V::Unsigned(value) => Value::Unsigned(value),
-                            V::Float(value) => Value::Float(value),
-                            V::Text(bytes) => Value::Text(bytes),
-                            V::Row { sheet, row } => {
-                                Value::Sheet(api::lens::SheetRow { sheet, row })
-                            }
-                            V::Named(name) => Value::Named(name),
-                            V::Flags { names, bits } => {
-                                Value::Flags(api::lens::FlagSet { names, bits })
-                            }
-                        })
-                    })
-                    .collect(),
+        Ok(rows.into_iter().map(row_to_api).collect())
+    }
+
+    fn watch(&mut self, query: String) -> ApiResult<api::lens::Prepared> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let services = &context.services;
+        let (handle, prepared) = self
+            .host(|state| state.queries.watch(&services.lens, &query, &permitted))
+            .map_err(api::types::Error::from)?;
+        let columns = prepared
+            .columns
+            .iter()
+            .map(|column| api::lens::Column {
+                name: column.name.clone(),
+                doc: column.doc.clone(),
             })
-            .collect())
+            .collect();
+        let started = self.host(|_| {
+            services.lens.watch(
+                &context.id,
+                handle,
+                &query,
+                context.lens_read.clone(),
+                prepared,
+                &|point, entry, address| services.game.enable_watch(point, entry, address),
+            )
+        });
+        if let Err(error) = started {
+            self.queries.release(handle);
+            return Err(error.into());
+        }
+        Ok(api::lens::Prepared {
+            query: handle,
+            columns,
+        })
     }
 
     fn release(&mut self, query: u32) {
-        self.queries.release(query);
+        if self.queries.release(query) {
+            self.context
+                .services
+                .lens
+                .watches
+                .unsubscribe(&self.context.id, query);
+        }
     }
 }
 
@@ -1254,6 +1269,32 @@ impl api::events::Host for State {
             Ok::<_, Error>(())
         })
         .map_err(Into::into)
+    }
+}
+
+/// A Lens row as the API carries it.
+#[must_use]
+pub fn row_to_api(row: crate::lens::Row) -> api::lens::Row {
+    use crate::lens::Value as V;
+    use api::lens::Value;
+    api::lens::Row {
+        indexes: row.indexes,
+        values: row
+            .values
+            .into_iter()
+            .map(|value| {
+                value.map(|value| match value {
+                    V::Boolean(value) => Value::Boolean(value),
+                    V::Signed(value) => Value::Signed(value),
+                    V::Unsigned(value) => Value::Unsigned(value),
+                    V::Float(value) => Value::Float(value),
+                    V::Text(bytes) => Value::Text(bytes),
+                    V::Row { sheet, row } => Value::Sheet(api::lens::SheetRow { sheet, row }),
+                    V::Named(name) => Value::Named(name),
+                    V::Flags { names, bits } => Value::Flags(api::lens::FlagSet { names, bits }),
+                })
+            })
+            .collect(),
     }
 }
 

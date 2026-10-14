@@ -5,7 +5,7 @@
 use super::query::{self, Filter, Literal, Op, Query, Test};
 use super::schema::{RootAt, Schema};
 use crate::error::{Error, Kind, Result};
-use angelica_map::{Field, Length, Meaning, Objects, Shape, ValueKind};
+use angelica_map::{Event, Field, Length, Meaning, Objects, Shape, ValueKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -29,9 +29,32 @@ pub struct Hop {
     pub pointer: bool,
 }
 
+/// Where a value of an event's call is when the event fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgAt {
+    /// A general-purpose register, by its position in [`super::Call`].
+    Integer(u8),
+    /// The low 64 bits of an xmm register.
+    Float(u8),
+    /// The 8 bytes at this offset from the stack pointer.
+    Stack(u32),
+}
+
+/// What a read starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Base {
+    /// The object the plan reached.
+    Object,
+    /// The object an argument of the call points to.
+    Pointer(ArgAt),
+    /// An argument of the call itself, read as the value.
+    Value(ArgAt),
+}
+
 /// How a value is read from an object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
+    pub base: Base,
     pub hops: Vec<Hop>,
     pub offset: u32,
     pub stored: Stored,
@@ -86,6 +109,8 @@ pub struct ArrayStep {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
+    /// To the object an argument of the call points to.
+    FromArg(ArgAt),
     Hop(Hop),
     Array(ArrayStep),
     /// Conditions on the object reached, which is skipped if one fails.
@@ -117,14 +142,42 @@ pub struct Column {
     pub(crate) read: Read,
 }
 
+/// Where a plan starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Start {
+    /// The object of a root.
+    Root(RootAt),
+    /// The call of an event, when it fires.
+    Event(String),
+}
+
 /// A query ready to run in the build its schema describes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prepared {
     pub columns: Vec<Column>,
     /// Every domain the query reads.
     pub domains: BTreeSet<String>,
-    pub(crate) root: RootAt,
+    pub(crate) start: Start,
     pub(crate) steps: Vec<Step>,
+}
+
+impl Prepared {
+    /// The event a watch reads from; `None` for a query.
+    #[must_use]
+    pub fn event(&self) -> Option<&str> {
+        match &self.start {
+            Start::Event(event) => Some(event),
+            Start::Root(_) => None,
+        }
+    }
+}
+
+/// What a read value is: its shape, description, domain, and qualified name.
+struct Described {
+    shape: Shape,
+    doc: String,
+    domain: String,
+    name: String,
 }
 
 struct Planner<'a> {
@@ -137,6 +190,10 @@ struct Planner<'a> {
     /// domains.
     covered: BTreeSet<String>,
     depth: usize,
+    /// Whether the query is a watch, which starts at an event.
+    watch: bool,
+    /// Whether the path may end at an object, without values to answer.
+    objects_only: bool,
 }
 
 fn not_found(message: String) -> Error {
@@ -205,7 +262,7 @@ impl<'a> Planner<'a> {
 
     /// A value reached from `type_name` by `path`: references and embedded
     /// objects, then a value or text.
-    fn value(&mut self, type_name: &str, path: &[String]) -> Result<(Read, &'a Field, String)> {
+    fn value(&mut self, type_name: &str, path: &[String]) -> Result<(Read, Described)> {
         let mut current = type_name.to_owned();
         let mut hops = Vec::new();
         for (position, name) in path.iter().enumerate() {
@@ -220,23 +277,23 @@ impl<'a> Planner<'a> {
                 (Shape::Value { kind, .. }, true) => {
                     return Ok((
                         Read {
+                            base: Base::Object,
                             hops,
                             offset,
                             stored: Stored::Value(*kind),
                         },
-                        field,
-                        format!("{owner}.{name}"),
+                        described(field, format!("{owner}.{name}")),
                     ));
                 }
                 (Shape::Text(length), true) => {
                     return Ok((
                         Read {
+                            base: Base::Object,
                             hops,
                             offset,
                             stored: Stored::Text(*length),
                         },
-                        field,
-                        format!("{owner}.{name}"),
+                        described(field, format!("{owner}.{name}")),
                     ));
                 }
                 (Shape::Ref(to), false) => {
@@ -273,8 +330,9 @@ impl<'a> Planner<'a> {
         Err(Error::invalid("a value needs a field name"))
     }
 
-    fn condition(&mut self, type_name: &str, condition: &query::Condition) -> Result<Condition> {
-        let (read, field, name) = self.value(type_name, &condition.field)?;
+    fn condition(&mut self, scope: Scope<'_>, condition: &query::Condition) -> Result<Condition> {
+        let (read, described) = self.scoped(scope, &condition.field)?;
+        let name = described.name;
         let literals = match &condition.test {
             Test::Compare(_, literal) => std::slice::from_ref(literal),
             Test::In(literals) => literals.as_slice(),
@@ -298,7 +356,7 @@ impl<'a> Planner<'a> {
                 check: Check::Text(equal, texts),
             });
         }
-        let Shape::Value { kind, meaning, .. } = &field.shape else {
+        let Shape::Value { kind, meaning, .. } = &described.shape else {
             unreachable!("value() returns values and text");
         };
         let mut numbers = Vec::new();
@@ -346,18 +404,89 @@ impl<'a> Planner<'a> {
 
     fn conditions(
         &mut self,
-        type_name: &str,
+        scope: Scope<'_>,
         conditions: &[query::Condition],
     ) -> Result<Vec<Condition>> {
         conditions
             .iter()
-            .map(|condition| self.condition(type_name, condition))
+            .map(|condition| self.condition(scope, condition))
             .collect()
     }
 
-    fn column(&mut self, type_name: &str, name: &str, path: &[String]) -> Result<Column> {
-        let (read, field, qualified) = self.value(type_name, path)?;
-        let (meaning, unit) = match &field.shape {
+    /// A value in `scope`: of a type, or of an event's call.
+    fn scoped(&mut self, scope: Scope<'_>, path: &[String]) -> Result<(Read, Described)> {
+        match scope {
+            Scope::Type(type_name) => self.value(type_name, path),
+            Scope::Event(event) => self.argument(event, path),
+        }
+    }
+
+    /// A value of an event's call: an argument, text behind one, or a
+    /// value reached through the object one points to.
+    fn argument(&mut self, event: &Event, path: &[String]) -> Result<(Read, Described)> {
+        let Some((first, rest)) = path.split_first() else {
+            return Err(Error::invalid("a value needs a field name"));
+        };
+        let Some(arg) = event.args.get(first) else {
+            let known = event.args.keys().cloned().collect::<Vec<_>>().join(", ");
+            return Err(not_found(format!(
+                "{} has no argument {first}; its arguments: {known}",
+                event.name
+            )));
+        };
+        self.depth += 1;
+        if arg.forbidden {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                format!("{}.{first} is never read by a plugin", event.name),
+            ));
+        }
+        self.domain(&arg.domain)?;
+        let at = arg_at(arg);
+        let name = format!("{}.{first}", event.name);
+        let own = || Described {
+            shape: arg.shape.clone(),
+            doc: arg.doc.clone(),
+            domain: arg.domain.clone(),
+            name: name.clone(),
+        };
+        match (&arg.shape, rest.is_empty()) {
+            (Shape::Value { kind, .. }, true) => Ok((
+                Read {
+                    base: Base::Value(at),
+                    hops: Vec::new(),
+                    offset: 0,
+                    stored: Stored::Value(*kind),
+                },
+                own(),
+            )),
+            (Shape::Text(length), true) => Ok((
+                Read {
+                    base: Base::Pointer(at),
+                    hops: Vec::new(),
+                    offset: 0,
+                    stored: Stored::Text(*length),
+                },
+                own(),
+            )),
+            (Shape::Ref(to), false) => {
+                let (mut read, described) = self.value(to, rest)?;
+                read.base = Base::Pointer(at);
+                Ok((read, described))
+            }
+            (Shape::Ref(_), true) => Err(Error::invalid(format!(
+                "{name} is an object; name its values, such as {first}.<field>"
+            ))),
+            _ => Err(Error::invalid(format!(
+                "{name} is a value, and a path goes on only through references and objects"
+            ))),
+        }
+    }
+
+    fn column(&mut self, scope: Scope<'_>, name: &str, path: &[String]) -> Result<Column> {
+        let (read, described) = self.scoped(scope, path)?;
+        let qualified = described.name.clone();
+        let (meaning, unit) = match &described.shape {
             Shape::Value { meaning, unit, .. } => {
                 let objects: &'a Objects = self.objects;
                 let names = |enum_name: &str| {
@@ -379,12 +508,12 @@ impl<'a> Planner<'a> {
         };
         Ok(Column {
             name: name.to_owned(),
-            doc: field.doc.clone(),
+            doc: described.doc,
             field: qualified,
             stored: read.stored,
             meaning,
             unit,
-            domain: field.domain.clone(),
+            domain: described.domain,
             read,
         })
     }
@@ -460,7 +589,9 @@ impl<'a> Planner<'a> {
                 }
                 (Some(*index), Vec::new())
             }
-            Some(Filter::Conditions(conditions)) => (None, self.conditions(&array.of, conditions)?),
+            Some(Filter::Conditions(conditions)) => {
+                (None, self.conditions(Scope::Type(&array.of), conditions)?)
+            }
         };
         let conditions = partition.into_iter().chain(conditions).collect();
         Ok(ArrayStep {
@@ -509,6 +640,7 @@ impl<'a> Planner<'a> {
             unreachable!("the map checks that a partition's field is an enum value");
         };
         let read = Read {
+            base: Base::Object,
             hops: Vec::new(),
             offset,
             stored: Stored::Value(*kind),
@@ -589,13 +721,164 @@ impl<'a> Planner<'a> {
         })
     }
 
+    /// The start of a watch: the event, checked, its filter, and the first
+    /// field of the path when there is one. Returns the type the path
+    /// reached, or `None` while it is still at the event.
+    fn event_start(
+        &mut self,
+        event: &'a Event,
+        query: &Query,
+        steps: &mut Vec<Step>,
+        columns: &mut Vec<Column>,
+    ) -> Result<Option<String>> {
+        self.domain(&event.domain)?;
+        if let Err(reason) = self
+            .schema
+            .events
+            .get(&event.name)
+            .cloned()
+            .unwrap_or_else(|| Err("the event is not in the schema".into()))
+        {
+            return Err(Error::new(
+                Kind::Unavailable,
+                format!(
+                    "event {} is not available in this game build: {reason}",
+                    event.name
+                ),
+            ));
+        }
+        match &query.filter {
+            None => {}
+            Some(Filter::Index(_)) => {
+                return Err(Error::invalid(format!(
+                    "{} is an event, not an array: it has no index",
+                    event.name
+                )));
+            }
+            Some(Filter::Conditions(conditions)) => {
+                let conditions = self.conditions(Scope::Event(event), conditions)?;
+                steps.push(Step::Filter(conditions));
+            }
+        }
+        let Some(segment) = query.path.first() else {
+            return Ok(None);
+        };
+        if query.path.len() == 1 && query.select.is_none() {
+            if segment.filter.is_some() {
+                return Err(Error::invalid(format!(
+                    "{}.{} is a value: it has no filter",
+                    event.name, segment.field
+                )));
+            }
+            columns.push(self.column(
+                Scope::Event(event),
+                &segment.field,
+                std::slice::from_ref(&segment.field),
+            )?);
+            return Ok(None);
+        }
+        let arg = event.args.get(&segment.field);
+        let Some(arg) = arg.filter(|arg| matches!(arg.shape, Shape::Ref(_))) else {
+            return Err(Error::invalid(format!(
+                "{}.{} is not a reference to an object: a path from an event goes on only through one",
+                event.name, segment.field
+            )));
+        };
+        let Shape::Ref(to) = &arg.shape else {
+            unreachable!("filtered above");
+        };
+        self.depth += 1;
+        self.domain(&arg.domain)?;
+        steps.push(Step::FromArg(arg_at(arg)));
+        match &segment.filter {
+            None => {}
+            Some(Filter::Index(_)) => {
+                return Err(Error::invalid(format!(
+                    "{}.{} is one object, not an array: it has no index",
+                    event.name, segment.field
+                )));
+            }
+            Some(Filter::Conditions(conditions)) => {
+                let conditions = self.conditions(Scope::Type(to), conditions)?;
+                steps.push(Step::Filter(conditions));
+            }
+        }
+        Ok(Some(to.clone()))
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn plan(&mut self, query: &Query) -> Result<Prepared> {
         let objects = self.objects;
-        let (root, at) = self.root(&query.root)?;
-        let mut current = root.r#type.clone();
         let mut steps = Vec::new();
         let mut columns = Vec::new();
-        for (position, segment) in query.path.iter().enumerate() {
+        let (start, current, skip) = if let Some(event) = objects.events.get(&query.root) {
+            if !self.watch {
+                return Err(Error::invalid(format!(
+                    "{} is an event: watch it with lens.watch",
+                    query.root
+                )));
+            }
+            let reached = self.event_start(event, query, &mut steps, &mut columns)?;
+            match reached {
+                Some(to) => (Start::Event(event.name.clone()), Some(to), 1),
+                None => (Start::Event(event.name.clone()), None, query.path.len()),
+            }
+        } else {
+            if self.watch {
+                let known = objects
+                    .events
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut message = format!("the game map has no event {}", query.root);
+                if !known.is_empty() {
+                    let _ = write!(message, "; its events: {known}");
+                }
+                return Err(not_found(message));
+            }
+            let (root, at) = self.root(&query.root)?;
+            match &query.filter {
+                None => {}
+                Some(Filter::Index(_)) => {
+                    return Err(Error::invalid(format!(
+                        "{} is one object, not an array: it has no index",
+                        root.name
+                    )));
+                }
+                Some(Filter::Conditions(conditions)) => {
+                    let conditions = self.conditions(Scope::Type(&root.r#type), conditions)?;
+                    steps.push(Step::Filter(conditions));
+                }
+            }
+            (Start::Root(at), Some(root.r#type.clone()), 0)
+        };
+        let Some(mut current) = current else {
+            // A watch whose answers are the event's own arguments.
+            let event = &objects.events[&query.root];
+            if let Some(selected) = &query.select {
+                for selected in selected {
+                    columns.push(self.column(
+                        Scope::Event(event),
+                        &selected.name,
+                        &selected.path,
+                    )?);
+                }
+            } else if columns.is_empty() {
+                let known = event.args.keys().cloned().collect::<Vec<_>>().join(", ");
+                return Err(Error::invalid(format!(
+                    "name the values to answer with in braces, such as {{ a, b }}; the arguments of {}: {known}",
+                    event.name
+                )));
+            }
+            return Ok(Prepared {
+                columns,
+                domains: std::mem::take(&mut self.domains),
+                start,
+                steps,
+            });
+        };
+        for (position, segment) in query.path.iter().enumerate().skip(skip) {
             let last = position + 1 == query.path.len();
             let (field, offset) = self.field(&current, &segment.field)?;
             let field = field.clone();
@@ -616,7 +899,7 @@ impl<'a> Planner<'a> {
                             )));
                         }
                         Some(Filter::Conditions(conditions)) => {
-                            let conditions = self.conditions(&current, conditions)?;
+                            let conditions = self.conditions(Scope::Type(&current), conditions)?;
                             steps.push(Step::Filter(conditions));
                         }
                     }
@@ -647,7 +930,7 @@ impl<'a> Planner<'a> {
                     // object holding it.
                     self.depth -= 1;
                     columns.push(self.column(
-                        &holder,
+                        Scope::Type(&holder),
                         &segment.field,
                         std::slice::from_ref(&segment.field),
                     )?);
@@ -663,10 +946,14 @@ impl<'a> Planner<'a> {
         match &query.select {
             Some(selected) => {
                 for selected in selected {
-                    columns.push(self.column(&current, &selected.name, &selected.path)?);
+                    columns.push(self.column(
+                        Scope::Type(&current),
+                        &selected.name,
+                        &selected.path,
+                    )?);
                 }
             }
-            None if columns.is_empty() => {
+            None if columns.is_empty() && !self.objects_only => {
                 let known = objects
                     .fields(&current)
                     .keys()
@@ -682,9 +969,64 @@ impl<'a> Planner<'a> {
         Ok(Prepared {
             columns,
             domains: std::mem::take(&mut self.domains),
-            root: at,
+            start,
             steps,
         })
+    }
+}
+
+/// Where a value is read in a plan: of an object of a type, or of an
+/// event's call.
+#[derive(Clone, Copy)]
+enum Scope<'s> {
+    Type(&'s str),
+    Event(&'s Event),
+}
+
+fn described(field: &Field, name: String) -> Described {
+    Described {
+        shape: field.shape.clone(),
+        doc: field.doc.clone(),
+        domain: field.domain.clone(),
+        name,
+    }
+}
+
+/// Where an event's argument is when the event fires: a function's first
+/// four arguments in `rcx`, `rdx`, `r8`, and `r9` or, for a float, `xmm0` to
+/// `xmm3`; later ones on the stack above the return address and the 32
+/// bytes kept for the first four.
+#[must_use]
+pub fn arg_at(arg: &angelica_map::Arg) -> ArgAt {
+    use angelica_map::{ArgSource, Register};
+    let float = matches!(arg.kind, ValueKind::F32 | ValueKind::F64);
+    match arg.source {
+        ArgSource::Argument(position) if position < 4 => {
+            if float {
+                ArgAt::Float(position)
+            } else {
+                ArgAt::Integer([2, 3, 7, 8][usize::from(position)])
+            }
+        }
+        ArgSource::Argument(position) => ArgAt::Stack(8 + 8 * u32::from(position)),
+        ArgSource::Register(register) => match register {
+            Register::Xmm(index) => ArgAt::Float(index),
+            Register::Rax => ArgAt::Integer(0),
+            Register::Rbx => ArgAt::Integer(1),
+            Register::Rcx => ArgAt::Integer(2),
+            Register::Rdx => ArgAt::Integer(3),
+            Register::Rsi => ArgAt::Integer(4),
+            Register::Rdi => ArgAt::Integer(5),
+            Register::Rbp => ArgAt::Integer(6),
+            Register::R8 => ArgAt::Integer(7),
+            Register::R9 => ArgAt::Integer(8),
+            Register::R10 => ArgAt::Integer(9),
+            Register::R11 => ArgAt::Integer(10),
+            Register::R12 => ArgAt::Integer(11),
+            Register::R13 => ArgAt::Integer(12),
+            Register::R14 => ArgAt::Integer(13),
+            Register::R15 => ArgAt::Integer(14),
+        },
     }
 }
 
@@ -698,6 +1040,49 @@ impl<'a> Planner<'a> {
 /// anything the running build lacks, and `limit-exceeded` for a path too
 /// deep.
 pub fn prepare(schema: &Schema, text: &str, permitted: &dyn Fn(&str) -> bool) -> Result<Prepared> {
+    plan(schema, text, permitted, false)
+}
+
+/// As [`prepare`], for a watch: a query that starts at an event of the
+/// map and is read when the event fires.
+///
+/// # Errors
+/// As for [`prepare`].
+pub fn prepare_watch(
+    schema: &Schema,
+    text: &str,
+    permitted: &dyn Fn(&str) -> bool,
+) -> Result<Prepared> {
+    plan(schema, text, permitted, true)
+}
+
+/// As [`prepare`], for a path that ends at objects: the plan reaches them
+/// and answers nothing, for looking at their memory while working on the
+/// map.
+///
+/// # Errors
+/// As for [`prepare`].
+pub fn prepare_objects(schema: &Schema, text: &str) -> Result<Prepared> {
+    let query = query::parse(text).map_err(Error::invalid)?;
+    Planner {
+        objects: &schema.objects,
+        schema,
+        permitted: &|_| true,
+        domains: BTreeSet::new(),
+        covered: BTreeSet::new(),
+        depth: 0,
+        watch: false,
+        objects_only: true,
+    }
+    .plan(&query)
+}
+
+fn plan(
+    schema: &Schema,
+    text: &str,
+    permitted: &dyn Fn(&str) -> bool,
+    watch: bool,
+) -> Result<Prepared> {
     let query = query::parse(text).map_err(Error::invalid)?;
     Planner {
         objects: &schema.objects,
@@ -706,6 +1091,8 @@ pub fn prepare(schema: &Schema, text: &str, permitted: &dyn Fn(&str) -> bool) ->
         domains: BTreeSet::new(),
         covered: BTreeSet::new(),
         depth: 0,
+        watch,
+        objects_only: false,
     }
     .plan(&query)
 }

@@ -69,4 +69,16 @@ pub trait Game: Send + Sync {
         &self,
         prepared: &crate::lens::Prepared,
     ) -> crate::error::Result<Vec<crate::lens::Row>>;
+
+    /// The game's memory, read so that an unreadable address fails instead
+    /// of faulting; for `angelica look`.
+    fn memory(&self) -> &dyn crate::lens::Memory;
+
+    /// Makes the game call [`crate::lens::Watches::fire`] with `point` at
+    /// the code of the map entry `entry`, at `address`. Called once per
+    /// watched event; the hook stays until the process exits.
+    ///
+    /// # Errors
+    /// Why the point cannot be hooked in this build.
+    fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String>;
 }

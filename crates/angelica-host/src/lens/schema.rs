@@ -23,6 +23,12 @@ pub struct Schema {
     pub offsets: BTreeMap<String, Result<u32, String>>,
     /// Every root's place, or why it is absent in this build.
     pub roots: BTreeMap<String, Result<RootAt, String>>,
+    /// The address of every event's function or location, or why it is
+    /// absent in this build.
+    pub events: BTreeMap<String, Result<u64, String>>,
+    /// The address of every `function` and `location` entry, or why it is
+    /// absent: the points `angelica look` can count the calls of.
+    pub code: BTreeMap<String, Result<u64, String>>,
 }
 
 impl Schema {
@@ -67,10 +73,41 @@ impl Schema {
                 (root.name.clone(), at)
             })
             .collect();
+        let events = objects
+            .events
+            .values()
+            .map(|event| {
+                let at = match entry(&event.at) {
+                    Ok(Value::Address(rva)) => Ok(base + u64::from(rva)),
+                    Ok(Value::Offset(_)) => Err(format!("map entry {} is not code", event.at)),
+                    Err(reason) => Err(format!("map entry {} is absent: {reason}", event.at)),
+                };
+                (event.name.clone(), at)
+            })
+            .collect();
+        let code = map
+            .entries()
+            .filter(|found| {
+                matches!(
+                    found.kind,
+                    EntryKind::Function { .. } | EntryKind::Location { .. }
+                )
+            })
+            .map(|found| {
+                let at = match entry(&found.name) {
+                    Ok(Value::Address(rva)) => Ok(base + u64::from(rva)),
+                    Ok(Value::Offset(_)) => Err("not code".to_owned()),
+                    Err(reason) => Err(reason),
+                };
+                (found.name.clone(), at)
+            })
+            .collect();
         Self {
             objects,
             offsets,
             roots,
+            events,
+            code,
         }
     }
 

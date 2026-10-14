@@ -77,6 +77,7 @@ struct Verified {
     sheets: SheetReport,
     windows: SheetReport,
     roots: ObjectReport,
+    events: ObjectReport,
     fields: ObjectReport,
     written: Option<PathBuf>,
 }
@@ -180,6 +181,11 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         .iter()
         .map(|(name, at)| (name.clone(), at.clone().map(drop)))
         .collect();
+    let events = schema
+        .events
+        .iter()
+        .map(|(name, at)| (name.clone(), at.clone().map(drop)))
+        .collect();
     let mut fields = ObjectReport::new();
     for object in map.objects().types.values() {
         for field in object.fields.values() {
@@ -205,6 +211,7 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         sheets,
         windows,
         roots,
+        events,
         fields,
         written,
     })
@@ -260,7 +267,7 @@ fn report_json(verified: &Verified) -> Json {
         "constant_offsets": record.resolution.constant_offsets(),
         "sheets": sheets,
         "windows": windows,
-        "objects": {"roots": objects(&verified.roots), "fields": objects(&verified.fields)},
+        "objects": {"roots": objects(&verified.roots), "fields": objects(&verified.fields), "events": objects(&verified.events)},
         "written": verified
             .written
             .as_ref()
@@ -299,16 +306,21 @@ fn report_text(verified: &Verified) -> String {
             }
         }
     }
-    if !verified.roots.is_empty() || !verified.fields.is_empty() {
+    if !verified.roots.is_empty() || !verified.fields.is_empty() || !verified.events.is_empty() {
         let absent = |report: &ObjectReport| report.values().filter(|found| found.is_err()).count();
         let _ = writeln!(
             text,
-            "objects: {} roots and {} fields, {} absent",
+            "objects: {} roots, {} fields, and {} events, {} absent",
             verified.roots.len(),
             verified.fields.len(),
-            absent(&verified.roots) + absent(&verified.fields)
+            verified.events.len(),
+            absent(&verified.roots) + absent(&verified.fields) + absent(&verified.events)
         );
-        for (kind, report) in [("root", &verified.roots), ("field", &verified.fields)] {
+        for (kind, report) in [
+            ("root", &verified.roots),
+            ("field", &verified.fields),
+            ("event", &verified.events),
+        ] {
             for (name, available) in report {
                 if let Err(reason) = available {
                     let _ = writeln!(text, "  absent {kind} {name}: {reason}");

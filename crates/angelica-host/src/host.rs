@@ -620,6 +620,7 @@ impl Host {
         self.services.commands.remove_plugin(id);
         self.services.chat.remove_plugin(id);
         self.services.events.remove_plugin(id);
+        self.services.lens.watches.remove_plugin(id);
         self.services.ui.remove_plugin(id);
     }
 
@@ -783,6 +784,43 @@ impl Host {
         }
     }
 
+    /// What the plugin's watches received since the last frame, delivered to
+    /// `on-game-event`; the reason to fault it, if any.
+    fn deliver_watched(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use sandbox::bindings::angelica::plugin::events::{GameEvent, WatchDropped, Watched};
+        for delivery in self.services.lens.watches.take(id) {
+            let mut calls = Vec::new();
+            if delivery.dropped > 0 {
+                calls.push(GameEvent::WatchDropped(WatchDropped {
+                    query: delivery.handle,
+                    count: delivery.dropped,
+                }));
+            }
+            calls.extend(delivery.firings.into_iter().map(|rows| {
+                GameEvent::Watched(Watched {
+                    query: delivery.handle,
+                    rows: rows.into_iter().map(sandbox::row_to_api).collect(),
+                })
+            }));
+            for event in &calls {
+                if let Err(trap) =
+                    sandbox::call(store, |store| guest.call_on_game_event(store, event))
+                {
+                    return Some(format!(
+                        "on-game-event trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// The plugin's calls of a frame; the reason to fault it, if any.
     fn frame_calls(
         &self,
@@ -856,6 +894,9 @@ impl Host {
                     ));
                 }
             }
+        }
+        if let Some(fault) = self.deliver_watched(id, guest, store) {
+            return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {
             if let Err(trap) = sandbox::call(store, |store| guest.call_ui_event(store, event)) {

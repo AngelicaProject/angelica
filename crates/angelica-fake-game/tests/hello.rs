@@ -575,7 +575,7 @@ fn jobs_fetch_from_the_listed_hosts() {
 
 /// The player's character, zone, and statuses, shaped like the game
 /// map's, with constant offsets.
-const CHARACTER_MAP: [(&str, &str); 4] = [
+const CHARACTER_MAP: [(&str, &str); 6] = [
     (
         "entries/test.toml",
         r#"
@@ -666,6 +666,11 @@ offset = 0x4
 of = "test.game_main"
 type = "u32"
 offset = 0x4108
+
+[function."test.use_action"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "u32", "u32", "u64"], ret = "bool" }
+thread = "main"
 "#,
     ),
     (
@@ -779,7 +784,38 @@ read = { en = "Sees where you are", ru = "Видит, где вы" }
 doc = "Statuses."
 class = "you"
 read = { en = "Sees your statuses", ru = "Видит ваши эффекты" }
+
+[domains.actions]
+doc = "Actions."
+class = "you"
+read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
 "#,
+    ),
+    (
+        "events.toml",
+        r#"
+[events.action_used]
+doc = "The player asked to use an action."
+at = "test.use_action"
+domain = "actions"
+
+[events.action_used.args.kind]
+doc = "The kind."
+arg = 1
+enum = "test.action_kind"
+
+[events.action_used.args.action]
+doc = "The id."
+arg = 2
+
+[events.action_used.args.target]
+doc = "The target."
+arg = 3
+"#,
+    ),
+    (
+        "enums/test.action_kind.toml",
+        "doc = \"Kinds.\"\nvalues = { action = 1, item = 2, mount = 13 }\n",
     ),
     (
         "roots.toml",
@@ -882,6 +918,57 @@ fn arrays_on_the_path_give_one_row_per_element() {
 }
 
 #[test]
+fn watched_actions_arrive_in_the_next_frame() {
+    use angelica_fake_game::{Fire, Set};
+    let test = approved(MANIFEST);
+    click(&test, "used");
+    assert_eq!(
+        message(&test),
+        "cannot watch the actions: the game map has no event action_used"
+    );
+
+    let test = with_character(MANIFEST, &[]);
+    click(&test, "used");
+    assert_eq!(message(&test), "no action used yet");
+    assert_eq!(*test.game.watched.lock().unwrap(), ["test.use_action"]);
+    let used = |kind: &str, action: u32| {
+        test.fire(
+            "action_used",
+            &[
+                ("kind", Fire::Value(Set::Name(kind.into()))),
+                ("action", action.into()),
+                ("target", Fire::Value(Set::Integer(0x1040_0001))),
+            ],
+        );
+    };
+    used("action", 7);
+    used("mount", 1);
+    test.frames(1);
+    click(&test, "used");
+    assert_eq!(
+        message(&test),
+        "used action 7 on 0x10400001",
+        "the watch's filter leaves the mount out"
+    );
+    used("item", 4551);
+    test.frames(1);
+    click(&test, "used");
+    assert_eq!(message(&test), "used item 4551 on 0x10400001");
+
+    let test = TestHost::new(Limits::default());
+    test.use_map(&CHARACTER_MAP, &[]);
+    test.game
+        .watch_available
+        .store(false, std::sync::atomic::Ordering::Release);
+    let test = approve(test, MANIFEST);
+    click(&test, "used");
+    assert_eq!(
+        message(&test),
+        "cannot watch the actions: event action_used cannot be watched: map entry test.use_action cannot be hooked in the scripted build"
+    );
+}
+
+#[test]
 fn approval_names_the_domains_in_the_maps_words() {
     let mut test = TestHost::new(Limits::default());
     test.use_map(&CHARACTER_MAP, &[]);
@@ -896,6 +983,7 @@ fn approval_names_the_domains_in_the_maps_words() {
         "Sees your character",
         "Sees where you are",
         "Sees your statuses",
+        "Sees the actions you use",
     ] {
         assert!(words.iter().any(|word| word == wording), "{words:?}");
     }
@@ -906,7 +994,7 @@ fn approval_names_the_domains_in_the_maps_words() {
     bare.install(MANIFEST, component()).unwrap();
     assert_eq!(
         bare.host.plugin("hello").unwrap().ungranted(),
-        ["character", "location", "statuses"]
+        ["actions", "character", "location", "statuses"]
     );
 }
 
@@ -1172,4 +1260,72 @@ fn rules_for_the_games_windows_need_permissions_names_and_the_game() {
         "hiding refused: map entry ui.stage is absent"
     );
     assert!(test.element("_Exp", 1).visible);
+}
+
+#[test]
+fn look_watches_dumps_and_counts_for_work_on_the_map() {
+    use angelica_fake_game::{Fire, Set};
+    use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response};
+    let test = with_character(MANIFEST, &[]);
+    test.game.set("player", &[("data.level", 90.into())]);
+    let folder = test.folder.path().join("look");
+    std::fs::create_dir_all(&folder).unwrap();
+    test.host.serve_look(folder.clone());
+    let ask = |request: &Request| {
+        std::fs::write(folder.join(REQUEST), serde_json::to_vec(request).unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        test.frames(1);
+    };
+    let answer = || {
+        serde_json::from_slice::<Response>(&std::fs::read(folder.join(RESPONSE)).unwrap()).unwrap()
+    };
+    let request = |mode: Mode, query: &str| Request {
+        format: 1,
+        id: format!("{mode:?}"),
+        mode,
+        query: query.into(),
+        seconds: Some(1),
+        bytes: Some(0x30),
+        entries: vec!["test.use_action".into()],
+    };
+
+    ask(&request(Mode::Dump, "player.data"));
+    let dumped = answer().objects.unwrap();
+    assert_eq!(dumped.len(), 1);
+    let bytes = dumped[0].bytes.as_ref().unwrap();
+    assert_eq!(&bytes[0x2B * 2..0x2C * 2], "5a", "level 90 at +0x2B");
+
+    ask(&request(Mode::Watch, "action_used { kind, action }"));
+    assert!(
+        !folder.join(RESPONSE).exists() || answer().id != "Watch",
+        "a watch lasts"
+    );
+    test.fire(
+        "action_used",
+        &[
+            ("kind", Fire::Value(Set::Name("action".into()))),
+            ("action", 7.into()),
+        ],
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    test.frames(2);
+    let watched = answer();
+    assert_eq!(watched.id, "Watch");
+    assert_eq!(
+        watched.firings.unwrap(),
+        [vec![runtime::look::Row {
+            indexes: Vec::new(),
+            values: vec![serde_json::json!("action"), serde_json::json!(7)],
+        }]]
+    );
+
+    ask(&request(Mode::Trace, ""));
+    for _ in 0..3 {
+        test.fire("action_used", &[("action", 1.into())]);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    test.frames(2);
+    let traced = answer();
+    assert_eq!(traced.id, "Trace");
+    assert_eq!(traced.calls.unwrap()["test.use_action"], 3);
 }

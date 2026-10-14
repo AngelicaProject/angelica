@@ -54,6 +54,10 @@ impl Context {
 /// unwind: a panic is caught inside it.
 pub type MidHandler = extern "C" fn(&mut Context);
 
+/// A handler that also gets the value its hook was made with, so one
+/// handler serves several hooks.
+pub type MidDataHandler = extern "C" fn(&mut Context, usize);
+
 /// The general-purpose registers in the order they are pushed; `Context`
 /// lists them in reverse.
 const PUSHED: [AsmRegister64; 15] = [
@@ -95,6 +99,46 @@ impl MidHook {
         handler: MidHandler,
         function: Option<Range<usize>>,
     ) -> Result<Self, HookError> {
+        // SAFETY: the caller's guarantees are those of `prepare`.
+        unsafe { Self::prepare(location, handler as usize as u64, None, function) }
+    }
+
+    /// As [`MidHook::new`], with a handler that is called with `data` too.
+    ///
+    /// # Errors
+    ///
+    /// As for [`crate::Detour::new`].
+    ///
+    /// # Safety
+    ///
+    /// As for [`MidHook::new`].
+    pub unsafe fn with_data(
+        location: usize,
+        handler: MidDataHandler,
+        data: usize,
+        function: Option<Range<usize>>,
+    ) -> Result<Self, HookError> {
+        // SAFETY: the caller's guarantees are those of `prepare`.
+        unsafe {
+            Self::prepare(
+                location,
+                handler as usize as u64,
+                Some(data as u64),
+                function,
+            )
+        }
+    }
+
+    /// # Safety
+    ///
+    /// As for [`MidHook::new`]; `handler` is the address of a `MidHandler`,
+    /// or with `data` of a `MidDataHandler`.
+    unsafe fn prepare(
+        location: usize,
+        handler: u64,
+        data: Option<u64>,
+        function: Option<Range<usize>>,
+    ) -> Result<Self, HookError> {
         // SAFETY: `readable_len` bounds the read to readable memory.
         let code = unsafe { read(location, readable_len(location, READ_LEN)) };
         if let Some(function) = function {
@@ -104,7 +148,7 @@ impl MidHook {
         }
 
         let stub = allocate_near(location, STUB_LEN)?;
-        let saving = save_call_restore(handler as usize as u64)
+        let saving = save_call_restore(handler, data)
             .and_then(|mut assembler| assembler.assemble(stub as u64))
             .map_err(|error| RelocateError::Encode(error.to_string()))?;
         let moved_at = stub + saving.len();
@@ -181,8 +225,9 @@ impl MidHook {
     }
 }
 
-/// Saves the context, calls the handler with it, and restores it.
-fn save_call_restore(handler: u64) -> Result<CodeAssembler, IcedError> {
+/// Saves the context, calls the handler with it (and `data` as the second
+/// argument), and restores it.
+fn save_call_restore(handler: u64, data: Option<u64>) -> Result<CodeAssembler, IcedError> {
     let mut code = CodeAssembler::new(64)?;
     for register in PUSHED {
         code.push(register)?;
@@ -195,6 +240,9 @@ fn save_call_restore(handler: u64) -> Result<CodeAssembler, IcedError> {
     // rbx keeps the context address across the call; it is restored from
     // the context afterwards.
     code.mov(rcx, rsp)?;
+    if let Some(data) = data {
+        code.mov(rdx, data)?;
+    }
     code.mov(rbx, rsp)?;
     code.and(rsp, -16)?;
     code.sub(rsp, 32)?;

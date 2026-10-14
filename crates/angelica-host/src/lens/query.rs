@@ -14,6 +14,8 @@ pub const MOST_BYTES: usize = 4096;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
     pub root: String,
+    /// Conditions on the root's object or the event's call.
+    pub filter: Option<Filter>,
     pub path: Vec<Segment>,
     /// `None` when the path ends in the one value to answer with.
     pub select: Option<Vec<Selected>>,
@@ -386,6 +388,11 @@ pub fn parse(text: &str) -> Result<Query, String> {
         end: text.len(),
     };
     let root = parser.name("a root name")?;
+    let filter = if parser.symbol("[") {
+        Some(parser.filter()?)
+    } else {
+        None
+    };
     let mut path = Vec::new();
     loop {
         if parser.symbol(".") {
@@ -397,8 +404,7 @@ pub fn parse(text: &str) -> Result<Query, String> {
             let filter = parser.filter()?;
             match path.last_mut() {
                 Some(segment) if segment.filter.is_none() => segment.filter = Some(filter),
-                Some(_) => return Err("a field has at most one filter".into()),
-                None => return Err("a filter follows a field of the root, not the root".into()),
+                Some(_) | None => return Err("a field has at most one filter".into()),
             }
         } else {
             break;
@@ -426,7 +432,12 @@ pub fn parse(text: &str) -> Result<Query, String> {
     if parser.peek().is_some() {
         return parser.fail("the end of the query");
     }
-    Ok(Query { root, path, select })
+    Ok(Query {
+        root,
+        filter,
+        path,
+        select,
+    })
 }
 
 #[cfg(test)]
@@ -501,10 +512,6 @@ mod tests {
             (
                 "inventory.",
                 "at byte 10: expected a field name, found the end",
-            ),
-            (
-                "inventory[0]",
-                "a filter follows a field of the root, not the root",
             ),
             ("a.b[0][1]", "a field has at most one filter"),
             ("a.b[x ~ 1]", "at byte 6: `~` does not belong in a query"),

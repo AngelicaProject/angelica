@@ -9,6 +9,7 @@ package angelica:plugin@1.0.0;
 /// it. Called from the main instance only.
 interface events {
     use types.{error};
+    use lens.{row};
 
     enum event-kind {
         /// A message added to the chat log. Requires `chat.read`.
@@ -32,8 +33,25 @@ interface events {
         timestamp: u32,
     }
 
+    /// One firing of a watched event: the rows of the watch's query.
+    record watched {
+        /// The handle `lens.watch` returned.
+        query: u32,
+        rows: list<row>,
+    }
+
+    /// Firings of a watched event left out since the last delivery.
+    record watch-dropped {
+        query: u32,
+        count: u32,
+    }
+
     variant game-event {
         chat-message(chat-message),
+        /// A firing of an event a `lens.watch` watches; needs no
+        /// subscription.
+        watched(watched),
+        watch-dropped(watch-dropped),
         /// The host kept at most 256 events between two frames; this many
         /// more were left out since the last delivery.
         dropped(u32),

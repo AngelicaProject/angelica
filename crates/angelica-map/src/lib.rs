@@ -6,6 +6,7 @@
 //! mapped module, so both always agree on what an entry means.
 
 mod error;
+mod events;
 mod load;
 mod model;
 mod objects;
@@ -15,6 +16,7 @@ mod sheets;
 mod windows;
 
 pub use error::MapError;
+pub use events::{Arg, Event, MOST_RATE, Register, Source as ArgSource};
 pub use load::{FORMAT, Map};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use objects::{

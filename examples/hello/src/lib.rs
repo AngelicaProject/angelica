@@ -2,7 +2,8 @@
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
 //! commands that print in the chat log, HTTPS requests from a job, the
-//! player's character read through Lens, the chat log's messages as
+//! player's character read through Lens, the actions the player uses
+//! watched through Lens, the chat log's messages as
 //! events, and rules for the game's own windows. The host's integration
 //! tests drive
 //! it through its window and its commands.
@@ -37,6 +38,10 @@ struct Hello {
     message: String,
     /// The last message the chat log received, as `sender: text`.
     heard: Option<String>,
+    /// The watch of the actions the player uses, or why there is none.
+    used: Result<lens::Watch, String>,
+    /// The last action the player used.
+    last_used: Option<String>,
     /// The selected tab of the widgets section.
     tab: u32,
     volume: f64,
@@ -108,6 +113,7 @@ impl Hello {
         self.show_clicks();
     }
 
+    #[allow(clippy::too_many_lines)] // one arm per button of the example
     fn click(&mut self, id: &str) {
         match id {
             "click" => {
@@ -183,6 +189,10 @@ impl Hello {
                     || "nothing heard yet".into(),
                     |line| format!("heard {line}"),
                 ));
+            }
+            "used" => {
+                let text = self.used_text();
+                self.say(text);
             }
             "statuses" => match statuses() {
                 Ok(text) => self.say(text),
@@ -343,6 +353,17 @@ fn write_table() -> Result<(), String> {
     Ok(files::write("example.table", &bytes)?)
 }
 
+impl Hello {
+    /// The last action the player used, or why the watch is missing.
+    fn used_text(&self) -> String {
+        match (&self.used, &self.last_used) {
+            (Err(error), _) => format!("cannot watch the actions: {error}"),
+            (Ok(_), None) => "no action used yet".into(),
+            (Ok(_), Some(used)) => format!("used {used}"),
+        }
+    }
+}
+
 impl Plugin for Hello {
     fn start() -> Result<Self, String> {
         let clicks = storage::load("clicks.json")?.unwrap_or(0);
@@ -361,6 +382,9 @@ impl Plugin for Hello {
             progress: 0.0,
             message: String::new(),
             heard: None,
+            used: lens::Watch::new("action_used[kind in (action, item)] { kind, action, target }")
+                .map_err(|error| error.message),
+            last_used: None,
             tab: 0,
             volume: 0.5,
             bar: ExperienceBar::default(),
@@ -430,6 +454,7 @@ impl Plugin for Hello {
                                 .button("where", "Who am I")
                                 .button("statuses", "My statuses")
                                 .button("heard", "Last chat message")
+                                .button("used", "Last action used")
                                 .button("texture", "Replace a texture")
                         })
                         .row(|row| {
@@ -482,6 +507,24 @@ impl Plugin for Hello {
     }
 
     fn game_event(&mut self, event: GameEvent) {
+        if let Ok(used) = &self.used
+            && let Some(rows) = used.rows(&event)
+            && let Some(row) = rows.last()
+        {
+            let kind = used
+                .get(row, "kind")
+                .and_then(lens::Value::named)
+                .unwrap_or("?");
+            let action = used
+                .get(row, "action")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or(0);
+            let target = used
+                .get(row, "target")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or(0);
+            self.last_used = Some(format!("{kind} {action} on {target:#x}"));
+        }
         if let GameEvent::ChatMessage(message) = event {
             self.heard = Some(format!(
                 "{} ({}): {}",

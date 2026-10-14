@@ -289,6 +289,10 @@ fn look_answers_a_query_from_the_command_line_between_frames() {
             format: 1,
             id: "1f".into(),
             query: query.into(),
+            mode: runtime::look::Mode::Rows,
+            seconds: None,
+            bytes: None,
+            entries: Vec::new(),
         };
         std::fs::write(folder.join(REQUEST), serde_json::to_vec(&request).unwrap()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(120));

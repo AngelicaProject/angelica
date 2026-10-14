@@ -9,7 +9,7 @@
 pub use angelica_sqpack::excel::{ColumnKind, Language};
 pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
-pub use objects::Set;
+pub use objects::{Fire, Set};
 
 mod objects;
 /// The host the tests run plugins in.
@@ -48,6 +48,10 @@ pub struct ScriptedGame {
     /// The game's objects, laid out as the game map a test named
     /// describes them ([`TestHost::use_map`]).
     objects: Mutex<objects::Objects>,
+    /// False when the hooks of watched events cannot be installed.
+    pub watch_available: AtomicBool,
+    /// The map entries hooked for watched events, in order.
+    pub watched: Mutex<Vec<String>>,
     /// False when the game build lacks what rules for its windows need.
     pub windows_available: AtomicBool,
     /// The elements of the game's own windows, by window name and id.
@@ -120,6 +124,8 @@ impl Default for ScriptedGame {
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
             objects: Mutex::new(objects::Objects::default()),
+            watch_available: AtomicBool::new(true),
+            watched: Mutex::new(Vec::new()),
             windows_available: AtomicBool::new(true),
             windows: Mutex::new(std::collections::BTreeMap::new()),
         }
@@ -194,6 +200,24 @@ impl Game for ScriptedGame {
         )
     }
 
+    fn memory(&self) -> &dyn runtime::lens::Memory {
+        self
+    }
+
+    fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
+        if self.watch_available.load(Ordering::Acquire) {
+            self.watched
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(entry.to_owned());
+            Ok(())
+        } else {
+            Err(format!(
+                "map entry {entry} cannot be hooked in the scripted build"
+            ))
+        }
+    }
+
     fn print(&self, message: &[u8]) -> Result<(), String> {
         if !self.chat_available.load(Ordering::Acquire) {
             return Err("the chat log does not exist yet".into());
@@ -203,6 +227,15 @@ impl Game for ScriptedGame {
             .unwrap_or_else(PoisonError::into_inner)
             .push(message.to_vec());
         Ok(())
+    }
+}
+
+impl runtime::lens::Memory for ScriptedGame {
+    fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .read(address, buffer)
     }
 }
 
@@ -576,6 +609,36 @@ impl TestHost {
             ));
         }
         self.host.frame(FRAME);
+    }
+
+    /// The game reaches the point of `event` with `args`: every plugin's
+    /// watch of the event reads its rows now, from the scripted game's
+    /// objects, and receives them in the next frame. Nothing happens when
+    /// no plugin watches it.
+    ///
+    /// # Panics
+    /// When the event or an argument does not fit the map.
+    pub fn fire(&self, event: &str, args: &[(&str, Fire)]) {
+        let services = self.services();
+        let watches = &services.lens.watches;
+        let (schema, _) = services.lens.schema();
+        let Some(point) = schema
+            .objects
+            .events
+            .get(event)
+            .and_then(|found| watches.point_of(&found.at))
+        else {
+            return;
+        };
+        let mut objects = self
+            .game
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let call = objects
+            .call(event, args)
+            .unwrap_or_else(|error| panic!("{event}: {error}"));
+        watches.fire(point, &call, &*objects);
     }
 
     /// The game map's object model for Lens: `files` as a map's

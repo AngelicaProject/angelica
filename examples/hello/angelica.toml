@@ -23,4 +23,4 @@ authors = ["AngelicaProject contributors"]
 hosts = ["example.com"]
 
 [lens]
-read = ["character", "location", "statuses"]
+read = ["actions", "character", "location", "statuses"]

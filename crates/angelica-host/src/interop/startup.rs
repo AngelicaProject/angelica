@@ -316,6 +316,7 @@ fn services(
     let commands = Arc::new(crate::commands::Commands::default());
     let events = Arc::new(crate::events::Events::default());
     let executable = module_path(base)?;
+    let (sheets, lens, ui) = map_services(map, catalog, base);
     let game = Arc::new(WindowsGame {
         catalog: catalog.clone(),
         base,
@@ -324,9 +325,9 @@ fn services(
         files: files.clone(),
         commands: commands.clone(),
         events: events.clone(),
+        lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
     });
-    let (sheets, lens, ui) = map_services(map, catalog, base);
     Ok(Arc::new(Services {
         // The executable is in `game/`; the archives are in `game/sqpack`.
         data: Arc::new(crate::game_data::GameData::new(

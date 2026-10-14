@@ -264,6 +264,7 @@ fn look_writes_a_request_and_prints_the_games_answer() {
                         values: vec![json!("crystals")],
                     }]),
                     error: None,
+                    ..Response::default()
                 };
                 runtime::look::write_atomically(
                     &answering.join(RESPONSE),
@@ -302,5 +303,38 @@ fn look_writes_a_request_and_prints_the_games_answer() {
         String::from_utf8_lossy(&output.stderr).contains("development build of Angelica"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn compare_names_the_bytes_that_changed_between_two_dumps() {
+    let directory = tempfile::tempdir().unwrap();
+    let dump = |name: &str, hex: &str| {
+        let path = directory.path().join(name);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({"format": 1, "id": "1", "objects": [
+                {"indexes": [0, 3], "address": 4096, "bytes": hex},
+                {"indexes": [1], "address": 8192, "bytes": null},
+            ]}))
+            .unwrap(),
+        )
+        .unwrap();
+        path
+    };
+    let before = dump("before.json", "0c000000ff01");
+    let after = dump("after.json", "0d000000ff02");
+    let output = run(&[
+        "look".as_ref(),
+        "--compare".as_ref(),
+        before.as_os_str(),
+        after.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[0,3] +0x0000: 0c -> 0d
+[0,3] +0x0005: 01 -> 02
+"
     );
 }

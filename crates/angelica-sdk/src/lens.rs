@@ -21,6 +21,24 @@
 //! }
 //! ```
 //!
+//! A [`Watch`] is a query from an event of the map: its rows arrive in
+//! [`crate::Plugin::game_event`] in the frame after the game reached the
+//! event.
+//!
+//! ```ignore
+//! #[derive(serde::Deserialize)]
+//! struct Used {
+//!     action: u32,
+//! }
+//!
+//! // In `start`:
+//! let used = lens::Watch::new("action_used[kind = action] { action }")?;
+//! // In `Plugin::game_event`:
+//! if let Some(rows) = used.decode::<Used>(&event) {
+//!     for used in rows? { /* … */ }
+//! }
+//! ```
+//!
 //! The manifest lists every domain a query reads:
 //!
 //! ```toml
@@ -97,6 +115,86 @@ impl Query {
 }
 
 impl Drop for Query {
+    fn drop(&mut self) {
+        api::release(self.handle);
+    }
+}
+
+/// A watch of an event; dropping it ends it.
+#[derive(Debug)]
+pub struct Watch {
+    handle: u32,
+    columns: Vec<Column>,
+}
+
+impl Watch {
+    /// Checks a query from an event against the game map and starts
+    /// watching it.
+    ///
+    /// # Errors
+    /// See `lens.watch`.
+    pub fn new(text: &str) -> Result<Self, crate::Error> {
+        let prepared = api::watch(text)?;
+        Ok(Self {
+            handle: prepared.query,
+            columns: prepared.columns,
+        })
+    }
+
+    /// The columns of each row, in the order of the query's braces.
+    #[must_use]
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    /// The rows of one firing, when `event` is one of this watch.
+    #[must_use]
+    pub fn rows<'e>(&self, event: &'e crate::events::GameEvent) -> Option<&'e [Row]> {
+        match event {
+            crate::events::GameEvent::Watched(watched) if watched.query == self.handle => {
+                Some(&watched.rows)
+            }
+            _ => None,
+        }
+    }
+
+    /// The rows of one firing as `T`s, when `event` is one of this watch;
+    /// see [`Query::rows`].
+    #[must_use]
+    pub fn decode<T: DeserializeOwned>(
+        &self,
+        event: &crate::events::GameEvent,
+    ) -> Option<Result<Vec<T>, crate::Error>> {
+        self.rows(event).map(|rows| {
+            rows.iter()
+                .map(|row| from_row(&self.columns, row.clone()))
+                .collect()
+        })
+    }
+
+    /// How many firings were left out, when `event` says so for this watch.
+    #[must_use]
+    pub fn dropped(&self, event: &crate::events::GameEvent) -> Option<u32> {
+        match event {
+            crate::events::GameEvent::WatchDropped(dropped) if dropped.query == self.handle => {
+                Some(dropped.count)
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of column `name` in `row`.
+    #[must_use]
+    pub fn get<'a>(&self, row: &'a Row, name: &str) -> Option<&'a Value> {
+        self.columns
+            .iter()
+            .position(|column| column.name == name)
+            .and_then(|index| row.values.get(index))
+            .and_then(Option::as_ref)
+    }
+}
+
+impl Drop for Watch {
     fn drop(&mut self) {
         api::release(self.handle);
     }

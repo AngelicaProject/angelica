@@ -10,6 +10,7 @@ pub struct WindowsGame {
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub commands: Arc<crate::commands::Commands>,
     pub events: Arc<crate::events::Events>,
+    pub lens: Arc<crate::lens::Lens>,
     pub version: String,
 }
 
@@ -34,7 +35,7 @@ fn hooked(what: &str, result: Result<(), String>) -> Result<(), String> {
 
 /// The game's memory, read through Windows so that an unreadable address
 /// fails instead of faulting.
-struct ProcessMemory;
+pub(super) struct ProcessMemory;
 
 impl crate::lens::Memory for ProcessMemory {
     fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
@@ -107,5 +108,16 @@ impl Game for WindowsGame {
         prepared: &crate::lens::Prepared,
     ) -> crate::error::Result<Vec<crate::lens::Row>> {
         crate::lens::run(&ProcessMemory, prepared)
+    }
+
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        &ProcessMemory
+    }
+
+    fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
+        hooked(
+            "watched event",
+            super::watch::install(&self.catalog, &self.lens, point, entry, address),
+        )
     }
 }

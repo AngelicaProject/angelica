@@ -1,3 +1,5 @@
+use super::plan::prepare_watch;
+use super::read::{Call, run_call};
 use super::*;
 use crate::error::Kind;
 use angelica_map::{EntryKind, Map, Value as Resolved};
@@ -498,7 +500,7 @@ fn mistakes_are_named_before_anything_is_read() {
         (
             "player[0]",
             Kind::InvalidArgument,
-            "a filter follows a field of the root, not the root",
+            "player is one object, not an array: it has no index",
         ),
         (
             "player.target[0] { name }",
@@ -528,7 +530,7 @@ fn mistakes_are_named_before_anything_is_read() {
         (
             "player[name = 3] { name }",
             Kind::InvalidArgument,
-            "a filter follows a field of the root, not the root",
+            "test.character.name is text: compare it with \"text\"",
         ),
         (
             "player.target[name = 3] { name }",
@@ -731,4 +733,243 @@ fn put_kind_never_read(schema: &Schema) {
         .map(|row| row.indexes)
         .collect();
     assert_eq!(indexes, [vec![0], vec![1], vec![3]]);
+}
+
+const EVENTS: &str = r#"
+[events.item_used]
+doc = "An item was used."
+at = "test.manager.use"
+domain = "inventory"
+rate = 2
+
+[events.item_used.args.kind]
+doc = "The container's kind."
+arg = 1
+enum = "test.kind"
+
+[events.item_used.args.slot]
+doc = "The slot."
+arg = 2
+ref = "test.item"
+
+[events.item_used.args.who]
+doc = "Who used it."
+arg = 3
+text = 16
+domain = "character"
+
+[events.item_used.args.speed]
+doc = "A float."
+arg = 4
+
+[events.item_used.args.count]
+doc = "A stack argument."
+arg = 5
+"#;
+
+fn watched() -> Schema {
+    let map = Map::from_sources(
+        "format = 2",
+        &[
+            (
+                "entries/test.toml".into(),
+                format!(
+                    "{ENTRIES}\n[function.\"test.manager.use\"]\nlocator = {{ signature = \"C3\" }}\nabi = {{ args = [\"ptr\", \"u32\", \"ptr\", \"ptr\", \"f32\", \"i32\"], ret = \"void\" }}\nthread = \"main\"\n"
+                ),
+            ),
+            ("types/test.toml".into(), TYPES.into()),
+            ("domains.toml".into(), DOMAINS.into()),
+            ("roots.toml".into(), ROOTS.into()),
+            ("events.toml".into(), EVENTS.into()),
+            (
+                "enums/test.kind.toml".into(),
+                "doc = \"Kinds.\"\nvalues = { bag_1 = 0, bag_2 = 1, crystals = 2001 }\n".into(),
+            ),
+            (
+                "enums/test.marks.toml".into(),
+                "doc = \"Marks.\"\nflags = true\nvalues = { new = 1, glamoured = 4 }\n".into(),
+            ),
+        ],
+    )
+    .unwrap();
+    let entries = map.clone();
+    Schema::new(&map, 0x800, move |name| {
+        match &entries.get(name).unwrap().kind {
+            EntryKind::Field { offset, .. } => Ok(Resolved::Offset(offset.unwrap())),
+            _ if name == "test.manager" => Ok(Resolved::Address(0x800)),
+            _ => Ok(Resolved::Address(0x840)),
+        }
+    })
+}
+
+/// A call with the bag 1 kind, the first slot of bag 1 (at 0x1200), the
+/// player's name (at 0x1800), and on the stack 2.5 (at 0x1EF8) and -3 (at
+/// 0x1F00).
+fn call() -> Call {
+    let mut call = Call::default();
+    call.general[3] = 0; // rdx: bag_1
+    call.general[7] = 0x1200; // r8: the slot
+    call.general[8] = 0x1800; // r9: the name
+    call.rsp = 0x1F00 - (8 + 8 * 5);
+    call
+}
+
+fn memory_with_stack() -> Buffer {
+    let mut memory = memory(true);
+    put(
+        &mut memory.0,
+        0x1EF8,
+        &u64::from(2.5f32.to_bits()).to_le_bytes(),
+    );
+    put(&mut memory.0, 0x1F00, &(-3i64).to_le_bytes());
+    memory
+}
+
+#[test]
+fn a_watch_reads_the_call_and_the_objects_it_points_to() {
+    let schema = watched();
+    let prepared = prepare_watch(
+        &schema,
+        "item_used { kind, item: slot.item, quantity: slot.quantity, who, count }",
+        &all,
+    )
+    .unwrap();
+    assert_eq!(prepared.event(), Some("item_used"));
+    assert_eq!(prepared.columns[1].field, "test.item.item");
+    assert_eq!(
+        prepared
+            .domains
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["character", "inventory"]
+    );
+    let rows = run_call(&memory_with_stack(), &prepared, &call()).unwrap();
+    assert_eq!(
+        rows[0].values,
+        [
+            Some(Value::Named("bag_1".into())),
+            Some(item(5057)),
+            Some(Value::Unsigned(12)),
+            Some(Value::Text(b"Alisae".to_vec())),
+            Some(Value::Signed(-3)),
+        ]
+    );
+    let speed = prepare_watch(&schema, "item_used.speed", &all).unwrap();
+    assert_eq!(
+        run_call(&memory_with_stack(), &speed, &call()).unwrap()[0].values,
+        [Some(Value::Float(2.5))],
+        "a fifth argument is on the stack, a float too"
+    );
+    let filtered = prepare_watch(&schema, "item_used[kind = crystals] { kind }", &all).unwrap();
+    assert_eq!(run_call(&memory(true), &filtered, &call()).unwrap(), []);
+    let through = prepare_watch(&schema, "item_used.slot[quantity > 10] { item }", &all).unwrap();
+    assert_eq!(run_call(&memory(true), &through, &call()).unwrap().len(), 1);
+    let mut empty = call();
+    empty.general[7] = 0;
+    assert_eq!(
+        run_call(&memory(true), &through, &empty).unwrap(),
+        [],
+        "a zero pointer on the path is no row"
+    );
+}
+
+#[test]
+fn watches_and_queries_start_where_they_belong() {
+    let schema = watched();
+    for (result, kind, message) in [
+        (
+            prepare(&schema, "item_used { kind }", &all),
+            Kind::InvalidArgument,
+            "item_used is an event: watch it with lens.watch",
+        ),
+        (
+            prepare_watch(&schema, "inventory.containers { kind }", &all),
+            Kind::NotFound,
+            "the game map has no event inventory; its events: item_used",
+        ),
+        (
+            prepare_watch(&schema, "item_used { slot }", &all),
+            Kind::InvalidArgument,
+            "item_used.slot is an object; name its values, such as slot.<field>",
+        ),
+        (
+            prepare_watch(&schema, "item_used.kind.x", &all),
+            Kind::InvalidArgument,
+            "item_used.kind is not a reference to an object: a path from an event goes on only through one",
+        ),
+        (
+            prepare_watch(&schema, "item_used { kind }", &|domain: &str| {
+                domain == "character"
+            }),
+            Kind::PermissionDenied,
+            "the query reads inventory, which the plugin may not read: its manifest lists the domains it reads in [lens] read",
+        ),
+        (
+            prepare_watch(&schema, "item_used { nothing }", &all),
+            Kind::NotFound,
+            "item_used has no argument nothing; its arguments: count, kind, slot, speed, who",
+        ),
+    ] {
+        let error = result.unwrap_err();
+        assert_eq!((error.kind, error.message.as_str()), (kind, message));
+    }
+}
+
+#[test]
+fn firings_wait_for_the_next_frame_within_the_rate() {
+    let lens = Lens::new(watched());
+    let mut queries = Queries::default();
+    let (handle, prepared) = queries
+        .watch(&lens, "item_used { item: slot.item }", &all)
+        .unwrap();
+    let hooked = std::cell::RefCell::new(Vec::new());
+    lens.watch(
+        "p",
+        handle,
+        "item_used { item: slot.item }",
+        ["inventory".to_owned()].into(),
+        prepared.clone(),
+        &|point, entry, address| {
+            hooked.borrow_mut().push((point, entry.to_owned(), address));
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        hooked.borrow().as_slice(),
+        [(0, "test.manager.use".to_owned(), 0x1040)]
+    );
+    let memory = memory(true);
+    for _ in 0..3 {
+        lens.watches.fire(0, &call(), &memory);
+    }
+    let delivered = lens.watches.take("p");
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].handle, handle);
+    assert_eq!(delivered[0].firings.len(), 2, "the event's rate");
+    assert_eq!(delivered[0].dropped, 1);
+    assert_eq!(delivered[0].firings[0][0].values, [Some(item(5057))]);
+    assert_eq!(lens.watches.take("p"), []);
+
+    // A second watch of the event needs no second hook.
+    let (other, prepared) = queries.watch(&lens, "item_used { kind }", &all).unwrap();
+    lens.watch(
+        "q",
+        other,
+        "item_used { kind }",
+        ["inventory".to_owned()].into(),
+        prepared,
+        &|_, _, _| Err("hooked twice".into()),
+    )
+    .unwrap();
+    assert!(
+        queries.plan(&lens, other, &all).is_err(),
+        "a watch is not run"
+    );
+    assert!(queries.release(other));
+    lens.watches.unsubscribe("q", other);
+    lens.watches.remove_plugin("p");
+    lens.watches.fire(0, &call(), &memory);
+    assert_eq!(lens.watches.take("p"), []);
 }

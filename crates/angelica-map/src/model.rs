@@ -33,6 +33,11 @@ pub enum ValueKind {
     Struct,
 }
 
+/// A value kind by its name in the format.
+pub(crate) fn parse_value_kind(text: &str) -> Option<ValueKind> {
+    ValueKind::parse(text)
+}
+
 impl ValueKind {
     fn parse(text: &str) -> Option<Self> {
         Some(match text {

@@ -14,6 +14,22 @@ use std::collections::BTreeMap;
 const BASE: u64 = 0x1000_0000;
 const PAGE: usize = 4096;
 
+/// An argument of a call a test makes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fire {
+    Value(Set),
+    /// A pointer to the object a path names, as [`Objects::set`] names it.
+    Object(String),
+    /// A pointer to NUL-terminated text.
+    Text(String),
+}
+
+impl<T: Into<Set>> From<T> for Fire {
+    fn from(value: T) -> Self {
+        Self::Value(value.into())
+    }
+}
+
 /// A value a test sets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Set {
@@ -124,6 +140,11 @@ impl Objects {
             let at = objects.allocate(length);
             objects.globals.insert(root.global.clone(), at);
         }
+        // Events' code gets a place of its own; nothing runs there.
+        for event in map.objects().events.values() {
+            let at = objects.allocate(16);
+            objects.globals.insert(event.at.clone(), at);
+        }
         let globals = objects.globals.clone();
         let schema = Schema::new(&map, BASE, |name| {
             if absent.contains(&name) {
@@ -141,7 +162,7 @@ impl Objects {
                     .get(name)
                     .and_then(|at| u32::try_from(at - BASE).ok())
                     .map(Resolved::Address)
-                    .ok_or_else(|| "not a root's global".into()),
+                    .ok_or_else(|| "not a root's global or an event's code".into()),
             }
         });
         objects.map = Some(map);
@@ -217,6 +238,72 @@ impl Objects {
     /// A path or value that does not fit the map.
     pub fn set(&mut self, path: &str, values: &[(&str, Set)]) -> Result<(), String> {
         let map = self.map()?;
+        let (object, current) = self.locate(&map, path)?;
+        self.assign(&map, &current, object, values)
+    }
+
+    /// The registers of a call of `event` with `args`: each argument by
+    /// name, a value, an object by its path, or text the call points to.
+    /// An argument left out is zero.
+    ///
+    /// # Errors
+    /// An unknown event or argument, or a value that does not fit it.
+    pub fn call(
+        &mut self,
+        event: &str,
+        args: &[(&str, Fire)],
+    ) -> Result<runtime::lens::Call, String> {
+        use runtime::lens::plan::{ArgAt, arg_at};
+        let map = self.map()?;
+        let model = map.objects();
+        let event = model
+            .events
+            .get(event)
+            .ok_or_else(|| format!("the map has no event {event}"))?;
+        let mut call = runtime::lens::Call::default();
+        let stack = self.allocate(8 + 8 * 32);
+        call.rsp = stack;
+        for (name, value) in args {
+            let arg = event
+                .args
+                .get(*name)
+                .ok_or_else(|| format!("event {} has no argument {name}", event.name))?;
+            let bits = match value {
+                Fire::Object(path) => self.locate(&map, path)?.0,
+                Fire::Text(text) => {
+                    let at = self.allocate(text.len() + 1);
+                    self.write(at, text.as_bytes());
+                    at
+                }
+                Fire::Value(value) => {
+                    let field = Field {
+                        name: arg.name.clone(),
+                        doc: arg.doc.clone(),
+                        at: String::new(),
+                        shape: arg.shape.clone(),
+                        domain: arg.domain.clone(),
+                        forbidden: false,
+                    };
+                    let bytes = encode(&map, &field, value)?;
+                    let mut wide = [0u8; 8];
+                    wide[..bytes.len()].copy_from_slice(&bytes);
+                    u64::from_le_bytes(wide)
+                }
+            };
+            match arg_at(arg) {
+                ArgAt::Integer(index) => call.general[usize::from(index)] = bits,
+                ArgAt::Float(index) => call.xmm[usize::from(index)] = bits,
+                ArgAt::Stack(offset) => self.write(stack + u64::from(offset), &bits.to_le_bytes()),
+            }
+        }
+        Ok(call)
+    }
+
+    /// The address and type of the object `path` names, made with
+    /// everything on the way that does not exist yet, as [`Objects::set`]
+    /// names it.
+    fn locate(&mut self, map: &Map, path: &str) -> Result<(u64, String), String> {
+        let map = map.clone();
         let model = map.objects();
         let parsed = query::parse(path)?;
         let root = model
@@ -263,7 +350,7 @@ impl Objects {
                 }
             }
         }
-        self.assign(&map, &current, object, values)
+        Ok((object, current))
     }
 
     /// The element of an array a path's segment names, made when needed.
