@@ -9,7 +9,6 @@ pub struct WindowsGame {
     pub case: Arc<TextCase>,
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub commands: Arc<crate::commands::Commands>,
-    pub events: Arc<crate::events::Events>,
     pub lens: Arc<crate::lens::Lens>,
     pub version: String,
 }
@@ -87,13 +86,6 @@ impl Game for WindowsGame {
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
         super::chat::print(&self.catalog, self.base, message)
-    }
-
-    fn enable_chat_messages(&self) -> Result<(), String> {
-        hooked(
-            "chat messages",
-            super::chat::install_messages(&self.catalog, self.base, self.events.clone()),
-        )
     }
 
     fn with_screen(

@@ -158,7 +158,6 @@ pub struct Services {
     /// The game map's object model for the running build, for Lens.
     pub lens: Arc<crate::lens::Lens>,
     /// Events for the next frame and the plugins' subscriptions.
-    pub events: Arc<crate::events::Events>,
     /// Rules for the game's own windows.
     pub ui: Arc<crate::game_ui::GameUi>,
     /// What plugins draw over the game world.
@@ -1608,33 +1607,7 @@ impl api::draw::Host for State {
     }
 }
 
-impl api::events::Host for State {
-    fn subscribe(&mut self, kinds: Vec<api::events::EventKind>) -> ApiResult<()> {
-        use crate::events::EventKind;
-        api(self.main_only())?;
-        let kinds: BTreeSet<EventKind> = kinds
-            .into_iter()
-            .map(|kind| match kind {
-                api::events::EventKind::ChatMessage => EventKind::ChatMessage,
-            })
-            .collect();
-        for kind in &kinds {
-            api(self.permitted(kind.permission()))?;
-        }
-        self.host(|state| {
-            let services = &state.context.services;
-            if kinds.contains(&EventKind::ChatMessage) {
-                services
-                    .game
-                    .enable_chat_messages()
-                    .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            }
-            services.events.subscribe(&state.context.id, kinds);
-            Ok::<_, Error>(())
-        })
-        .map_err(Into::into)
-    }
-}
+impl api::events::Host for State {}
 
 /// A Lens row as the API carries it.
 #[must_use]
@@ -1708,22 +1681,6 @@ impl crate::lens::act::Caller for GameCaller<'_> {
         args: &[u64],
     ) -> std::result::Result<crate::lens::act::Returned, String> {
         self.0.call(address, args)
-    }
-}
-
-/// An event as the guest's `game-event` export takes it.
-#[must_use]
-pub fn event_to_api(event: crate::events::GameEvent) -> api::events::GameEvent {
-    match event {
-        crate::events::GameEvent::ChatMessage(message) => {
-            api::events::GameEvent::ChatMessage(api::events::ChatMessage {
-                kind: message.info & 0x7F,
-                info: message.info,
-                sender: message.sender,
-                message: message.message,
-                timestamp: message.timestamp,
-            })
-        }
     }
 }
 

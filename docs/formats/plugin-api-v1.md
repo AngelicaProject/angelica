@@ -22,7 +22,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `http` | HTTPS requests to the hosts the manifest lists: GET, and data sent | `http.get`, `http.send` |
 | `websocket` | live connections to the hosts the manifest lists, their messages delivered as game events | `http.websocket`, with `http.get` |
 | `lens` | the game's objects read by path, events watched, rules at decision points, values changed, and actions taken, through the game map's object model | one per domain and verb, in `[lens] read`, `change`, and `act` |
-| `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
+| `events` | what reaches `on-game-event`: firings of Lens watches, messages from other plugins, and what happened on the plugin's connections | — |
 | `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
@@ -39,12 +39,12 @@ Every fallible call returns `types.error`: a stable `kind` for programs and a `m
 The host keeps one **main instance** per running plugin and calls it on the game's main thread:
 
 - `start` once when the plugin is enabled. An error disables the plugin and is shown in the Angelica menu. During the game's own start, before any game code runs, `runtime.started-with-game` is true; a plugin enabled later sees a game that has already loaded data.
-- `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `on-game-event` for each [event](#events) the plugin subscribed to, then `ui-event` for each player action, then `ui`.
+- `tick` every frame, then `command` for each of the plugin's [commands](#commands) the player ran since the previous frame, then `on-game-event` for each [event](#events) that reached the plugin, then `ui-event` for each player action, then `ui`.
 - `stop` before the plugin is disabled and at game exit.
 
 The calls of one frame — `tick`, the commands, the events, the window events, and `ui` — share one budget, and `start` and `stop` each have their own: a guest time limit, which does not count time spent in host calls, and a fuel limit (`host.json`, [installation](./host-installation-v1.md)), by default 20 ms for a frame's calls and 2 s for `start` and `stop`; and a limit on time including host calls, 2 s for a frame's calls and 30 s for `start` and `stop`, so a plugin cannot hold the game's main thread with host operations. Exceeding a limit traps. A frame in which a plugin's calls take more than 100 ms is noted in the Angelica menu.
 
-A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, event subscriptions, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
+A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (text tables, letters, replaced files, commands, watches, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
 `run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `excel-text`, `text-case`, `file-replacements`, `commands`, `chat`, `lens`, `events`, `game-ui`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
@@ -137,14 +137,13 @@ When the game reaches the event's point, the host reads the rows at once, on the
 
 ## Events
 
-`events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.
+The `events` interface has no functions: it names what the host delivers to the plugin's `on-game-event`, which it calls in the next frame once per event, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it. Nothing needs a subscription; what the game does reaches a plugin only through its [Lens watches](#lens).
 
-- `watched` and `watch-dropped`: the firings of a [Lens watch](#lens), delivered without a subscription, after the subscribed events of the frame.
-- `message` and `messages-dropped`: [messages](#messages-between-plugins) from other plugins, delivered without a subscription, after the watches' firings.
-- `socket-opened`, `socket-message`, and `socket-closed`: what happened on the plugin's [connections](#websocket), delivered without a subscription, after the messages.
-- `chat-message` (`chat.read`): a message the game added to the chat log, whatever the channel, with its kind (a row of the LogKind sheet), the game's full log information, the sender's name and the message as game text of at most 8192 bytes each, and the time in seconds since 1970. Messages printed by Angelica's plugins are not delivered, so a plugin that answers messages never hears itself.
+- `watched` and `watch-dropped`: the firings of a [Lens watch](#lens), in the order they happened.
+- `message` and `messages-dropped`: [messages](#messages-between-plugins) from other plugins, after the watches' firings.
+- `socket-opened`, `socket-message`, and `socket-closed`: what happened on the plugin's [connections](#websocket), after the messages.
 
-The host keeps at most 256 events between two frames, for all plugins together; when more arrive, every subscribed plugin first receives `dropped` with how many were left out. A subscription ends when the plugin stops. Subscribing to a kind whose map entries the game build lacks returns `unavailable`.
+Messages added to the chat log are watched like any event: `chat_message_added { kind, sender.text, message.text }` under the `chat` domain. Watches record nothing while the host prints a plugin's message, so a plugin that answers messages never hears itself.
 
 ## Game windows
 

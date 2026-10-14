@@ -1,38 +1,13 @@
 package angelica:plugin@1.0.0;
 
-/// What the game did, delivered to the plugin's `on-game-event` export.
-///
-/// A plugin subscribes to the kinds of events it wants; each kind needs its
-/// permission. The host records an event when the game does it and delivers
-/// it in the next frame, after `tick` and the plugin's commands, in the
-/// order the game did them. A plugin learns what happened; it cannot change
-/// it. Called from the main instance only.
+/// What reaches the plugin's `on-game-event` export: firings of its Lens
+/// watches, messages from other plugins, and what happened on its
+/// connections. None needs a subscription; each comes in a frame after it
+/// happened, after `tick` and the plugin's commands. Called on the main
+/// instance only.
 interface events {
-    use types.{error};
     use lens.{row};
     use websocket.{socket-opened, socket-message, socket-closed};
-
-    enum event-kind {
-        /// A message added to the chat log. Requires `chat.read`.
-        chat-message,
-    }
-
-    /// A message the game added to the chat log. Messages printed by
-    /// Angelica's plugins are not delivered.
-    record chat-message {
-        /// The kind of message: a row of the LogKind sheet.
-        kind: u16,
-        /// The game's full log information: the kind in the low 7 bits,
-        /// the relations of sender and target above.
-        info: u16,
-        /// The sender's name as game text; empty for a message without
-        /// one. At most 8192 bytes.
-        sender: list<u8>,
-        /// The message as game text, macros encoded. At most 8192 bytes.
-        message: list<u8>,
-        /// Seconds since 1970, UTC.
-        timestamp: u32,
-    }
 
     /// One firing of a watched event: the rows of the watch's query.
     record watched {
@@ -61,7 +36,6 @@ interface events {
     }
 
     variant game-event {
-        chat-message(chat-message),
         /// A firing of an event a `lens.watch` watches; needs no
         /// subscription.
         watched(watched),
@@ -78,11 +52,5 @@ interface events {
         socket-message(socket-message),
         /// A connection ended; needs no subscription.
         socket-closed(socket-closed),
-        /// The host kept at most 256 events between two frames; this many
-        /// more were left out since the last delivery.
-        dropped(u32),
     }
-
-    /// Replaces the plugin's subscriptions; an empty list ends them.
-    subscribe: func(kinds: list<event-kind>) -> result<_, error>;
 }

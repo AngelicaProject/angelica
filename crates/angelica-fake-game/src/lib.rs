@@ -191,14 +191,6 @@ impl Game for ScriptedGame {
         }
     }
 
-    fn enable_chat_messages(&self) -> Result<(), String> {
-        if self.chat_available.load(Ordering::Acquire) {
-            Ok(())
-        } else {
-            Err("map entry ui.log_module.print_message is absent".into())
-        }
-    }
-
     fn with_screen(
         &self,
         work: &mut dyn FnMut(&mut dyn runtime::game_ui::Screen),
@@ -468,7 +460,6 @@ impl TestHost {
             chat: Arc::new(runtime::chat::Chat::default()),
             sheets: Arc::new(runtime::sheets::Sheets::default()),
             lens: Arc::new(runtime::lens::Lens::default()),
-            events: Arc::new(runtime::events::Events::default()),
             ui: Arc::new(runtime::game_ui::GameUi::default()),
             draw: Arc::new(runtime::draw::Drawings::default()),
             messages: Arc::new(runtime::messages::Messages::default()),
@@ -696,23 +687,6 @@ impl TestHost {
                 _ => None,
             })
             .collect()
-    }
-
-    /// The game adds a message to the chat log: plugins that subscribed
-    /// receive it in the next frame, which this runs.
-    pub fn chat_message(&self, info: u16, sender: &str, message: &str) {
-        let events = &self.services().events;
-        if events.wanted(runtime::events::EventKind::ChatMessage) {
-            events.push(runtime::events::GameEvent::ChatMessage(
-                runtime::events::ChatMessage {
-                    info,
-                    sender: sender.as_bytes().to_vec(),
-                    message: message.as_bytes().to_vec(),
-                    timestamp: 1_800_000_000,
-                },
-            ));
-        }
-        self.host.frame(FRAME);
     }
 
     /// The game calls the function of the decision point `event` with

@@ -14,7 +14,6 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `http.get` | HTTPS GET [requests](../formats/plugin-api-v1.md#http) to the hosts the manifest lists in `http.hosts` | internet | Downloads from these internet hosts, followed by the list |
 | `http.send` | sending data and files of its storage with POST, PUT, PATCH, and DELETE [requests](../formats/plugin-api-v1.md#http) to the same hosts; needs `http.get` | internet | Sends data to these internet hosts |
 | `http.websocket` | keeping [WebSocket connections](../formats/plugin-api-v1.md#websocket) to the same hosts; needs `http.get` | internet | Keeps live connections to these internet hosts |
-| `chat.read` | receiving the [messages](../formats/plugin-api-v1.md#events) the game adds to the chat log, including other players' | other players | Reads the messages in your chat log, including other players' |
 | `gameui.hide` | keeping named elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) hidden | what you see | Hides parts of the game's interface |
 | `gameui.text` | putting text in named text elements of the game's own [windows](../formats/plugin-api-v1.md#game-windows) | what you see | Puts its own text in the game's windows |
 | `messages.send` | sending [messages](../formats/plugin-api-v1.md#messages-between-plugins) to the plugins the manifest lists in `messages.to`; answering a message needs nothing | only for you | Sends messages to these plugins, followed by the list |

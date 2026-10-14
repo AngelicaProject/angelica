@@ -87,7 +87,6 @@ pub struct Plugin {
 struct Frame<'a> {
     elapsed: f64,
     commands: &'a [(String, Outcome)],
-    game_events: &'a (Vec<crate::events::GameEvent>, u32),
     events: &'a [(String, Event)],
 }
 
@@ -629,7 +628,6 @@ impl Host {
         self.services.files.remove_plugin(id);
         self.services.commands.remove_plugin(id);
         self.services.chat.remove_plugin(id);
-        self.services.events.remove_plugin(id);
         self.services.lens.watches.remove_plugin(id);
         self.services.lens.acting.remove_plugin(id);
         self.services.lens.decisions.remove_plugin(id);
@@ -758,11 +756,9 @@ impl Host {
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
         commands.extend(self.services.commands.take_overflowed());
-        let game_events = self.services.events.take();
         let frame = Frame {
             elapsed,
             commands: &commands,
-            game_events: &game_events,
             events: &events,
         };
         for plugin in self.plugins() {
@@ -965,7 +961,6 @@ impl Host {
         let Frame {
             elapsed,
             commands,
-            game_events,
             events,
         } = *frame;
         let guest = instance.bindings.angelica_plugin_guest();
@@ -982,33 +977,6 @@ impl Host {
         }
         if let Some(fault) = self.run_commands(id, commands, guest, store) {
             return Some(fault);
-        }
-        let subscribed = self.services.events.subscribed(id);
-        if !subscribed.is_empty() {
-            let (delivered, dropped) = game_events;
-            let mut calls: Vec<_> = Vec::new();
-            if *dropped > 0 {
-                calls.push(
-                    sandbox::bindings::angelica::plugin::events::GameEvent::Dropped(*dropped),
-                );
-            }
-            calls.extend(
-                delivered
-                    .iter()
-                    .filter(|event| subscribed.contains(&event.kind()))
-                    .cloned()
-                    .map(sandbox::event_to_api),
-            );
-            for event in &calls {
-                if let Err(trap) =
-                    sandbox::call(store, |store| guest.call_on_game_event(store, event))
-                {
-                    return Some(format!(
-                        "on-game-event trapped: {}",
-                        sandbox::describe_trap(store, &trap)
-                    ));
-                }
-            }
         }
         if let Some(fault) = self.deliver_watched(id, guest, store) {
             return Some(fault);

@@ -314,7 +314,6 @@ fn services(
             .join("files"),
     ));
     let commands = Arc::new(crate::commands::Commands::default());
-    let events = Arc::new(crate::events::Events::default());
     let executable = module_path(base)?;
     let (sheets, lens, ui) = map_services(map, catalog, base);
     let game = Arc::new(WindowsGame {
@@ -324,7 +323,6 @@ fn services(
         case: case.clone(),
         files: files.clone(),
         commands: commands.clone(),
-        events: events.clone(),
         lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
     });
@@ -340,7 +338,6 @@ fn services(
         chat: Arc::new(crate::chat::Chat::default()),
         sheets,
         lens,
-        events,
         ui,
         draw: Arc::new(crate::draw::Drawings::default()),
         messages: Arc::new(crate::messages::Messages::default()),

@@ -42,9 +42,6 @@ pub enum Permission {
     /// Send data to the hosts the manifest lists: POST, PUT, PATCH, DELETE.
     #[serde(rename = "http.send")]
     HttpSend,
-    /// Receive the messages added to the chat log.
-    #[serde(rename = "chat.read")]
-    ChatRead,
     /// Keep elements of the game's own windows hidden.
     #[serde(rename = "gameui.hide")]
     GameUiHide,
@@ -85,7 +82,6 @@ impl Permission {
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
             Self::HttpSend => "http.send",
-            Self::ChatRead => "chat.read",
             Self::GameUiHide => "gameui.hide",
             Self::GameUiText => "gameui.text",
             Self::DrawWorld => "draw.world",
@@ -109,7 +105,6 @@ impl Permission {
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
             Self::HttpSend => "Sends data to these internet hosts",
-            Self::ChatRead => "Reads the messages in your chat log, including other players'",
             Self::GameUiHide => "Hides parts of the game's interface",
             Self::GameUiText => "Puts its own text in the game's windows",
             Self::DrawWorld => "Draws marks, lines, and text over the game world",
@@ -127,7 +122,6 @@ impl Permission {
     pub fn class(self) -> Class {
         match self {
             Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
-            Self::ChatRead => Class::OtherPlayers,
             Self::ExcelText
             | Self::TextCase
             | Self::FilesReplace

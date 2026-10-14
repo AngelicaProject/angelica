@@ -30,7 +30,9 @@ interface guest {
     /// is printed in the chat log as the plugin's message.
     command: func(invocation: invocation) -> result<_, string>;
 
-    /// An event the plugin subscribed to; see the `events` interface.
+    /// A firing of one of the plugin's watches, a message from another
+    /// plugin, or what happened on its connections; see the `events`
+    /// interface.
     /// Called after the plugin's commands of the frame.
     on-game-event: func(event: game-event);
 

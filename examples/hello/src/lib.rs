@@ -12,7 +12,7 @@ use angelica_sdk::{
     api::{excel_text, file_replacements, game_files, runtime, storage as files, text_case},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
-    events::{self, EventKind, GameEvent},
+    events::GameEvent,
     excel, game_ui, http,
     jobs::{self, Job, Poll},
     lens, storage,
@@ -38,6 +38,8 @@ struct Hello {
     message: String,
     /// The last message the chat log received, as `sender: text`.
     heard: Option<String>,
+    /// The watch of the chat log, or why there is none.
+    chat: Result<lens::Watch, String>,
     /// The watch of the actions the player uses, or why there is none.
     used: Result<lens::Watch, String>,
     /// The last action the player used.
@@ -575,6 +577,8 @@ impl Plugin for Hello {
             progress: 0.0,
             message: String::new(),
             heard: None,
+            chat: lens::Watch::new("chat_message_added { kind, sender.text, message.text }")
+                .map_err(|error| error.message),
             used: lens::Watch::new("action_used[kind in (action, item)] { kind, action, target }")
                 .map_err(|error| error.message),
             last_used: None,
@@ -583,8 +587,9 @@ impl Plugin for Hello {
             volume: 0.5,
             bar: ExperienceBar::default(),
         };
-        if let Err(error) = events::subscribe(&[EventKind::ChatMessage]) {
-            hello.say(format!("events refused: {}", error.message));
+        if let Err(reason) = &hello.chat {
+            let reason = format!("cannot watch the chat: {reason}");
+            hello.say(reason);
         }
         if let Err(error) = angelica_sdk::commands::define(&[commands()]) {
             hello.say(format!("commands refused: {}", error.message));
@@ -749,12 +754,22 @@ impl Plugin for Hello {
             }
         }
         self.socket_event(&event);
-        if let GameEvent::ChatMessage(message) = event {
+        if let Ok(chat) = &self.chat
+            && let Some(row) = chat.rows(&event).and_then(<[_]>::last)
+        {
+            let text = |name: &str| {
+                chat.get(row, name)
+                    .and_then(lens::Value::plain)
+                    .unwrap_or_default()
+            };
+            let kind = chat
+                .get(row, "kind")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or_default();
             self.heard = Some(format!(
-                "{} ({}): {}",
-                String::from_utf8_lossy(&message.sender),
-                message.kind,
-                String::from_utf8_lossy(&message.message)
+                "{} ({kind}): {}",
+                text("sender_text"),
+                text("message_text")
             ));
         }
     }

@@ -1,25 +1,17 @@
-//! What the game did: subscribe to kinds of events and receive them in
-//! [`crate::Plugin::game_event`].
+//! What reaches [`crate::Plugin::game_event`]: firings of the plugin's
+//! [Lens watches](crate::lens::Watch), messages from other plugins, and what
+//! happened on its connections. None needs a subscription.
 //!
 //! ```ignore
-//! use angelica_sdk::events::{self, EventKind, GameEvent};
+//! use angelica_sdk::{events::GameEvent, lens};
 //!
-//! // In `start`; needs `chat.read`.
-//! events::subscribe(&[EventKind::ChatMessage])?;
+//! // In `start`; needs `[lens] read = ["chat"]`.
+//! let chat = lens::Watch::new("chat_message_added { kind, message.text }")?;
 //!
 //! // In `Plugin::game_event`:
-//! if let GameEvent::ChatMessage(message) = event {
-//!     let text = angelica_sdk::text::sestring::plain(&message.message);
+//! for row in chat.rows(&event).unwrap_or_default() {
+//!     let text = chat.get(row, "message_text").and_then(lens::Value::plain);
 //! }
 //! ```
-use crate::api::events as api;
+pub use crate::api::events::{GameEvent, PluginMessage, WatchDropped, Watched};
 pub use crate::api::websocket::{Data, SocketClosed, SocketMessage, SocketOpened};
-pub use api::{ChatMessage, EventKind, GameEvent, PluginMessage, WatchDropped, Watched};
-
-/// Replaces the plugin's subscriptions; an empty slice ends them.
-///
-/// # Errors
-/// See `events.subscribe`.
-pub fn subscribe(kinds: &[EventKind]) -> Result<(), crate::Error> {
-    api::subscribe(kinds)
-}

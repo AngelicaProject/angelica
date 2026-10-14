@@ -681,6 +681,11 @@ locator = { signature = "C3" }
 abi = { args = ["ptr", "u16", "ptr", "ptr", "i32", "u8"], ret = "u32" }
 thread = "main"
 
+[field."test.utf8_string.string_ptr"]
+of = "test.utf8_string"
+type = "ptr"
+offset = 0x0
+
 [global."test.stage"]
 locator = { signature = "C3" }
 type = "ptr"
@@ -885,6 +890,15 @@ doc = "Its kind."
 doc = "Its text."
 text = 256
 
+[types."test.utf8_string"]
+doc = "A string."
+domain = "chat"
+
+[types."test.utf8_string".fields.text]
+doc = "Its text."
+at = "test.utf8_string.string_ptr"
+text = 4096
+
 [types."test.camera_manager"]
 doc = "The cameras."
 domain = "camera"
@@ -1029,6 +1043,16 @@ domain = "chat"
 doc = "The log kind."
 arg = 1
 mask = 0x7F
+
+[events.chat_message_added.args.sender]
+doc = "The sender."
+arg = 2
+ref = "test.utf8_string"
+
+[events.chat_message_added.args.message]
+doc = "The message."
+arg = 3
+ref = "test.utf8_string"
 
 [events.chat_message_added.outcomes.hide]
 doc = "The message is not added."
@@ -1636,7 +1660,11 @@ fn watched_actions_arrive_in_the_next_frame() {
     let test = with_character(MANIFEST, &[]);
     click(&test, "used");
     assert_eq!(message(&test), "no action used yet");
-    assert_eq!(*test.game.watched.lock().unwrap(), ["test.use_action"]);
+    assert_eq!(
+        *test.game.watched.lock().unwrap(),
+        ["test.print_message", "test.use_action"],
+        "the chat log and the actions"
+    );
     let used = |kind: &str, action: u32| {
         test.fire(
             "action_used",
@@ -1704,6 +1732,7 @@ fn approval_names_the_domains_in_the_maps_words() {
         [
             "actions",
             "character",
+            "chat",
             "location",
             "statuses",
             "windows",
@@ -1716,22 +1745,38 @@ fn approval_names_the_domains_in_the_maps_words() {
 }
 
 #[test]
-fn chat_messages_arrive_in_the_next_frame_under_their_permission() {
-    let test = approved(MANIFEST);
+fn chat_messages_are_watched_under_the_chat_domain() {
+    use angelica_fake_game::Fire;
+    let test = with_character(MANIFEST, &[]);
     click(&test, "heard");
     assert_eq!(message(&test), "nothing heard yet");
-    test.chat_message(10, "Alphinaud", "Well met!");
-    test.chat_message(13, "Alisaie", "Hmph.");
+    let line = |kind: i64, sender: &str, text: &str| {
+        [
+            ("kind", Fire::from(kind)),
+            ("sender", Fire::String(sender.into())),
+            ("message", Fire::String(text.into())),
+        ]
+    };
+    test.fire("chat_message_added", &line(10, "Alphinaud", "Well met!"));
+    test.fire("chat_message_added", &line(13, "Alisaie", "Hmph."));
+    test.frames(1);
     click(&test, "heard");
     assert_eq!(message(&test), "heard Alisaie (13): Hmph.");
 
-    let without = without_permissions(&["chat.read"]);
-    let test = with_commands(&without, |_| {});
-    assert_eq!(
-        message(&test),
-        "events refused: the plugin does not hold chat.read"
+    // Without the domain the watch is refused.
+    let test = with_character(
+        &MANIFEST.replace("\"chat\", \"location\"", "\"location\""),
+        &[],
     );
-    test.chat_message(10, "Alphinaud", "Well met!");
+    let logged = test.host.plugin("hello").unwrap().log.lines();
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.text.starts_with("cannot watch the chat")),
+        "{logged:?}"
+    );
+    test.fire("chat_message_added", &line(10, "Alphinaud", "Well met!"));
+    test.frames(1);
     click(&test, "heard");
     assert_eq!(message(&test), "nothing heard yet");
 }
@@ -1766,7 +1811,7 @@ fn a_new_package_replaces_the_running_plugin_without_a_restart() {
 
 #[test]
 fn a_package_that_declares_more_waits_for_approval() {
-    let test = approved(&without_permissions(&["chat.read"]));
+    let test = approved(&without_permissions(&["sound.play"]));
     test.reload(MANIFEST, component()).unwrap();
     assert_eq!(
         test.host.plugin("hello").unwrap().status(),

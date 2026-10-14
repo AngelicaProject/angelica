@@ -22,6 +22,9 @@ pub enum Fire {
     Object(String),
     /// A pointer to NUL-terminated text.
     Text(String),
+    /// A pointer to a string object whose first word points to
+    /// NUL-terminated text, as the game's strings hold their bytes.
+    String(String),
 }
 
 impl<T: Into<Set>> From<T> for Fire {
@@ -314,6 +317,13 @@ impl Objects {
                     let at = self.allocate(text.len() + 1);
                     self.write(at, text.as_bytes());
                     at
+                }
+                Fire::String(text) => {
+                    let bytes = self.allocate(text.len() + 1);
+                    self.write(bytes, text.as_bytes());
+                    let string = self.allocate(0x68);
+                    self.write(string, &bytes.to_le_bytes());
+                    string
                 }
                 Fire::Value(value) => {
                     let field = Field {

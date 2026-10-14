@@ -52,7 +52,7 @@ When a piece is missing — a sheet column without a name, a field the object mo
 
 The host calls the plugin's main instance on the game's main thread ([calls into the plugin](../formats/plugin-api-v1.md#calls-into-the-plugin)):
 
-- `start` once; define commands, subscribe to events, load settings, activate text tables here.
+- `start` once; define commands, start watches, load settings, activate text tables here.
 - `tick` every frame; poll jobs here.
 - `command`, `game_event`, `ui_event` as the player and the game act, then `ui` for the windows of this frame.
 - `stop` before the plugin is disabled.

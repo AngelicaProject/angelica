@@ -221,16 +221,7 @@ fn raw(pages: &Pages<'_>, object: u64, read: &Read) -> Result<Option<Raw>> {
         Ok(pages.read(address, &mut bytes[..length])?.then_some(bytes))
     };
     let kind = match read.stored {
-        Stored::Text(length) => {
-            let mut bytes = vec![0u8; usize::from(length)];
-            if !pages.read(address, &mut bytes)? {
-                return Ok(None);
-            }
-            if let Some(end) = bytes.iter().position(|&byte| byte == 0) {
-                bytes.truncate(end);
-            }
-            return Ok(Some(Raw::Text(bytes)));
-        }
+        Stored::Text(length) => return read_text(pages, address, usize::from(length)),
         Stored::Value(kind) => kind,
     };
     let size = match kind {
@@ -572,4 +563,39 @@ fn rows(pages: &Pages<'_>, prepared: &Prepared, start: u64, most: usize) -> Resu
             Ok(Row { indexes, values })
         })
         .collect()
+}
+
+/// Text at `address` up to its terminator or `length` bytes, read in small
+/// pieces so text that ends shortly before unreadable memory is still read;
+/// `None` when the memory becomes unreadable before the text ends.
+fn read_text(pages: &Pages<'_>, address: u64, length: usize) -> Result<Option<Raw>> {
+    const PIECE: usize = 64;
+    let mut text = Vec::new();
+    while text.len() < length {
+        let at = address + text.len() as u64;
+        let mut piece = vec![0u8; PIECE.min(length - text.len())];
+        if !pages.read(at, &mut piece)? {
+            // The piece reaches unreadable memory: read up to it byte by
+            // byte.
+            piece.clear();
+            let mut byte = [0u8; 1];
+            while text.len() + piece.len() < length
+                && pages.read(at + piece.len() as u64, &mut byte)?
+            {
+                piece.push(byte[0]);
+                if byte[0] == 0 {
+                    break;
+                }
+            }
+            if !piece.contains(&0) && text.len() + piece.len() < length {
+                return Ok(None);
+            }
+        }
+        if let Some(end) = piece.iter().position(|&byte| byte == 0) {
+            text.extend_from_slice(&piece[..end]);
+            return Ok(Some(Raw::Text(text)));
+        }
+        text.extend_from_slice(&piece);
+    }
+    Ok(Some(Raw::Text(text)))
 }

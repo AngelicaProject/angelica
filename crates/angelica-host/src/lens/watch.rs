@@ -14,6 +14,20 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
+thread_local! {
+    /// True while the host itself makes the game reach a point, as when it
+    /// prints a plugin's message: watches record nothing then.
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `work` with watches on this thread recording nothing.
+pub fn quietly<T>(work: impl FnOnce() -> T) -> T {
+    let before = QUIET.with(|quiet| quiet.replace(true));
+    let result = work();
+    QUIET.with(|quiet| quiet.set(before));
+    result
+}
+
 /// One plugin's watch of an event.
 pub struct Subscriber {
     plugin: String,
@@ -199,7 +213,7 @@ impl Watches {
         if point.counting.load(Ordering::Acquire) {
             point.calls.fetch_add(1, Ordering::AcqRel);
         }
-        if !point.active.load(Ordering::Acquire) {
+        if !point.active.load(Ordering::Acquire) || QUIET.with(std::cell::Cell::get) {
             return;
         }
         let mut subscribers = point

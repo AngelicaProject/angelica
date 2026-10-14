@@ -108,7 +108,8 @@ pub trait Plugin: Sized + 'static {
         Ok(())
     }
 
-    /// An event the plugin subscribed to (see [`events`]).
+    /// A firing of one of the plugin's watches, a message from another
+    /// plugin, or what happened on its connections (see [`events`]).
     fn game_event(&mut self, _event: events::GameEvent) {}
 
     /// Called before the plugin is disabled.

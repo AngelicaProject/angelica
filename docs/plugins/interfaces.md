@@ -60,11 +60,10 @@ Tell the player something in the chat log.
 
 React to what appears in the chat log.
 
-- SDK: `events::subscribe(&[EventKind::ChatMessage])` in `start`; messages arrive in `Plugin::game_event` as `GameEvent::ChatMessage`.
-- Permission: `chat.read`. Instance: main.
-- `kind` is a row of the `LogKind` sheet; `sender` and `message` are the game's text with its macros. Messages printed by plugins are not delivered.
-- Events arrive in the next frame, after `tick` and commands. A `Dropped` event reports how many were lost when the game produced too many.
-- Contract: [events](../formats/plugin-api-v1.md#events).
+- SDK: `let chat = lens::Watch::new("chat_message_added { kind, sender.text, message.text }")?` in `start`, kept in the plugin; then in `Plugin::game_event`, `chat.rows(&event)` and `chat.get(row, "message_text")`, as for [the game's events](#the-games-events).
+- Permission: the `chat` domain, `[lens] read = ["chat"]`. Instance: main.
+- `kind` is a row of the `LogKind` sheet; the sender and the message are the game's text with its macros. Messages printed by plugins are not recorded.
+- Contract: [events](../formats/plugin-api-v1.md#events) and [Lens](../formats/plugin-api-v1.md#lens).
 
 ## The game's objects
 

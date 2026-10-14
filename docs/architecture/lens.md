@@ -39,6 +39,7 @@ A watch is a query from an event of the map. Its plan starts at an argument of t
 
 - A point is the map entry of an event, a `function` or a `location`. The host installs one [mid-function hook](./hooks.md#mid-function-hooks) per point, the first time a watch or `angelica look` needs it, and keeps it until the process exits. While nothing watches the point, the hook records nothing.
 - When the game reaches the point, the hook passes the registers to every watch of the point. Each reads its rows at once, through the same checked copy, at most 256 rows from at most 64 pages, and keeps them for the plugin. The hook changes no register and calls no plugin code; the game's code runs on unchanged.
+- While the host prints a plugin's chat message, watches on that thread record nothing, so a plugin never hears its own message.
 - In the next frame the host delivers each plugin's firings as `watched` game events. A watch keeps at most the event's `rate` of firings between two frames and counts the rest as `watch-dropped`.
 - When the game map is reloaded, every watch is planned again; one that no longer fits receives nothing until its plugin watches again.
 

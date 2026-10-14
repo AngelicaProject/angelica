@@ -16,7 +16,6 @@ authors = ["AngelicaProject contributors"]
 "chat.print" = true
 "http.get" = true
 "http.websocket" = true
-"chat.read" = true
 "gameui.hide" = true
 "gameui.text" = true
 "draw.world" = true
@@ -36,6 +35,6 @@ cache = 1
 to = ["hello"]
 
 [lens]
-read = ["actions", "character", "location", "statuses", "windows"]
+read = ["actions", "character", "chat", "location", "statuses", "windows"]
 act = ["actions", "windows"]
 change = ["camera", "chat"]

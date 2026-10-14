@@ -114,6 +114,6 @@ The message is the game's encoded text: `[<plugin name>]` in color row 500, a sp
 | `warning` | 506 |
 | `bad` | 508 |
 
-The same `PrintMessage` is detoured to report the messages the log receives, once a plugin subscribes to chat messages: while any plugin is subscribed, the detour copies the log information, the sender, and the message — each a `Utf8String` read within its used size, at most 8192 bytes — into the host's event queue, then calls the original. A message the host prints for a plugin is marked on the printing thread and not reported. Without a subscriber the detour only passes messages on; it stays installed until the process exits, and a failure inside it lets the message through unchanged.
+The adapter does not detour `PrintMessage`: plugins see the messages the log receives through a Lens watch of the map's `chat_message_added` event at the same function. While the adapter prints, watches on its thread record nothing, so a plugin never hears its own message.
 
 Without one of the command entries, `commands.define` returns `unavailable`; without one of the printing entries, `chat.print` and the host's answers to commands are unavailable. The detour stays installed until the process exits.

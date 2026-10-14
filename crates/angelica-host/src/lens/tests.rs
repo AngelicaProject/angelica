@@ -861,6 +861,19 @@ fn a_watch_reads_the_call_and_the_objects_it_points_to() {
         [Some(Value::Float(2.5))],
         "a fifth argument is on the stack, a float too"
     );
+    // Text that ends just before an unreadable page is read; text that runs
+    // into it is not.
+    let who = prepare_watch(&schema, "item_used { who }", &all).unwrap();
+    let mut late = call();
+    late.general[8] = 0x1FF8;
+    let mut ending = memory(true);
+    put(&mut ending.0, 0x1FF8, b"Alisae ");
+    assert_eq!(
+        run_call(&ending, &who, &late).unwrap()[0].values,
+        [Some(Value::Text(b"Alisae".to_vec()))]
+    );
+    put(&mut ending.0, 0x1FF8, b"Alisaeee");
+    assert_eq!(run_call(&ending, &who, &late).unwrap()[0].values, [None]);
     let filtered = prepare_watch(&schema, "item_used[kind = crystals] { kind }", &all).unwrap();
     assert_eq!(run_call(&memory(true), &filtered, &call()).unwrap(), []);
     let through = prepare_watch(&schema, "item_used.slot[quantity > 10] { item }", &all).unwrap();
@@ -941,6 +954,12 @@ fn firings_wait_for_the_next_frame_within_the_rate() {
         [(0, "test.manager.use".to_owned(), 0x1040)]
     );
     let memory = memory(true);
+    super::watch::quietly(|| lens.watches.fire(0, &call(), &memory));
+    assert_eq!(
+        lens.watches.take("p"),
+        [],
+        "the host reaching the point itself is not recorded"
+    );
     for _ in 0..3 {
         lens.watches.fire(0, &call(), &memory);
     }
