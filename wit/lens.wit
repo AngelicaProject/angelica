@@ -24,6 +24,10 @@ package angelica:plugin@1.0.0;
 /// and the objects they point to, and delivers them in the next frame as a
 /// `watched` game event.
 ///
+/// A field the map marks changeable, a value that exists on the player's
+/// computer alone such as the camera's zoom limits, is changed by `set` and
+/// put back by `restore` or when the plugin stops.
+///
 /// An action is a function of the game the map describes, such as
 /// `use_action`, which `act` calls for the player with named parameters, as
 /// the game's own interface calls it.
@@ -123,4 +127,23 @@ interface lens {
     /// (the message says which), something the build lacks, or the game
     /// refusing the action, `unavailable`.
     act: func(action: string, params: list<tuple<string, value>>) -> result<_, error>;
+
+    /// Changes the value at `path`, a path without braces ending at a field
+    /// the map marks changeable, such as `camera.camera.max_distance`, in
+    /// every object the path reaches (at most 256), and returns how many:
+    /// none while it reaches no object. The value takes the forms `act`'s
+    /// parameters take, within the map's range. The field's domain must be
+    /// listed in the manifest's `[lens] change` and approved; the domains on
+    /// the way in `[lens] read` or `[lens] change`. A field the map does
+    /// not mark changeable, or a domain the plugin may not change, returns
+    /// `permission-denied`; a value that does not fit, `invalid-argument`;
+    /// a value another plugin changed, or memory that cannot be written,
+    /// `unavailable`; more than 64 paths changed, `limit-exceeded`. The
+    /// original is put back by `restore` and when the plugin stops, only
+    /// where the path still reaches the same place and the value is still
+    /// the one written.
+    set: func(path: string, value: value) -> result<u32, error>;
+
+    /// Puts back the originals of what `set` changed through `path`.
+    restore: func(path: string) -> result<_, error>;
 }

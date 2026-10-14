@@ -83,6 +83,7 @@ Rules that keep a plugin within its limits:
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
 | a sheet in the installed game | `game_files::FakeGame::new(version).with_text(sheet, &TextSheet::new(columns, &[text columns]).row(id, &[(column, text)]))` written to `test.game_folder()`, then `test.name_columns(sheet, &[(name, column)])`; `FakeSheet` with `ColumnKind` and `Language` for other column kinds |
 | the game's objects | `test.use_map(&files, &absent)` with the object model of a map (entries with constant offsets, types, enums, domains, roots), before the plugin is approved; then `test.game.set("<path>", &[("field", value.into())])` and `test.game.clear("<root>")` |
+| what the plugin changed | a changeable field in the map given to `test.use_map`; read it back with `runtime::lens::prepare` and `test.game.query`, and stop the plugin to see the original put back |
 | what the plugin did in the game | an action in the map given to `test.use_map`, with its function and globals; then `test.game.acted` lists each call's function entry and arguments, `test.game.act_returns` sets what the game answers (`1` by default), and `test.host.services().lens.acting.set_stopped(true)` plays the player's stop key |
 | the game reaching an event | an event in the map given to `test.use_map`; then `test.fire("<event>", &[("<argument>", Fire::Value(…))])`, or `Fire::Object("<path>")` for a reference, and `test.frames(1)` to deliver it |
 | what the plugin printed | `test.game.printed_text()`; `test.game.clear_printed()` forgets it |

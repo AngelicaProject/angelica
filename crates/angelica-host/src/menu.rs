@@ -1289,9 +1289,12 @@ impl Menu {
             );
         }
         for domain in &ungranted {
-            let text = match domain.strip_suffix(".act") {
-                Some(acting) => fill(s.lens_act_ungranted, &[("domain", acting)]),
-                None => fill(s.lens_ungranted, &[("domain", domain)]),
+            let text = if let Some(acting) = domain.strip_suffix(".act") {
+                fill(s.lens_act_ungranted, &[("domain", acting)])
+            } else if let Some(changing) = domain.strip_suffix(".change") {
+                fill(s.lens_change_ungranted, &[("domain", changing)])
+            } else {
+                fill(s.lens_ungranted, &[("domain", domain)])
             };
             permission_line(ui, view, None, &text, p.secondary);
         }

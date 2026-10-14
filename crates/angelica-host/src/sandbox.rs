@@ -233,6 +233,8 @@ pub struct Context {
     pub lens_read: BTreeSet<String>,
     /// The domains it may act in through Lens.
     pub lens_act: BTreeSet<String>,
+    /// The domains it may change through Lens.
+    pub lens_change: BTreeSet<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -1265,6 +1267,42 @@ impl api::lens::Host for State {
         .map_err(Into::into)
     }
 
+    fn set(&mut self, path: String, value: api::lens::Value) -> ApiResult<u32> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        let value = value_from_api(value);
+        self.host(|_| {
+            let (schema, _) = services.lens.schema();
+            let ready = crate::lens::set::prepare(
+                &schema,
+                &path,
+                &value,
+                &|domain| context.lens_read.contains(domain),
+                &|domain| context.lens_change.contains(domain),
+            )?;
+            services
+                .lens
+                .changes
+                .set(&context.id, &ready, &GameCaller(services.game.as_ref()))
+                .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
+        })
+        .map_err(Into::into)
+    }
+
+    fn restore(&mut self, path: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        self.host(|_| {
+            services
+                .lens
+                .changes
+                .restore(&context.id, &path, &GameCaller(services.game.as_ref()));
+        });
+        Ok(())
+    }
+
     fn release(&mut self, query: u32) {
         if self.queries.release(query) {
             self.context
@@ -1352,8 +1390,18 @@ fn value_from_api(value: api::lens::Value) -> crate::lens::Value {
     }
 }
 
-/// The game as Lens actions call it.
-struct GameCaller<'a>(&'a dyn crate::game::Game);
+/// The game as Lens actions call it and changes write it.
+pub struct GameCaller<'a>(pub &'a dyn crate::game::Game);
+
+impl crate::lens::set::Writer for GameCaller<'_> {
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        self.0.memory()
+    }
+
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        self.0.write(address, bytes)
+    }
+}
 
 impl crate::lens::act::Caller for GameCaller<'_> {
     fn memory(&self) -> &dyn crate::lens::Memory {

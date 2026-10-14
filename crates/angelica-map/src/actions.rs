@@ -36,7 +36,7 @@ impl Number {
         }
     }
 
-    fn from_toml(value: &toml::Value) -> Option<Self> {
+    pub(crate) fn from_toml(value: &toml::Value) -> Option<Self> {
         match value {
             toml::Value::Integer(value) => Some(Self::Integer(*value)),
             toml::Value::Float(value) => Some(Self::Float(value.to_bits())),
@@ -44,6 +44,11 @@ impl Number {
             _ => None,
         }
     }
+}
+
+/// A number of the map written as a TOML integer, float, or boolean.
+pub(crate) fn number(value: &toml::Value) -> Option<Number> {
+    Number::from_toml(value)
 }
 
 /// A value the plugin gives for an argument.

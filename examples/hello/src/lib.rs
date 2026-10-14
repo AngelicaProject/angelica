@@ -157,6 +157,10 @@ impl Hello {
                 let text = self.used_text();
                 self.say(text);
             }
+            "zoom" => match lens::set("camera.camera.max_distance", 40.0f32) {
+                Ok(count) => self.say(format!("zoom limit 40 on {count} cameras")),
+                Err(error) => self.say(format!("cannot zoom: {}", error.message)),
+            },
             "sprint" => {
                 // Sprint is general action 4, used as its hotbar slot does.
                 let sprint = [
@@ -475,6 +479,7 @@ impl Plugin for Hello {
                                 .button("heard", "Last chat message")
                                 .button("used", "Last action used")
                                 .button("sprint", "Sprint")
+                                .button("zoom", "Zoom out further")
                                 .button("texture", "Replace a texture")
                         })
                         .row(|row| {

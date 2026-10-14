@@ -675,6 +675,25 @@ thread = "main"
 [global."test.action_manager"]
 locator = { signature = "C3" }
 type = "struct"
+
+[global."test.camera_manager"]
+locator = { signature = "C3" }
+type = "struct"
+
+[field."test.camera_manager.camera"]
+of = "test.camera_manager"
+type = "ptr"
+offset = 0x0
+
+[field."test.camera.max_distance"]
+of = "test.camera"
+type = "f32"
+offset = 0x12C
+
+[field."test.camera.distance"]
+of = "test.camera"
+type = "f32"
+offset = 0x124
 "#,
     ),
     (
@@ -766,6 +785,27 @@ unit = "s"
 doc = "The game."
 domain = "location"
 
+[types."test.camera_manager"]
+doc = "The cameras."
+domain = "camera"
+
+[types."test.camera_manager".fields.camera]
+doc = "The camera."
+ref = "test.camera"
+
+[types."test.camera"]
+doc = "A camera."
+domain = "camera"
+
+[types."test.camera".fields.max_distance]
+doc = "The zoom limit."
+unit = "yalms"
+set = { range = [1.5, 100.0] }
+
+[types."test.camera".fields.distance]
+doc = "The zoom."
+unit = "yalms"
+
 [types."test.game_main".fields.current_territory_type]
 doc = "The zone."
 sheet = "TerritoryType"
@@ -794,6 +834,12 @@ doc = "Actions."
 class = "you"
 read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
 act = { en = "Uses actions for you", ru = "Использует действия за вас" }
+
+[domains.camera]
+doc = "The camera."
+class = "display"
+read = { en = "Sees your camera", ru = "Видит вашу камеру" }
+change = { en = "Changes your camera's zoom limits", ru = "Меняет пределы приближения камеры" }
 "#,
     ),
     (
@@ -864,6 +910,11 @@ type = "test.battle_chara"
 doc = "The game."
 global = "test.game_main"
 type = "test.game_main"
+
+[roots.camera]
+doc = "The cameras."
+global = "test.camera_manager"
+type = "test.camera_manager"
 "#,
     ),
 ];
@@ -880,10 +931,61 @@ fn without_lens() -> String {
     MANIFEST
         .lines()
         .filter(|line| {
-            *line != "[lens]" && !line.starts_with("read = ") && !line.starts_with("act = ")
+            *line != "[lens]"
+                && !line.starts_with("read = ")
+                && !line.starts_with("act = ")
+                && !line.starts_with("change = ")
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn the_zoom_limit_is_changed_and_put_back() {
+    use angelica_fake_game::Set;
+    use runtime::game::Game as _;
+    let test = approved(MANIFEST);
+    click(&test, "zoom");
+    assert_eq!(
+        message(&test),
+        "cannot zoom: the game map has no root camera"
+    );
+
+    let test = with_character(MANIFEST, &[]);
+    let limit = || {
+        let (schema, _) = test.host.services().lens.schema();
+        let read =
+            runtime::lens::prepare(&schema, "camera.camera.max_distance", &|_| true).unwrap();
+        test.game.query(&read).unwrap()[0].values[0].clone()
+    };
+    click(&test, "zoom");
+    assert_eq!(
+        message(&test),
+        "zoom limit 40 on 0 cameras",
+        "no camera yet"
+    );
+    test.game
+        .set("camera.camera", &[("max_distance", Set::Float(20.0))]);
+    click(&test, "zoom");
+    assert_eq!(message(&test), "zoom limit 40 on 1 cameras");
+    assert_eq!(limit(), Some(runtime::lens::Value::Float(40.0)));
+
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert_eq!(
+        limit(),
+        Some(runtime::lens::Value::Float(20.0)),
+        "the original is back when the plugin stops"
+    );
+
+    let test = with_character(&MANIFEST.replace("change = [\"camera\"]\n", ""), &[]);
+    test.game
+        .set("camera.camera", &[("max_distance", Set::Float(20.0))]);
+    click(&test, "zoom");
+    assert_eq!(
+        message(&test),
+        "cannot zoom: test.camera.max_distance is in domain camera, which the plugin may not change: list it in the manifest's [lens] change"
+    );
 }
 
 #[test]
@@ -1099,7 +1201,8 @@ fn approval_names_the_domains_in_the_maps_words() {
             "character",
             "location",
             "statuses",
-            "actions.act"
+            "actions.act",
+            "camera.change"
         ]
     );
 }

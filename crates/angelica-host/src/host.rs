@@ -520,6 +520,12 @@ impl Host {
                 .intersection(&grants.lens_act)
                 .cloned()
                 .collect(),
+            lens_change: plugin
+                .manifest
+                .lens_change()
+                .intersection(&grants.lens_change)
+                .cloned()
+                .collect(),
             memory_bytes: plugin
                 .manifest
                 .plugin
@@ -628,6 +634,10 @@ impl Host {
         self.services.events.remove_plugin(id);
         self.services.lens.watches.remove_plugin(id);
         self.services.lens.acting.remove_plugin(id);
+        self.services
+            .lens
+            .changes
+            .remove_plugin(id, &crate::sandbox::GameCaller(self.services.game.as_ref()));
         self.services.ui.remove_plugin(id);
     }
 

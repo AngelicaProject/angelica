@@ -204,6 +204,22 @@ impl Objects {
         BASE + start as u64
     }
 
+    /// Writes `bytes` at `address` when the scripted game's memory holds
+    /// the whole range, as a Lens change does.
+    pub fn write_data(&mut self, address: u64, bytes: &[u8]) -> bool {
+        let Some(start) = address
+            .checked_sub(BASE)
+            .and_then(|start| usize::try_from(start).ok())
+        else {
+            return false;
+        };
+        if start + bytes.len() > self.used {
+            return false;
+        }
+        self.write(address, bytes);
+        true
+    }
+
     fn write(&mut self, address: u64, bytes: &[u8]) {
         let start = usize::try_from(address - BASE).unwrap_or(usize::MAX);
         self.memory[start..start + bytes.len()].copy_from_slice(bytes);
@@ -307,6 +323,7 @@ impl Objects {
                         shape: arg.shape.clone(),
                         domain: arg.domain.clone(),
                         forbidden: false,
+                        set: None,
                     };
                     let bytes = encode(&map, &field, value)?;
                     let mut wide = [0u8; 8];

@@ -25,6 +25,7 @@ hosts = ["harmonia.example.org", "*.cdn.example.org"]
 [lens]
 read = ["character", "inventory"]
 act = ["actions"]
+change = ["camera"]
 ```
 
 ## Fields
@@ -40,6 +41,7 @@ act = ["actions"]
 - `http.hosts`: the hosts `http.get` reaches ([plugin API](./plugin-api-v1.md#http)), present exactly when the plugin declares `http.get`: 1–32 distinct host names of lower-case ASCII labels (letters, digits, and inner hyphens, 1–63 bytes each, at most 253 bytes), at least two labels, not an address. International names are written in their `xn--` form. A leading `*.` matches every subdomain of the name after it, not the name itself, and needs at least two labels after it.
 
 - `lens.read`: the domains of the game map's [object model](./game-map-v2.md#domains) the plugin reads through [Lens](./plugin-api-v1.md#lens), at most 64 distinct names of lowercase letters, digits, and underscores. A domain the running game map does not describe, or of a class the host does not present, is listed for the player but not granted.
+- `lens.change`: the domains whose values the plugin [changes](./plugin-api-v1.md#lens), in the same form. A domain the map does not describe, or describes without words for changing it, is listed for the player but not granted.
 - `lens.act`: the domains the plugin takes [actions](./plugin-api-v1.md#lens) in, in the same form. A domain the running game map does not describe, or describes without words for acting in it, is listed for the player but not granted.
 
 Unknown fields refuse the manifest.

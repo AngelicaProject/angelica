@@ -12,6 +12,7 @@ pub mod plan;
 pub mod query;
 pub mod read;
 pub mod schema;
+pub mod set;
 #[cfg(test)]
 mod tests;
 pub mod watch;
@@ -39,6 +40,8 @@ pub struct Lens {
     pub watches: Watches,
     /// Whether plugins may act, and how often each acted.
     pub acting: act::Acting,
+    /// The values plugins changed, and their originals.
+    pub changes: set::Changes,
 }
 
 impl Lens {
@@ -49,6 +52,7 @@ impl Lens {
             generation: AtomicU64::new(0),
             watches: Watches::default(),
             acting: act::Acting::default(),
+            changes: set::Changes::default(),
         }
     }
 

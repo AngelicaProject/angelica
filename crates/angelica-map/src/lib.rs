@@ -25,7 +25,7 @@ pub use load::{FORMAT, Map};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use objects::{
     Array, Domain, DomainClass, Enum, Field, Length, MOST_ELEMENTS, MOST_TEXT, Meaning, Objects,
-    Partition, Root, Shape, Type, Wording,
+    Partition, Root, Settable, Shape, Type, Wording,
 };
 pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};

@@ -2,9 +2,12 @@ use sha2::Digest;
 use windows_sys::Win32::{
     Foundation::HINSTANCE,
     System::{
-        Diagnostics::Debug::ReadProcessMemory,
+        Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory},
         LibraryLoader::{GetModuleFileNameW, GetModuleHandleW},
-        Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery},
+        Memory::{
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, PAGE_READWRITE,
+            VirtualQuery,
+        },
         Threading::GetCurrentProcess,
     },
 };
@@ -31,6 +34,54 @@ pub fn read(address: usize, len: usize) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(bytes)
+}
+
+/// Writes `bytes` at `address` when the whole range is committed, writable
+/// data of this process; code and read-only memory are never written.
+///
+/// # Errors
+/// Why the range is not written.
+pub fn write(address: usize, bytes: &[u8]) -> Result<(), String> {
+    let end = address
+        .checked_add(bytes.len())
+        .ok_or("the range wraps around")?;
+    let mut at = address;
+    while at < end {
+        let mut info = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: VirtualQuery only describes the region containing `at`
+        // into the local structure.
+        let written = unsafe {
+            VirtualQuery(
+                at as *const _,
+                &raw mut info,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        };
+        if written == 0 || info.State != MEM_COMMIT || info.Protect != PAGE_READWRITE {
+            return Err("not writable data".into());
+        }
+        at = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+    }
+    let mut copied = 0;
+    // SAFETY: the whole destination range is committed read-write data of
+    // this process, checked above, so WriteProcessMemory changes no page's
+    // protection; it reads only `bytes`.
+    let ok = unsafe {
+        WriteProcessMemory(
+            GetCurrentProcess(),
+            address as *const _,
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            &raw mut copied,
+        )
+    };
+    if ok == 0 || copied != bytes.len() {
+        return Err(format!(
+            "game memory write failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 /// # Errors

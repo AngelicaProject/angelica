@@ -143,6 +143,16 @@ pub struct Field {
     pub domain: String,
     /// Described for completeness, never read by any plugin.
     pub forbidden: bool,
+    /// Whether a plugin may change it, and within which values: only a
+    /// value that exists on the player's computer alone.
+    pub set: Option<Settable>,
+}
+
+/// How a plugin may change a field: any value of its kind, or within a
+/// range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settable {
+    pub range: Option<(crate::Number, crate::Number)>,
 }
 
 /// A structure of the game.
@@ -291,6 +301,7 @@ struct RawField {
     domain: Option<String>,
     #[serde(default)]
     forbidden: bool,
+    set: Option<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -560,6 +571,30 @@ fn parse_field(type_name: &str, name: &str, raw: RawField, domain: &str) -> Resu
             unit: raw.unit,
         }
     };
+    let set = match raw.set {
+        None | Some(toml::Value::Boolean(false)) => None,
+        Some(toml::Value::Boolean(true)) => Some(Settable { range: None }),
+        Some(toml::Value::Table(table)) => {
+            let range = match table.get("range") {
+                Some(toml::Value::Array(bounds)) if bounds.len() == 2 => {
+                    let bound = |value: &toml::Value| {
+                        crate::actions::number(value).ok_or("`set.range` holds two numbers")
+                    };
+                    Some((bound(&bounds[0])?, bound(&bounds[1])?))
+                }
+                None => None,
+                Some(_) => return Err("`set.range` is [least, most]".into()),
+            };
+            if table.keys().any(|key| key != "range") {
+                return Err("`set` has only `range`".into());
+            }
+            Some(Settable { range })
+        }
+        Some(_) => return Err("`set` is true or { range = [least, most] }".into()),
+    };
+    if set.is_some() && raw.forbidden {
+        return Err("a forbidden field is never set".into());
+    }
     Ok(Field {
         name: name.to_owned(),
         doc: raw.doc,
@@ -567,6 +602,7 @@ fn parse_field(type_name: &str, name: &str, raw: RawField, domain: &str) -> Resu
         shape,
         domain: raw.domain.unwrap_or_else(|| domain.to_owned()),
         forbidden: raw.forbidden,
+        set,
     })
 }
 
@@ -661,6 +697,17 @@ pub(crate) fn check(
         for field in object.fields.values_mut() {
             check_field(&object.name, field, entries, &domains, &type_names, &enums)
                 .map_err(|message| format!("`{}.{}`: {message}", object.name, field.name))?;
+        }
+    }
+
+    // Fields a plugin may change: values whose domain says what changing
+    // it allows.
+    for object in objects.types.values() {
+        for field in object.fields.values() {
+            if let Some(settable) = &field.set {
+                check_settable(objects, field, settable)
+                    .map_err(|message| format!("`{}.{}`: {message}", object.name, field.name))?;
+            }
         }
     }
 
@@ -762,6 +809,37 @@ fn check_partition(
         }
         if !domains.contains(domain) {
             return Err(format!("domain `{domain}` is not in domains.toml"));
+        }
+    }
+    Ok(())
+}
+
+fn check_settable(objects: &Objects, field: &Field, settable: &Settable) -> Result<(), String> {
+    let Shape::Value { kind, .. } = &field.shape else {
+        return Err("only a value is set".into());
+    };
+    if matches!(kind, ValueKind::Ptr | ValueKind::Void | ValueKind::Struct) {
+        return Err("a pointer is never set".into());
+    }
+    if objects
+        .domains
+        .get(&field.domain)
+        .is_none_or(|domain| domain.change.is_none())
+    {
+        return Err(format!(
+            "domain `{}` has no `change` wording for the player",
+            field.domain
+        ));
+    }
+    if let Some((least, most)) = settable.range {
+        let float = matches!(kind, ValueKind::F32 | ValueKind::F64);
+        for bound in [least, most] {
+            if matches!(bound, crate::Number::Float(_)) && !float {
+                return Err("an integer field has an integer range".into());
+            }
+        }
+        if least.float() > most.float() {
+            return Err("a range's least value is above its most".into());
         }
     }
     Ok(())
@@ -1095,6 +1173,53 @@ type = "inventory.manager"
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn only_values_of_a_domain_with_change_wording_are_set() {
+        let changing = DOMAINS.replace(
+            "read = { en = \"Sees the items you carry\", ru = \"Видит предметы, которые вы носите\" }",
+            "read = { en = \"Sees the items you carry\", ru = \"Видит предметы, которые вы носите\" }
+change = { en = \"Changes\", ru = \"Меняет\" }",
+        );
+        let with = |domains: &str, set: &str| {
+            let types = TYPES.replace(
+                "[types.\"inventory.item\".fields.quantity]
+doc = \"How many.\"
+",
+                &format!(
+                    "[types.\"inventory.item\".fields.quantity]
+doc = \"How many.\"
+{set}
+"
+                ),
+            );
+            Map::from_sources(
+                "format = 2",
+                &[
+                    ("entries/inventory.toml".into(), ENTRIES.into()),
+                    ("domains.toml".into(), domains.into()),
+                    ("enums/inventory.container_kind.toml".into(), ENUM.into()),
+                    ("types/inventory.toml".into(), types),
+                    ("roots.toml".into(), ROOTS.into()),
+                ],
+            )
+        };
+        let map = with(&changing, "set = { range = [1, 99] }").unwrap();
+        let (_, quantity) = map.objects().field("inventory.item", "quantity").unwrap();
+        assert_eq!(
+            quantity.set.as_ref().and_then(|set| set.range),
+            Some((crate::Number::Integer(1), crate::Number::Integer(99)))
+        );
+        assert!(with(DOMAINS, "set = true").is_err(), "no change wording");
+        for wrong in [
+            "set = { range = [1.5, 2] }",
+            "set = { range = [9, 1] }",
+            "set = { most = 2 }",
+            "set = 3",
+        ] {
+            assert!(with(&changing, wrong).is_err(), "{wrong}");
+        }
     }
 
     #[test]

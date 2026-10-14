@@ -45,10 +45,10 @@ The installation key keeps packages from being swapped or damaged; it does not p
 `grants/<plugin-id>.json` records the player's approval:
 
 ```json
-{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"], "lens_act": ["actions"]}
+{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"], "lens_act": ["actions"], "lens_change": ["camera"]}
 ```
 
-`http_hosts` lists the approved hosts of `http.get`, `lens_read` the domains of the game map approved for reading, and `lens_act` those approved for acting in; each is left out when empty. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares, every domain of its `[lens] read` that the running game map describes in a class the host presents, and every domain of its `[lens] act` that the map describes with words for acting. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+`http_hosts` lists the approved hosts of `http.get`, `lens_read` the domains of the game map approved for reading, `lens_act` those approved for acting in, and `lens_change` those approved for changing; each is left out when empty. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares, every domain of its `[lens] read` that the running game map describes in a class the host presents, every domain of its `[lens] act` that the map describes with words for acting, and every domain of its `[lens] change` that the map describes with words for changing. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
 
 ## Lens requests
 

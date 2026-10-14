@@ -88,6 +88,7 @@ strings! {
     source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
     lens_ungranted: "Wants to read {domain}, which the game map does not offer: not allowed", "Хочет читать {domain}, чего карта игры не даёт: не разрешено";
     lens_act_ungranted: "Wants to act in {domain}, which the game map does not offer: not allowed", "Хочет действовать в {domain}, чего карта игры не даёт: не разрешено";
+    lens_change_ungranted: "Wants to change {domain}, which the game map does not offer: not allowed", "Хочет менять {domain}, чего карта игры не даёт: не разрешено";
     acts_warning: "Acting for you in the game breaks its terms of service: the game's company can suspend your account for it.", "Действия за вас в игре нарушают её пользовательское соглашение: компания игры может за это заблокировать аккаунт.";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
@@ -279,8 +280,12 @@ impl Language {
                 Self::English => domain.read.en.clone(),
                 Self::Russian => domain.read.ru.clone(),
             },
-            crate::manifest::Asked::Act(domain) => {
-                let words = domain.act.as_ref().unwrap_or(&domain.read);
+            crate::manifest::Asked::Act(domain) | crate::manifest::Asked::Change(domain) => {
+                let words = match asked {
+                    crate::manifest::Asked::Change(_) => domain.change.as_ref(),
+                    _ => domain.act.as_ref(),
+                }
+                .unwrap_or(&domain.read);
                 match self {
                     Self::English => words.en.clone(),
                     Self::Russian => words.ru.clone(),

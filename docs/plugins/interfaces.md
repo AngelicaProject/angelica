@@ -88,6 +88,15 @@ Learn when the game does something the game map describes as an event, such as t
 - Find events and their arguments with `angelica schema search` and `schema show`; check a watch with `angelica query`; see it fire in the game with `angelica look --watch 10 "<watch>"`.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
 
+## Changing what you see
+
+Change a value the game keeps on the player's computer alone, such as how far the camera zooms out.
+
+- SDK: `lens::set("camera.camera.max_distance", 40.0f32)?` returns how many values it changed; `lens::restore("camera.camera.max_distance")?` puts the originals back. The host puts them back when the plugin stops too.
+- Permission: each domain the plugin changes, listed in the manifest as `[lens] change = ["camera"]`. Instance: main.
+- Only fields the map marks changeable, within their range; `schema show` says which. Set again when the game makes the object again: a change lives in the object it was written to.
+- Contract: [Lens](../formats/plugin-api-v1.md#lens).
+
 ## Acting in the game
 
 Do something in the game for the player, as the game's own interface would: use an action or an item, mount, teleport.

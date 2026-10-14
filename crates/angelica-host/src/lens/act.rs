@@ -199,7 +199,7 @@ fn given_params<'g>(
 }
 
 /// A parameter's value as a number of its kind, checked.
-fn encode(schema: &Schema, name: &str, param: &Param, value: &Value) -> Result<Number> {
+pub(super) fn encode(schema: &Schema, name: &str, param: &Param, value: &Value) -> Result<Number> {
     let wrong = |what: &str| Error::invalid(format!("parameter {name} is {what}: {}", param.doc));
     let number = match (&param.meaning, value) {
         (Meaning::Enum(enum_name), Value::Named(value_name)) => {

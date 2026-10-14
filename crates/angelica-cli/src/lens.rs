@@ -219,6 +219,7 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
         shape: arg.shape.clone(),
         domain: arg.domain.clone(),
         forbidden: arg.forbidden,
+        set: None,
     };
     let held = match &arg.shape {
         Shape::Text(length) => format!("text of at most {length} bytes, behind a pointer"),
@@ -326,9 +327,18 @@ fn field_json(objects: &Objects, owner: &str, field: &Field, schema: Option<&Sch
         "shape": shape(objects, field),
         "entry": field.at,
         "forbidden": field.forbidden,
+        "set": field.set.as_ref().map(settable),
         "available": available.as_ref().map(Result::is_ok),
         "reason": available.and_then(Result::err),
     })
+}
+
+/// Which values plugins may set a field to.
+fn settable(set: &angelica_map::Settable) -> String {
+    match set.range {
+        Some((least, most)) => format!("{} to {}", least.float(), most.float()),
+        None => "any value".to_owned(),
+    }
 }
 
 fn field_line(objects: &Objects, owner: &str, field: &Field, schema: Option<&Schema>) -> String {
@@ -341,6 +351,9 @@ fn field_line(objects: &Objects, owner: &str, field: &Field, schema: Option<&Sch
     );
     if field.forbidden {
         line.push_str(" (never read by a plugin)");
+    }
+    if let Some(set) = &field.set {
+        let _ = write!(line, " (plugins change it: {})", settable(set));
     }
     if let Some(Err(reason)) = availability(schema, &field.at) {
         let _ = write!(line, " (absent in this build: {reason})");

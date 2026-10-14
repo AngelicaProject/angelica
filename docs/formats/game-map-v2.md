@@ -144,7 +144,7 @@ read = { en = "Sees the items you carry", ru = "Видит предметы, к�
 - A domain is named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
 - `doc`: what the domain holds; not blank.
 - `class`: how far the domain reaches, as the player sees it: `you` (only about the player), `display` (changes what the player sees), `others` (sees other players), `acts` (acts in the game for the player), or `acts_on_others` (acts toward other players). A host grants a domain only of a class it presents.
-- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `act`, in the same form, says what acting in the domain allows; a domain without it has no actions. `change`, in the same form, says what changing the domain allows; the plugin API does not use it yet.
+- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `act`, in the same form, says what acting in the domain allows; a domain without it has no actions. `change`, in the same form, says what changing values of the domain allows; a domain without it has no values plugins change.
 
 A new domain and its wording are approved by the maintainer once; types and fields join a domain without a new approval. A domain is narrow: what one kind of plugin needs, not everything about the player.
 
@@ -205,6 +205,8 @@ An array gives:
 - `partition`: optional; `{ field = "<field>", domains = { <domain> = ["<value>", …] } }`. The elements belong to domains by the value of `field`, a field of the element with an enum: a value listed under a domain belongs to it, any other named value to the array field's own domain, and an element whose value has no name in the enum is never read.
 
 Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
+
+A value field may have `set`: `true`, or `{ range = [least, most] }`, when plugins may change it. Only a value that exists on the player's computer alone is marked, such as the camera's zoom limits: never one the game sends to its servers. The field is a number or a `bool`, never a pointer or forbidden; its domain has `change` wording; an integer field has an integer range.
 
 ### Roots
 

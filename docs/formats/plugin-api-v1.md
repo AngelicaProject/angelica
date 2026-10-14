@@ -111,6 +111,14 @@ When the game reaches the event's point, the host reads the rows at once, on the
 - Before the call, every condition of the action must hold; one that does not is `unavailable` with the condition's words, such as "you are in combat". The host then calls the game's function on the main thread, as the game's own interface does, and the game checks the action as for the player's own press. A return value other than the map's `ok` is `unavailable`: the game refused it now. Anything the running build lacks is `unavailable` too.
 - `act` works in the main instance after the game has started, from `tick`, a command, a window event, or a game event; jobs get `wrong-context`.
 
+`set` changes a value the map marks [changeable](./game-map-v2.md#types): `set("camera.camera.max_distance", float(40))`.
+
+- The path is a query's path without braces, ending at the field; filters on the way pick the objects. The value is changed in every object the path reaches, at most 256, and `set` returns how many: none while it reaches no object.
+- The value takes the forms an action's parameters take, within the map's range; outside it is `invalid-argument`.
+- The field's domain must be listed in the manifest's `[lens] change` and approved; the domains on the way in `[lens] read` or `[lens] change`. A field the map does not mark is `permission-denied`.
+- A value another plugin changed is `unavailable` until that plugin restores it or stops; so is memory that cannot be written now. A plugin keeps at most 64 paths changed.
+- The host keeps each value's original and puts it back on `restore` with the same path and when the plugin stops, only where the path still reaches the same place and the value is still the one written: a value the game changed meanwhile, or an object the game made again, is left as the game has it.
+
 ## Events
 
 `events.subscribe` replaces the kinds of events the plugin receives; each kind needs its permission, and an empty list ends the subscriptions. When the game does something of a subscribed kind, the host records it, and in the next frame calls the plugin's `on-game-event` once per event, in the order the game did them, after `tick` and the plugin's commands. An event reports what happened; the plugin cannot change it.

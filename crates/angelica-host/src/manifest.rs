@@ -152,6 +152,8 @@ pub enum Asked {
     Read(angelica_map::Domain),
     /// Acting in a domain of the game map through Lens.
     Act(angelica_map::Domain),
+    /// Changing values of a domain of the game map through Lens.
+    Change(angelica_map::Domain),
 }
 
 impl Asked {
@@ -161,6 +163,7 @@ impl Asked {
             Self::Permission(permission) => permission.class(),
             Self::Read(domain) => domain_class(domain.class).unwrap_or(Class::YoursOnly),
             Self::Act(_) => Class::Acts,
+            Self::Change(_) => Class::WhatYouSee,
         }
     }
 
@@ -171,6 +174,7 @@ impl Asked {
             Self::Permission(permission) => permission.name().to_owned(),
             Self::Read(domain) => format!("{}.read", domain.name),
             Self::Act(domain) => format!("{}.act", domain.name),
+            Self::Change(domain) => format!("{}.change", domain.name),
         }
     }
 }
@@ -204,10 +208,21 @@ fn grantable_act(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map:
         .collect()
 }
 
-/// The domains of `[lens] read` and `[lens] act` that are not granted now:
+/// The domains of `[lens] change` that can be granted: those the map
+/// describes with words for changing them.
+fn grantable_change(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Domain> {
+    manifest
+        .lens_change()
+        .iter()
+        .filter_map(|name| domains(name))
+        .filter(|domain| domain.change.is_some())
+        .collect()
+}
+
+/// The domains of `[lens] read`, `act`, and `change` that are not granted now:
 /// the map does not describe them, this host does not present their class,
-/// or the map has no words for acting in them. Acting is named
-/// `<domain>.act`.
+/// or the map has no words for acting in them or changing them. Acting is
+/// named `<domain>.act`, changing `<domain>.change`.
 #[must_use]
 pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
     let grantable: BTreeSet<String> = grantable(manifest, domains)
@@ -215,6 +230,10 @@ pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
         .map(|domain| domain.name)
         .collect();
     let acting: BTreeSet<String> = grantable_act(manifest, domains)
+        .into_iter()
+        .map(|domain| domain.name)
+        .collect();
+    let changing: BTreeSet<String> = grantable_change(manifest, domains)
         .into_iter()
         .map(|domain| domain.name)
         .collect();
@@ -229,6 +248,13 @@ pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
                 .filter(|name| !acting.contains(name))
                 .map(|name| format!("{name}.act")),
         )
+        .chain(
+            manifest
+                .lens_change()
+                .into_iter()
+                .filter(|name| !changing.contains(name))
+                .map(|name| format!("{name}.change")),
+        )
         .collect()
 }
 
@@ -241,6 +267,11 @@ pub fn asked(manifest: &Manifest, domains: Domains<'_>) -> Vec<Asked> {
         .map(|permission| Asked::Permission(*permission))
         .chain(grantable(manifest, domains).into_iter().map(Asked::Read))
         .chain(grantable_act(manifest, domains).into_iter().map(Asked::Act))
+        .chain(
+            grantable_change(manifest, domains)
+                .into_iter()
+                .map(Asked::Change),
+        )
         .collect()
 }
 
@@ -282,6 +313,10 @@ pub fn requests(
                 granted.is_some_and(|grants| grants.lens_act.contains(&domain.name)),
                 Vec::new(),
             ),
+            Asked::Change(domain) => (
+                granted.is_some_and(|grants| grants.lens_change.contains(&domain.name)),
+                Vec::new(),
+            ),
         };
         if !covered || !hosts.is_empty() {
             classes
@@ -301,6 +336,8 @@ pub struct Lens {
     pub read: Vec<String>,
     #[serde(default)]
     pub act: Vec<String>,
+    #[serde(default)]
+    pub change: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -447,6 +484,7 @@ impl Manifest {
         if let Some(lens) = &manifest.lens {
             check_domains("lens.read", &lens.read)?;
             check_domains("lens.act", &lens.act)?;
+            check_domains("lens.change", &lens.change)?;
         }
         manifest.declared = declared;
         Ok(manifest)
@@ -482,6 +520,15 @@ impl Manifest {
         self.lens
             .iter()
             .flat_map(|lens| lens.act.iter().cloned())
+            .collect()
+    }
+
+    /// The domains the manifest's `[lens] change` lists.
+    #[must_use]
+    pub fn lens_change(&self) -> BTreeSet<String> {
+        self.lens
+            .iter()
+            .flat_map(|lens| lens.change.iter().cloned())
             .collect()
     }
 
@@ -533,6 +580,9 @@ pub struct Grants {
     /// The domains of the game map approved for acting in through Lens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub lens_act: BTreeSet<String>,
+    /// The domains of the game map approved for changing through Lens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub lens_change: BTreeSet<String>,
 }
 
 impl Grants {
@@ -549,6 +599,10 @@ impl Grants {
                 .map(|domain| domain.name)
                 .collect(),
             lens_act: grantable_act(manifest, domains)
+                .into_iter()
+                .map(|domain| domain.name)
+                .collect(),
+            lens_change: grantable_change(manifest, domains)
                 .into_iter()
                 .map(|domain| domain.name)
                 .collect(),
@@ -569,6 +623,9 @@ impl Grants {
             && grantable_act(manifest, domains)
                 .iter()
                 .all(|domain| self.lens_act.contains(&domain.name))
+            && grantable_change(manifest, domains)
+                .iter()
+                .all(|domain| self.lens_change.contains(&domain.name))
     }
 }
 

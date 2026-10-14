@@ -118,6 +118,10 @@ impl Game for WindowsGame {
         super::act::call(address, args)
     }
 
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        usize::try_from(address).is_ok_and(|address| super::memory::write(address, bytes).is_ok())
+    }
+
     fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
         hooked(
             "watched event",

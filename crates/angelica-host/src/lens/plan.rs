@@ -194,6 +194,8 @@ struct Planner<'a> {
     watch: bool,
     /// Whether the path may end at an object, without values to answer.
     objects_only: bool,
+    /// The type the path ended at, once planned.
+    reached: Option<String>,
 }
 
 fn not_found(message: String) -> Error {
@@ -978,6 +980,7 @@ impl<'a> Planner<'a> {
                 current = self.segment(&current, segment, answer, &mut steps, &mut columns)?;
             }
             self.selected(query, &current, &mut columns)?;
+            self.reached = Some(current);
         } else {
             self.event_columns(query, &mut columns)?;
         }
@@ -1088,8 +1091,75 @@ pub fn prepare_objects(schema: &Schema, text: &str) -> Result<Prepared> {
         depth: 0,
         watch: false,
         objects_only: true,
+        reached: None,
     }
     .plan(&query)
+}
+
+/// A field a plugin changes: where it is in each object the plan reaches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Target {
+    /// The type that holds the field.
+    pub owner: String,
+    pub field: Field,
+    pub offset: u32,
+}
+
+/// Plans a path to a value to change, such as `camera.camera.max_distance`:
+/// the objects the path before the last field reaches, and that field,
+/// checked as a query checks it against the domains `permitted`.
+///
+/// # Errors
+/// As for [`prepare`], and `invalid-argument` for a path with braces or
+/// without a field after its root.
+pub fn prepare_set(
+    schema: &Schema,
+    text: &str,
+    permitted: &dyn Fn(&str) -> bool,
+) -> Result<(Prepared, Target)> {
+    let mut query = query::parse(text).map_err(Error::invalid)?;
+    if query.select.is_some() {
+        return Err(Error::invalid(
+            "a value to change is a path without braces, such as camera.camera.max_distance",
+        ));
+    }
+    let Some(last) = query.path.pop() else {
+        return Err(Error::invalid(format!(
+            "name the field of {} to change after it, such as {}.<field>",
+            query.root, query.root
+        )));
+    };
+    if last.filter.is_some() {
+        return Err(Error::invalid(format!(
+            "{} is the value to change: it has no filter",
+            last.field
+        )));
+    }
+    let mut planner = Planner {
+        objects: &schema.objects,
+        schema,
+        permitted,
+        domains: BTreeSet::new(),
+        covered: BTreeSet::new(),
+        depth: 0,
+        watch: false,
+        objects_only: true,
+        reached: None,
+    };
+    let prepared = planner.plan(&query)?;
+    let owner = planner
+        .reached
+        .clone()
+        .ok_or_else(|| Error::invalid("a value to change is a field of an object"))?;
+    let (field, offset) = planner.field(&owner, &last.field)?;
+    Ok((
+        prepared,
+        Target {
+            owner,
+            field: field.clone(),
+            offset,
+        },
+    ))
 }
 
 fn plan(
@@ -1108,6 +1178,7 @@ fn plan(
         depth: 0,
         watch,
         objects_only: false,
+        reached: None,
     }
     .plan(&query)
 }

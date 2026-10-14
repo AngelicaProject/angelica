@@ -91,4 +91,11 @@ pub trait Game: Send + Sync {
         let _ = (address, args);
         Err("this game cannot be acted in".into())
     }
+
+    /// Writes `bytes` at `address` of the game's data, for a Lens change;
+    /// false when the range is not writable data.
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        let _ = (address, bytes);
+        false
+    }
 }

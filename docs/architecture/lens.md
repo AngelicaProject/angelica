@@ -2,7 +2,7 @@
 
 Lens is how plugins reach the game's objects. The host is an engine with a few verbs over the game; everything the verbs apply to is described as data in the game map. A new readable structure is a description in the map's [object model](../formats/game-map-v2.md#object-model), not new host code. The plugin still holds no address and runs no code in the game: it names roots, fields, and domains, and the host reads by the map.
 
-The plugin API's `lens` interface offers `query`, reading objects by path, `watch`, reading the objects the game's code works on when it reaches an event of the map, and `act`, calling a function of the game for the player as the map's actions describe ([contract](../formats/plugin-api-v1.md#lens)).
+The plugin API's `lens` interface offers `query`, reading objects by path, `watch`, reading the objects the game's code works on when it reaches an event of the map, `set`, changing a value the map marks changeable until the plugin restores it or stops, and `act`, calling a function of the game for the player as the map's actions describe ([contract](../formats/plugin-api-v1.md#lens)).
 
 ## Parts
 
@@ -16,6 +16,7 @@ The plugin API's `lens` interface offers `query`, reading objects by path, `watc
 | watches | the points of the game's code that watches use, their subscribers, and the firings kept for the next frame | `angelica-host` (`lens::watch`) |
 | watch hooks | a hook at each watched point that hands the registers to the watches | `angelica-host` (`interop::watch`), `test.fire` of the scripted game in tests |
 | acting | an action checked against the map and the plugin's domains, its rate, its conditions, the player's stop, and the call | `angelica-host` (`lens::act`) |
+| changes | values plugins changed, their originals, and putting them back | `angelica-host` (`lens::set`); writes through `interop::memory`, the scripted game's memory in tests |
 | calls | a function of the game called with the Windows x64 convention | `angelica-host` (`interop::act`), the scripted game's record of calls in tests |
 | memory | reads of the game process that fail instead of faulting | `angelica-host` (`interop::game`), the scripted game in tests |
 
@@ -41,6 +42,10 @@ A watch is a query from an event of the map. Its plan starts at an argument of t
 - When the game map is reloaded, every watch is planned again; one that no longer fits receives nothing until its plugin watches again.
 
 Values read in a hook belong to the moment of the call, on whatever thread made it, not to a moment between frames.
+
+## Changes
+
+A change is a path to a field the map marks changeable, planned like a query that ends at objects, and a value checked against the field's kind and range. The host writes the value into each object the path reaches, only into committed read-write data of the game, and keeps the original. One plugin owns a changed value until it restores it or stops; another plugin's change of it is refused meanwhile. Putting back walks the path again and writes the original only where the path still reaches the same place and the value is still the one written, so the game's own changes and objects it made again are never overwritten.
 
 ## Actions
 

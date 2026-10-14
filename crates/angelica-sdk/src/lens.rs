@@ -46,13 +46,21 @@
 //! lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4.into())])?;
 //! ```
 //!
-//! The manifest lists every domain a query reads and every domain the
-//! plugin acts in:
+//! [`set`] changes a value the map marks changeable, such as the camera's
+//! zoom limit, until [`restore`] or the plugin stops:
+//!
+//! ```ignore
+//! lens::set("camera.camera.max_distance", 40.0f32)?;
+//! ```
+//!
+//! The manifest lists every domain a query reads, every domain the plugin
+//! acts in, and every domain it changes:
 //!
 //! ```toml
 //! [lens]
 //! read = ["inventory"]
 //! act = ["actions"]
+//! change = ["camera"]
 //! ```
 use crate::api::lens as api;
 pub use api::{Column, FlagSet, Row, SheetRow, Value};
@@ -358,6 +366,25 @@ pub fn act(action: &str, params: &[(&str, Value)]) -> Result<(), crate::Error> {
         .map(|(name, value)| ((*name).to_owned(), value.clone()))
         .collect();
     api::act(action, &params)
+}
+
+/// Changes the value at `path`, a field the map marks changeable such as
+/// `camera.camera.max_distance`, in every object the path reaches; returns
+/// how many. The host puts the original back on [`restore`] and when the
+/// plugin stops.
+///
+/// # Errors
+/// See `lens.set`.
+pub fn set(path: &str, value: impl Into<Value>) -> Result<u32, crate::Error> {
+    api::set(path, &value.into())
+}
+
+/// Puts back the originals of what [`set`] changed through `path`.
+///
+/// # Errors
+/// See `lens.restore`.
+pub fn restore(path: &str) -> Result<(), crate::Error> {
+    api::restore(path)
 }
 
 /// The value of an enum by its name, for a parameter of [`act`].

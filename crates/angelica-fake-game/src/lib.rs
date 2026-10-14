@@ -235,6 +235,13 @@ impl Game for ScriptedGame {
         })
     }
 
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .write_data(address, bytes)
+    }
+
     fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
         if self.watch_available.load(Ordering::Acquire) {
             self.watched
