@@ -268,7 +268,9 @@ impl Language {
             Self::Russian => match permission {
                 Permission::ExcelText => "Заменяет тексты, которые игра берёт из своих таблиц",
                 Permission::TextCase => "Меняет, как игра пишет заглавные буквы",
-                Permission::FilesReplace => "Заменяет файлы игры: шрифты, текстуры и материалы",
+                Permission::FilesReplace => {
+                    "Заменяет файлы игры: шрифты, текстуры, материалы и модели"
+                }
                 Permission::ChatCommands => "Добавляет свои команды чата",
                 Permission::ChatPrint => "Пишет свои сообщения в ваш чат",
                 Permission::HttpGet => "Скачивает с этих сайтов",

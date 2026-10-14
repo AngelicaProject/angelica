@@ -4,6 +4,8 @@
 //! checks of its own.
 #![forbid(unsafe_code)]
 
+mod model;
+
 /// The size of a texture file's header.
 const TEXTURE_HEADER: usize = 80;
 const FDT_HEADER: usize = 0x20;
@@ -18,7 +20,7 @@ const FDT_MAX_GLYPHS: usize = 0x10000;
 const FDT_MAX_PAGES: u16 = 4 * 7;
 
 /// The file extensions the host can check.
-pub const FORMATS: &[&str] = &["fdt", "mtrl", "tex"];
+pub const FORMATS: &[&str] = &["fdt", "mdl", "mtrl", "tex"];
 
 /// Checks `replacement` for the game file at `path`, whose original bytes
 /// are `original`.
@@ -34,6 +36,10 @@ pub fn check(path: &str, original: &[u8], replacement: &[u8]) -> Result<(), Stri
         Some("tex") => check_texture(original, replacement),
         Some("fdt") => check_font_table(original, replacement),
         Some("mtrl") => check_material(original, replacement),
+        Some("mdl") => {
+            model::model(original).map_err(|problem| format!("the original: {problem}"))?;
+            model::model(replacement)
+        }
         _ => Err(format!(
             "{path}: the host can check only these file formats: {}",
             FORMATS.join(", ")
@@ -716,6 +722,52 @@ pub(crate) mod tests {
             .unwrap();
         }
         assert!(checked > 50_000, "{checked}");
+    }
+
+    /// Every model the installed game ships passes the checks:
+    /// `ANGELICA_GAME_PATH` is its `game` folder. The failures are counted
+    /// by rule, so one run shows every rule a shipped model breaks.
+    #[test]
+    #[ignore = "needs ANGELICA_GAME_PATH"]
+    fn every_model_of_the_installed_game_passes() {
+        let game = std::path::PathBuf::from(
+            std::env::var("ANGELICA_GAME_PATH").expect("ANGELICA_GAME_PATH"),
+        );
+        let data = angelica_sqpack::GameData::open(game.parent().unwrap()).unwrap();
+        let mut checked = 0;
+        let mut failed: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for category in ["bg", "bgcommon", "chara", "common", "vfx"] {
+            data.each_file("ffxiv", category, |file| {
+                let Ok(bytes) = file else { return };
+                if bytes.len() < 0x44
+                    || !matches!(
+                        u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                        0x0100_0005 | 0x0100_0006
+                    )
+                {
+                    return;
+                }
+                checked += 1;
+                if let Err(problem) = model::model(&bytes) {
+                    let rule: String = problem
+                        .split(':')
+                        .next()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_ascii_digit())
+                        .collect();
+                    let entry = failed.entry(format!("{category}: {rule}")).or_default();
+                    if *entry < 3 {
+                        eprintln!("{category}: {problem}");
+                    }
+                    *entry += 1;
+                }
+            })
+            .unwrap();
+        }
+        assert!(failed.is_empty(), "{checked} models: {failed:#?}");
+        assert!(checked > 10_000, "{checked}");
     }
 
     #[test]

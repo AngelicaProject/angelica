@@ -104,7 +104,7 @@ impl Permission {
         match self {
             Self::ExcelText => "Replaces text the game shows from its data sheets",
             Self::TextCase => "Changes how the game capitalizes letters",
-            Self::FilesReplace => "Replaces game files: fonts, textures, and materials",
+            Self::FilesReplace => "Replaces game files: fonts, textures, materials, and models",
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
