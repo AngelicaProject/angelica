@@ -25,10 +25,21 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
     assert!(read("Cargo.toml").contains("name = \"loot-notes\""));
     assert!(read("src/lib.rs").contains("angelica_sdk::plugin!(LootNotes);"));
     assert!(read("tests/plugin.rs").contains("\"/loot-notes\""));
-    assert!(read("AGENTS.md").contains("target/wasm32-wasip2/release/loot_notes.wasm"));
-    let skill = read(".claude/skills/angelica-plugin/SKILL.md");
-    assert!(skill.starts_with("---") && skill.contains("name: angelica-plugin"));
-    assert!(skill.contains("# Working on Loot Notes") && !skill.contains("{angelica}"));
+    // One guidance file for every coding agent, readable without a checkout.
+    let agents = read("AGENTS.md");
+    assert!(agents.starts_with("# Loot Notes"));
+    assert!(
+        agents.contains(
+            "angelica plugin pack --component target/wasm32-wasip2/release/loot_notes.wasm"
+        )
+    );
+    assert!(agents.contains("angelica plugin install loot-notes-<version>.angelica"));
+    assert!(agents.contains(
+        "https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md"
+    ));
+    assert!(!agents.contains("<angelica>") && !agents.contains("dev install"));
+    assert_eq!(read("CLAUDE.md"), "@AGENTS.md\n");
+    assert!(!folder.join(".claude").exists());
     assert!(read("rust-toolchain.toml").contains("wasm32-wasip2"));
     assert!(read(".github/workflows/ci.yml").contains("cargo test"));
     let release = read(".github/workflows/release.yml");
@@ -36,20 +47,11 @@ fn creates_a_project_that_names_the_plugin_everywhere() {
         release.contains("release/loot_notes.wasm") && release.contains("dist/loot-notes.angelica")
     );
     assert!(release.contains("${{ secrets.ANGELICA_AUTHOR_KEY }}") && !release.contains("{id}"));
-    // The checkout's path stays in the uncommitted cargo configuration.
-    let checkout = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
-    let checkout = checkout.trim_end_matches("/crates/angelica-cli");
-    for file in [
-        "Cargo.toml",
-        "AGENTS.md",
-        ".claude/skills/angelica-plugin/SKILL.md",
-    ] {
-        assert!(
-            !read(file).contains("{angelica}") && !read(file).contains(checkout),
-            "{file}"
-        );
+    // Without --angelica, the SDK and the test host come from GitHub.
+    for file in ["Cargo.toml", "AGENTS.md"] {
+        assert!(!read(file).contains("{angelica}"), "{file}");
     }
-    assert!(read(".cargo/config.toml").contains(&format!("{checkout}/crates/angelica-sdk")));
+    assert!(!folder.join(".cargo").exists());
     assert!(read(".gitignore").contains("/.cargo/config.toml"));
 
     let again = new(directory.path(), "loot-notes");

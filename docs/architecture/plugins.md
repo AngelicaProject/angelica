@@ -48,7 +48,7 @@ The player's choice to disable a plugin is kept across game starts ([settings](.
 
 The [plugin author guide](../plugins/authoring.md) walks through the work loop; this section describes the pieces it uses.
 
-`angelica plugin new <id>` creates a plugin project in its own folder: a working plugin with a window and a chat command, its manifest, a test against the scripted game, the toolchain the components build with, and an `AGENTS.md` and an agent skill that tell a coding agent the work loop and the rules. The project uses the SDK and the scripted game from the Angelica checkout the command comes from (`--angelica` for another), and `cargo test` builds the component and runs the tests.
+`angelica plugin new <id>` creates a plugin project in its own folder: a working plugin with a window and a chat command, its manifest, a test against the scripted game, the toolchain the components build with, and an `AGENTS.md` that tells any coding agent the work loop, the commands, and the rules. The project uses the SDK and the scripted game from the Angelica repository on GitHub, or from a local checkout with `--angelica`, and `cargo test` builds the component and runs the tests.
 
 A Rust plugin depends on `angelica-sdk`, implements `angelica_sdk::Plugin`, and exports it with `angelica_sdk::plugin!`. Beside the bindings, the SDK passes jobs' inputs and outputs as typed values (`jobs`), saves values in the plugin's folder (`storage`), and sends requests from a URL (`http`); values travel as JSON. [`examples/hello`](../../examples/hello) uses every interface. `angelica-fake-game` runs a plugin's component in the real host against a scripted game, so a plugin's own tests cover its windows, storage, jobs, and the rows its tables change without the game.
 
