@@ -23,6 +23,72 @@ const MAX_ICONS: usize = 512;
 /// The time a frame may spend reading and decoding icons.
 const ICON_BUDGET: Duration = Duration::from_millis(2);
 
+/// What plugins draw over the game world, under every window.
+fn draw_world(host: &Host, context: &egui::Context) {
+    use crate::draw::Mark;
+    let services = host.services();
+    if services.draw.idle() {
+        return;
+    }
+    let Some(matrix) = services.game.view_projection() else {
+        return;
+    };
+    let screen = context.content_rect();
+    let at = |(x, y): (f32, f32)| {
+        egui::pos2(
+            screen.left() + x * screen.width(),
+            screen.top() + y * screen.height(),
+        )
+    };
+    let color = |rgba: u32| {
+        let [r, g, b, a] = rgba.to_be_bytes();
+        egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+    };
+    let painter = context.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::new("angelica-world"),
+    ));
+    for mark in services.draw.marks(&matrix) {
+        match mark {
+            Mark::Line {
+                from,
+                to,
+                color: rgba,
+                thickness,
+            } => {
+                painter.line_segment(
+                    [at(from), at(to)],
+                    egui::Stroke::new(thickness, color(rgba)),
+                );
+            }
+            Mark::Fill {
+                points,
+                color: rgba,
+            } => {
+                painter.add(egui::Shape::convex_polygon(
+                    points.into_iter().map(at).collect(),
+                    color(rgba),
+                    egui::Stroke::NONE,
+                ));
+            }
+            Mark::Text {
+                at: place,
+                text,
+                color: rgba,
+            } => {
+                painter.text(
+                    at(place),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    egui::FontId::proportional(14.0),
+                    color(rgba),
+                );
+            }
+        }
+    }
+    context.request_repaint();
+}
+
 /// State the panel keeps between frames: the menu, the text the player is
 /// editing in plugin windows, and the icons it has decoded.
 pub struct Panel {
@@ -138,6 +204,7 @@ impl Panel {
     /// and Angelica's sign. Returns whether the menu stays open.
     pub fn draw(&mut self, host: &Host, context: &egui::Context, menu: bool) -> bool {
         self.icons.begin_frame();
+        draw_world(host, context);
         let keep = self.menu.draw(host, context, &self.map_status, menu);
         let raised = self.menu.take_raised();
         // Plugin windows are drawn with the menu open too; one opened from

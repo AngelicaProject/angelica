@@ -118,6 +118,26 @@ impl Game for WindowsGame {
         super::act::call(address, args)
     }
 
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        let control = self.catalog.present.get("camera.control.instance")?;
+        let matrix = self.catalog.present.get("camera.control.view_projection")?;
+        let (angelica_map::Value::Address(rva), angelica_map::Value::Offset(offset)) =
+            (control.value, matrix.value)
+        else {
+            return None;
+        };
+        let address = self.base + rva as usize + offset as usize;
+        let bytes = super::memory::read(address, 64).ok()?;
+        let mut values = [0f32; 16];
+        for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *value = f32::from_le_bytes(*chunk);
+        }
+        values
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(values)
+    }
+
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
         usize::try_from(address).is_ok_and(|address| super::memory::write(address, bytes).is_ok())
     }

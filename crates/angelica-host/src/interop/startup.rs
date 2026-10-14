@@ -342,6 +342,7 @@ fn services(
         lens,
         events,
         ui,
+        draw: Arc::new(crate::draw::Drawings::default()),
         game,
         starting: AtomicBool::new(false),
         russian: AtomicBool::new(false),

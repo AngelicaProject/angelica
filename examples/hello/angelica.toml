@@ -18,6 +18,7 @@ authors = ["AngelicaProject contributors"]
 "chat.read" = true
 "gameui.hide" = true
 "gameui.text" = true
+"draw.world" = true
 
 [http]
 hosts = ["example.com"]

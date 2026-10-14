@@ -11,6 +11,7 @@ pub mod catalog_index;
 pub mod chat;
 pub mod commands;
 pub mod config;
+pub mod draw;
 pub mod error;
 pub mod events;
 pub mod excel_text;

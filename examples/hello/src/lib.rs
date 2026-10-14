@@ -159,10 +159,8 @@ impl Hello {
                 let text = self.used_text();
                 self.say(text);
             }
-            "yes" => {
-                let text = answer_yes();
-                self.say(text);
-            }
+            "mark" => self.say(mark_where_i_am()),
+            "yes" => self.say(answer_yes()),
             "quiet" => {
                 if self.quiet.take().is_some() {
                     self.say("system messages shown");
@@ -260,6 +258,33 @@ fn replace_texture() -> String {
     match result {
         Ok(()) => "texture replaced".to_owned(),
         Err(error) => format!("texture refused: {}", error.message),
+    }
+}
+
+/// Draws a circle around where the character stands, with a label.
+fn mark_where_i_am() -> String {
+    let place = lens::Query::prepare("player { position_x, position_y, position_z }")
+        .and_then(|query| query.run().map(|rows| (query, rows)))
+        .map(|(query, rows)| {
+            rows.first().map(|row| {
+                ["position_x", "position_y", "position_z"].map(|name| {
+                    let value = query.get(row, name).and_then(lens::Value::float);
+                    #[allow(clippy::cast_possible_truncation)] // a position in yalms
+                    let value = value.unwrap_or_default() as f32;
+                    value
+                })
+            })
+        });
+    match place {
+        Ok(Some([x, y, z])) => match angelica_sdk::draw::set(&[
+            angelica_sdk::draw::circle([x, y, z], 3.0, 0xE873_5AFF),
+            angelica_sdk::draw::text([x, y + 2.5, z], "here", 0xFFFF_FFFF),
+        ]) {
+            Ok(()) => format!("marked {x:.1}, {z:.1}"),
+            Err(error) => format!("cannot draw: {}", error.message),
+        },
+        Ok(None) => "not in the world".to_owned(),
+        Err(error) => format!("cannot read the position: {}", error.message),
     }
 }
 
@@ -523,6 +548,7 @@ impl Plugin for Hello {
                                 .button("sprint", "Sprint")
                                 .button("zoom", "Zoom out further")
                                 .button("yes", "Say yes")
+                                .button("mark", "Mark where I am")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

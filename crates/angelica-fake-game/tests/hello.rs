@@ -1092,6 +1092,40 @@ fn without_lens() -> String {
 }
 
 #[test]
+fn a_mark_is_drawn_around_the_character() {
+    use angelica_fake_game::Set;
+    let test = with_character(MANIFEST, &[]);
+    click(&test, "mark");
+    assert_eq!(message(&test), "not in the world");
+    test.game.set(
+        "player",
+        &[
+            ("position_x", Set::Float(1.0)),
+            ("position_y", Set::Float(0.0)),
+            ("position_z", Set::Float(10.0)),
+        ],
+    );
+    click(&test, "mark");
+    assert_eq!(message(&test), "marked 1.0, 10.0");
+    // A camera at the origin looking down +z.
+    let ahead = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+    ];
+    let marks = test.host.services().draw.marks(&ahead);
+    assert!(marks.len() > 40, "the circle's segments and the label");
+    assert!(marks.iter().any(|mark| matches!(
+        mark,
+        runtime::draw::Mark::Text { text, .. } if text == "here"
+    )));
+    test.host.queue(Action::Disable("hello".into()));
+    test.frames(1);
+    assert!(
+        test.host.services().draw.idle(),
+        "a stopped plugin draws nothing"
+    );
+}
+
+#[test]
 fn a_dialog_is_read_and_answered() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);

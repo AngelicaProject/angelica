@@ -161,6 +161,8 @@ pub struct Services {
     pub events: Arc<crate::events::Events>,
     /// Rules for the game's own windows.
     pub ui: Arc<crate::game_ui::GameUi>,
+    /// What plugins draw over the game world.
+    pub draw: Arc<crate::draw::Drawings>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -1376,6 +1378,42 @@ impl api::lens::Host for State {
             Some(HeldKind::Rule) => lens.decisions.remove(&self.context.id, query),
             Some(HeldKind::Query) | None => {}
         }
+    }
+}
+
+impl api::draw::Host for State {
+    fn set(&mut self, shapes: Vec<api::draw::Shape>) -> ApiResult<()> {
+        use crate::draw::Shape;
+        use api::draw::Shape as Api;
+        api(self.main_only())?;
+        api(self.permitted(Permission::DrawWorld))?;
+        let point = |point: api::draw::Point| [point.x, point.y, point.z];
+        let shapes = shapes
+            .into_iter()
+            .map(|shape| match shape {
+                Api::Line(line) => Shape::Line {
+                    from: point(line.start),
+                    to: point(line.end),
+                    color: line.color,
+                    thickness: line.thickness,
+                },
+                Api::Circle(circle) => Shape::Circle {
+                    center: point(circle.center),
+                    radius: circle.radius,
+                    color: circle.color,
+                    thickness: circle.thickness,
+                    filled: circle.filled,
+                },
+                Api::Text(label) => Shape::Text {
+                    at: point(label.at),
+                    text: label.text,
+                    color: label.color,
+                },
+            })
+            .collect();
+        let context = self.context.clone();
+        self.host(|_| context.services.draw.set(&context.id, shapes))
+            .map_err(Into::into)
     }
 }
 

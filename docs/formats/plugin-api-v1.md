@@ -19,10 +19,11 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `file-replacements` | replacement game files the game reads instead of its own | `files.replace` |
 | `commands` | chat commands the host parses for the plugin | `chat.commands` |
 | `chat` | messages in the player's chat log | `chat.print` |
-| `http` | HTTPS GET requests to the hosts the manifest lists | `http.get` |
-| `lens` | the game's objects, read by path through the game map's object model | one per domain the query reads, in `[lens] read` |
+| `http` | HTTPS requests to the hosts the manifest lists: GET, and data sent | `http.get`, `http.send` |
+| `lens` | the game's objects read by path, events watched, rules at decision points, values changed, and actions taken, through the game map's object model | one per domain and verb, in `[lens] read`, `change`, and `act` |
 | `events` | what the game did, delivered in the next frame: messages added to the chat log | one per kind: `chat.read` |
 | `game-ui` | rules for the game's own windows: hidden elements and text in text elements | `gameui.hide`, `gameui.text` |
+| `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -191,6 +192,12 @@ Before anything is sent, the host checks the request: an absolute `https://` URL
 The same rules hold for every connection, including each of at most 5 redirects: the scheme is `https`, the port 443, and the host a listed one. A request goes through the proxy Windows uses for its URL, as the browser's do: the player's proxy settings, with automatic detection and a configuration script, or the manual proxy and its bypass list; it tunnels with `CONNECT`, and the proxy resolves the host. Without a proxy, the host name is resolved by the system, the `hosts` file included, and only public addresses, this computer's (`127.0.0.0/8`, `::1`), and the range VPNs hand out in place of real addresses (`198.18.0.0/15`) are used; a name that resolves only to private, shared, link-local, multicast, documentation, or reserved addresses is refused with `permission-denied`, so a plugin cannot reach the player's home network. TLS is the operating system's, with its certificate store and TLS 1.2 or later; a certificate the system does not trust for the requested host fails the request, so a service on the player's computer or network that holds no certificate for a listed host never receives a request, through a proxy or not.
 
 `get` returns the final response's status, headers (names in lower case), and body, at most 16 MiB, within 60 seconds. `download` writes a 2xx response's body to a file in the plugin's storage, at most 1 GiB and within the storage quota, within 15 minutes; the file is replaced only when the whole body arrived, and another status leaves it as it was. `send` sends a body of at most 16 MiB with the method, none with `DELETE`, and returns the response as `get` does, within 60 seconds. Any status is a response, not an error. A request that does not complete — the name does not resolve, the connection or TLS fails, the time runs out, the job is cancelled — returns `network`; a body over its limit returns `limit-exceeded`. Resolution and connection each take at most 15 seconds, and the response's head arrives within 30.
+
+## Drawing over the world
+
+`draw.set` replaces what the plugin draws over the game world: lines between places, circles on the ground level with their centers, filled or as outlines, and text centered on places. A place is in yalms with `y` up, as the positions of the game's objects are; a color is `0xRRGGBBAA`, a thickness in points of Angelica's interface. The shapes stay until the plugin sets others or stops; an empty list draws nothing.
+
+At most 1024 shapes, with finite places, radii, lengths, and thicknesses of at most 1000 yalms, and texts of at most 256 bytes without control characters; more returns `limit-exceeded`, a shape that breaks the rules `invalid-argument`. Every frame the host projects the shapes through the game camera's view-projection matrix from the game map and draws them under every window; a part behind the camera is not drawn, and a filled circle partly behind it is drawn as its outline. Nothing is drawn while the game has no camera or the build lacks the matrix's map entries. Requires `draw.world`; main instance only.
 
 ## WASI
 

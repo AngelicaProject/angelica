@@ -228,6 +228,15 @@ Fetch data from the plugin's own servers, and send data to them.
 - Data from the internet is untrusted: parse it in the job and handle malformed input as an error.
 - Contract: [HTTP](../formats/plugin-api-v1.md#http).
 
+## Drawing over the world
+
+Mark places in the game world: a circle on the ground, a line between two places, a label above a spot.
+
+- SDK: `draw::set(&[draw::circle([x, y, z], 5.0, 0xE8735AFF), draw::text([x, y + 2.5, z], "here", 0xFFFFFFFF)])?`; `draw::line`, `draw::disc` for a filled circle, `draw::clear()`. Places come from Lens, such as `player { position_x, position_y, position_z }`.
+- Permission: `draw.world`. Instance: main.
+- Shapes stay until replaced: set them again when what they mark moves, not every frame when nothing changed. Colors are `0xRRGGBBAA`.
+- Contract: [drawing](../formats/plugin-api-v1.md#drawing-over-the-world).
+
 ## Log
 
 Leave a trace for the player and for debugging.

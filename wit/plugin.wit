@@ -53,5 +53,6 @@ world plugin {
     import lens;
     import events;
     import game-ui;
+    import draw;
     export guest;
 }

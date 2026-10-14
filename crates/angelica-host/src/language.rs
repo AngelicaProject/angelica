@@ -267,6 +267,7 @@ impl Language {
                 Permission::ChatRead => "Читает сообщения в вашем чате, в том числе других игроков",
                 Permission::GameUiHide => "Скрывает части интерфейса игры",
                 Permission::GameUiText => "Вписывает свой текст в окна игры",
+                Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
             },
         }
     }
@@ -426,6 +427,7 @@ mod tests {
             Permission::ChatRead,
             Permission::GameUiHide,
             Permission::GameUiText,
+            Permission::DrawWorld,
         ];
         for permission in permissions {
             assert_ne!(

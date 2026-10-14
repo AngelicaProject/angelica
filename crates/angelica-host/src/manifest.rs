@@ -51,6 +51,9 @@ pub enum Permission {
     /// Put text in text elements of the game's own windows.
     #[serde(rename = "gameui.text")]
     GameUiText,
+    /// Draw marks, lines, and text over the game world.
+    #[serde(rename = "draw.world")]
+    DrawWorld,
 }
 
 impl Permission {
@@ -67,6 +70,7 @@ impl Permission {
             Self::ChatRead => "chat.read",
             Self::GameUiHide => "gameui.hide",
             Self::GameUiText => "gameui.text",
+            Self::DrawWorld => "draw.world",
         }
     }
 
@@ -84,6 +88,7 @@ impl Permission {
             Self::ChatRead => "Reads the messages in your chat log, including other players'",
             Self::GameUiHide => "Hides parts of the game's interface",
             Self::GameUiText => "Puts its own text in the game's windows",
+            Self::DrawWorld => "Draws marks, lines, and text over the game world",
         }
     }
 
@@ -97,7 +102,8 @@ impl Permission {
             | Self::TextCase
             | Self::FilesReplace
             | Self::GameUiHide
-            | Self::GameUiText => Class::WhatYouSee,
+            | Self::GameUiText
+            | Self::DrawWorld => Class::WhatYouSee,
             Self::ChatCommands | Self::ChatPrint => Class::YoursOnly,
         }
     }

@@ -64,6 +64,9 @@ pub struct ScriptedGame {
     pub act_returns: Mutex<u64>,
     /// The map entries hooked for decision points, in order.
     pub decided: Mutex<Vec<String>>,
+    /// The game camera's view-projection matrix; none unless a test sets
+    /// one.
+    pub view_projection: Mutex<Option<[f32; 16]>>,
 }
 
 /// An element of one of the game's own windows.
@@ -139,6 +142,7 @@ impl Default for ScriptedGame {
             acted: Mutex::new(Vec::new()),
             act_returns: Mutex::new(1),
             decided: Mutex::new(Vec::new()),
+            view_projection: Mutex::new(None),
         }
     }
 }
@@ -236,6 +240,13 @@ impl Game for ScriptedGame {
             integer: returned,
             float: 0,
         })
+    }
+
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        *self
+            .view_projection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
@@ -444,6 +455,7 @@ impl TestHost {
             lens: Arc::new(runtime::lens::Lens::default()),
             events: Arc::new(runtime::events::Events::default()),
             ui: Arc::new(runtime::game_ui::GameUi::default()),
+            draw: Arc::new(runtime::draw::Drawings::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
             russian: AtomicBool::new(false),

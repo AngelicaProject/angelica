@@ -1,0 +1,59 @@
+package angelica:plugin@1.0.0;
+
+/// Drawing over the game world: marks, lines, and text at places in the
+/// world, such as a circle on the ground around a target or a name above a
+/// spot. The host projects them through the game camera every frame and
+/// draws them under the plugins' windows. Requires `draw.world`; main
+/// instance only.
+interface draw {
+    use types.{error};
+
+    /// A place in the game world, in yalms: `y` is up, as positions of the
+    /// game's objects are.
+    record point {
+        x: f32,
+        y: f32,
+        z: f32,
+    }
+
+    record line {
+        start: point,
+        end: point,
+        /// `0xRRGGBBAA`.
+        color: u32,
+        /// In points of Angelica's interface.
+        thickness: f32,
+    }
+
+    /// A circle on the ground, level with its center.
+    record circle {
+        center: point,
+        /// In yalms.
+        radius: f32,
+        color: u32,
+        thickness: f32,
+        filled: bool,
+    }
+
+    /// Text centered on a place.
+    record label {
+        at: point,
+        /// At most 256 bytes, without control characters.
+        text: string,
+        color: u32,
+    }
+
+    variant shape {
+        line(line),
+        circle(circle),
+        text(label),
+    }
+
+    /// Replaces what the plugin draws; an empty list draws nothing. The
+    /// shapes stay until replaced or the plugin stops. At most 1024 shapes,
+    /// with finite places and sizes of at most 1000 yalms: more returns
+    /// `limit-exceeded`, a shape that breaks the rules `invalid-argument`.
+    /// A part behind the camera is not drawn; nothing is drawn while the
+    /// game has no camera or the build lacks the map's entries for it.
+    set: func(shapes: list<shape>) -> result<_, error>;
+}

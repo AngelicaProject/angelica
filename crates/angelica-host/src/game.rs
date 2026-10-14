@@ -106,6 +106,13 @@ pub trait Game: Send + Sync {
         ))
     }
 
+    /// The game camera's view-projection matrix this frame, of row vectors
+    /// as the game keeps it; `None` while the game has none or the build
+    /// lacks its map entries.
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        None
+    }
+
     /// Writes `bytes` at `address` of the game's data, for a Lens change;
     /// false when the range is not writable data.
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
