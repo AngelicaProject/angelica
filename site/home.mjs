@@ -362,7 +362,7 @@ footer .big span:hover { color: var(--red); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } [data-r], footer .big span { opacity: 1; transform: none; } .ink { stroke-dashoffset: 0; } .pop { stroke-opacity: 1; fill-opacity: 1; } html { scroll-behavior: auto; } h2 .w > span { transform: none; } .live { display: none; } .plate .rest { display: inline; } }
 </style></head><body>
 <div class="rule"></div>
-<div class="dock"><div class="wrap"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/latest/download/angelica-setup.exe">Download</a></div></div>
+<div class="dock"><div class="wrap"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download</a></div></div>
 <div class="wrap" id="top">
 
 <nav class="bar"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="nav" href="https://github.com/AngelicaProject/angelica">GitHub</a><span class="theme" role="group" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button></span></nav>
@@ -376,7 +376,7 @@ footer .big span:hover { color: var(--red); }
     <h1 class="word">angelica</h1>
     <p class="lead">An engine for every idea you bring to Eorzea.</p>
     <p class="sub">A plugin platform for FINAL FANTASY XIV. Plugins run in a sandbox and can do only what you allowed.</p>
-    <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/latest/download/angelica-setup.exe">Download for Windows</a><a class="b two" href="#docs">Documentation</a></div>
+    <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a><a class="b two" href="#docs">Documentation</a></div>
     <div class="status"><p class="state" data-behind="The game updated on 14 October. Catching up."><i></i><span>Up to date with the game</span></p>
       <div class="facts"><div><span>Angelica</span><b>0.1.0</b><small>nightly 15</small></div><div><span>Map of the game</span><b>2 October</b><small>2026.10.1</small></div><div><span>Game update</span><b>15 September</b><small>2026.09.15</small></div></div></div>
   </div>
@@ -423,7 +423,7 @@ footer .big span:hover { color: var(--red); }
     <div data-r style="--d:3"><i>2</i><h3>Start the game</h3><p>Angelica starts with it and keeps itself up to date.</p></div>
     <div data-r style="--d:5"><i>3</i><h3>Press <kbd class="key">Insert</kbd></h3><p>The Angelica window opens over the game. Pick a plugin, read what it asks for, and turn it on.</p></div>
   </div>
-  <div class="after" data-r><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/latest/download/angelica-setup.exe">Download for Windows</a>
+  <div class="after" data-r><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a>
     <p>Windows 10 or later, DirectX 11 client. The installer is not code-signed, so SmartScreen may warn you the first time. Angelica checks every file it loads against its own release key.</p></div>
 </section>
 

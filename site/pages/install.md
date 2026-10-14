@@ -22,7 +22,7 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 
 ## Install
 
-1. Download [`angelica-setup.exe`](https://github.com/AngelicaProject/angelica/releases/latest/download/angelica-setup.exe) and run it.
+1. Download [`angelica-setup.exe`](https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe) and run it.
 
    The first time, Windows might say **Windows protected your PC**. Select **More info**, then **Run anyway**.
    Windows shows this for programs that are not signed with a paid certificate. Angelica still checks the signature of every file it installs or loads.

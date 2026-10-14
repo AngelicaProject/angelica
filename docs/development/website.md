@@ -15,6 +15,8 @@ npm ci
 node build.mjs
 ```
 
+Every **Download** link on the site points to `releases/download/nightly/angelica-setup.exe`, the installer of the nightly channel ([releases](./releases.md)).
+
 The build fails when a link inside the site leads to a missing file or a missing element of a page. The `site` job of [CI](./ci.md) runs it for every pull request.
 
 ## Pages for people and canonical documents
