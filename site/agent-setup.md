@@ -40,7 +40,7 @@ If `angelica --version` already works, skip this step. Otherwise:
 cargo install --locked --git https://github.com/AngelicaProject/angelica angelica-cli
 ```
 
-It builds the command from source, which takes a few minutes. Cargo puts it into `%USERPROFILE%\.cargoin`, which the Rust installer adds to `PATH`; open a new terminal if `angelica` is not found.
+It builds the command from source, which takes a few minutes. Cargo puts it into `%USERPROFILE%\.cargo\bin`, which the Rust installer adds to `PATH`; open a new terminal if `angelica` is not found.
 
 ## 4. Agree on the plugin
 
