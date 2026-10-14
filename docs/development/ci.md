@@ -8,6 +8,7 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 | --- | --- | --- |
 | `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests with all features. |
 | `supply-chain` | `ubuntu-latest` | `cargo deny` passes; workflows pass `actionlint` and `zizmor`. |
+| `site` | `ubuntu-latest` | The [website](./website.md) builds and every link inside it leads somewhere. |
 | `ci` | `ubuntu-latest` | Every job above passed. |
 
 ```text
@@ -16,6 +17,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile --target wasm32-wasip2 --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo deny --locked check
+cd site && npm ci && node build.mjs
 ```
 
 No job requires a game installation.

@@ -19,7 +19,7 @@ Stable releases are ordinary GitHub releases marked *latest*. Nightly is one rol
 
 The channel is chosen in **Settings → Updates** and stored as `channel` in `state/_angelica.json` ([installation](../formats/host-installation-v1.md#angelica-settings)). Without it, a copy follows the channel its installer came from. The nightly channel checks both feeds and takes the newer version, so a stable release newer than the last nightly arrives at once. Angelica never installs an older version than the one running: switching from nightly to stable keeps the nightly build until a newer stable release.
 
-Nightly runs inside the game process and may stop the game; it is for testers. The installer on the website installs stable.
+Nightly runs inside the game process and may stop the game; it is for testers. The [website](./website.md) links the nightly installer, so a copy installed from it follows the nightly channel.
 
 ## Release assets
 

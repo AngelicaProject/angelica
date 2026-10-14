@@ -17,3 +17,14 @@ Thumbs.db
 # Logs and dumps
 *.log
 *.dmp
+
+# Website build
+/site/dist/
+/site/node_modules/
+# Intermediate prints of the lily (docs/development/website.md)
+/site/art/*.png
+/site/art/*.json
+!/site/art/tones.png
+!/site/art/detail.png
+!/site/art/ground.png
+!/site/art/lily-photo.png

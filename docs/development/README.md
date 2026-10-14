@@ -21,5 +21,6 @@ This section defines how changes are implemented, validated, reviewed, and shipp
 
 - [`testing.md`](./testing.md) — test layers, tests without the game, and in-game checks.
 - [`documentation.md`](./documentation.md) — documentation ownership, structure, and writing standards.
+- [`website.md`](./website.md) — the website and the documentation pages for people: what it holds, how it is built and published, and how a page is written.
 
 For product or architecture decisions, use [`../product/`](../product/README.md) and [`../architecture/`](../architecture/README.md) instead of adding development-only rules here.

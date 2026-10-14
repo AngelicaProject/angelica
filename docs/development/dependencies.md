@@ -32,6 +32,10 @@ Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
 
 `angelica-sqpack` adapts the AGPL-3.0-only archive and Excel decoder from Aeria with attribution and original file hashes in [NOTICE.md](../../crates/angelica-sqpack/NOTICE.md). It uses crc32fast 1.5.2 and flate2 1.1.10 (both MIT OR Apache-2.0) for archive path hashes and DEFLATE blocks; flate2 uses its pure Rust backend, so no native compression library is loaded.
 
+## Website
+
+The [website](./website.md) is built with Node.js 24 and one npm package, `marked` (MIT), which turns the documentation pages from Markdown into HTML. `site/package-lock.json` pins it, and the build installs it with `npm ci`. Nothing of the website runs in the game.
+
 ## Fonts
 
 `crates/angelica-host/fonts/` holds the fonts the host draws its interface with, each under the SIL Open Font License 1.1 with its license file beside it:
