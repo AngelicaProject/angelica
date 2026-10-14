@@ -67,6 +67,8 @@ pub struct ScriptedGame {
     /// The game camera's view-projection matrix; none unless a test sets
     /// one.
     pub view_projection: Mutex<Option<[f32; 16]>>,
+    /// Every sound played, as the host re-encoded it.
+    pub played: Mutex<Vec<Vec<u8>>>,
 }
 
 /// An element of one of the game's own windows.
@@ -143,6 +145,7 @@ impl Default for ScriptedGame {
             act_returns: Mutex::new(1),
             decided: Mutex::new(Vec::new()),
             view_projection: Mutex::new(None),
+            played: Mutex::new(Vec::new()),
         }
     }
 }
@@ -247,6 +250,14 @@ impl Game for ScriptedGame {
             .view_projection
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        self.played
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(wav);
+        true
     }
 
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
@@ -459,6 +470,7 @@ impl TestHost {
             messages: Arc::new(runtime::messages::Messages::default()),
             clipboard: Arc::new(runtime::clipboard::Clipboard::default()),
             notifications: Arc::new(runtime::notifications::Notifications::default()),
+            sounds: Arc::new(runtime::sound::Sounds::default()),
             game: game.clone(),
             starting: AtomicBool::new(false),
             russian: AtomicBool::new(false),

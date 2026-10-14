@@ -22,6 +22,7 @@ authors = ["AngelicaProject contributors"]
 "messages.send" = true
 "clipboard.write" = true
 "notifications" = true
+"sound.play" = true
 
 [http]
 hosts = ["example.com"]

@@ -255,6 +255,15 @@ Tell the player something happened: a duty is ready, a timer ran out.
 - One line of at most 200 characters, at most one every 2 seconds; the host draws it under the plugin's name for 7 seconds.
 - Contract: [notifications](../formats/plugin-api-v1.md#notifications).
 
+## Playing a sound
+
+Alert the player by ear: a ready check, a timer.
+
+- SDK: `sound::play("ready.wav", 0.8)?` with a WAV file in the plugin's storage: shipped with the plugin, downloaded, or put in its folder by the player.
+- Permission: `sound.play`. Instance: main.
+- PCM or float WAV, 1 or 2 channels, at most 10 seconds and 8 MiB; at most one sound a second. A new sound stops the one playing.
+- Contract: [sound](../formats/plugin-api-v1.md#sound).
+
 ## Drawing over the world
 
 Mark places in the game world: a circle on the ground, a line between two places, a label above a spot.

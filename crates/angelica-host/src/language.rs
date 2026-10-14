@@ -273,6 +273,7 @@ impl Language {
                 Permission::Notifications => {
                     "Показывает уведомления и мигает игрой на панели задач"
                 }
+                Permission::SoundPlay => "Проигрывает звуки",
             },
         }
     }
@@ -436,6 +437,7 @@ mod tests {
             Permission::MessagesSend,
             Permission::ClipboardWrite,
             Permission::Notifications,
+            Permission::SoundPlay,
         ];
         for permission in permissions {
             assert_ne!(

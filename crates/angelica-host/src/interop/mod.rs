@@ -15,6 +15,7 @@ pub mod memory;
 mod overlay;
 mod painter;
 pub mod proxy;
+mod sound;
 mod startup;
 mod text_case;
 mod watch;

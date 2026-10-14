@@ -265,7 +265,7 @@ fn replace_texture() -> String {
 }
 
 /// What the buttons of the host's services beside Lens say: drawing,
-/// messages, the clipboard, and notifications.
+/// messages, the clipboard, notifications, and sound.
 fn around_lens(id: &str) -> Option<String> {
     match id {
         "mark" => Some(mark_where_i_am()),
@@ -285,8 +285,42 @@ fn around_lens(id: &str) -> Option<String> {
             "notified",
             "cannot notify",
         )),
+        "beep" => Some(said(
+            files::write("beep.wav", &beep())
+                .and_then(|()| angelica_sdk::sound::play("beep.wav", 0.5)),
+            "beeped",
+            "cannot beep",
+        )),
         _ => None,
     }
+}
+
+/// A WAV file of a fifth of a second of A4, 16-bit mono at 22 050 Hz.
+fn beep() -> Vec<u8> {
+    const RATE: u32 = 22_050;
+    let samples: Vec<u8> = (0..RATE / 5)
+        .flat_map(|index| {
+            #[allow(clippy::cast_precision_loss)] // small sample indexes
+            let phase = index as f32 * 440.0 * std::f32::consts::TAU / RATE as f32;
+            #[allow(clippy::cast_possible_truncation)] // within i16
+            let value = (phase.sin() * 12_000.0) as i16;
+            value.to_le_bytes()
+        })
+        .collect();
+    let length = u32::try_from(samples.len()).unwrap_or_default();
+    let mut wav = Vec::with_capacity(44 + samples.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + length).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    // Format size, PCM and one channel, rate, bytes a second, and two
+    // bytes a frame of 16 bits.
+    for field in [16u32, 1 | (1 << 16), RATE, RATE * 2, 2 | (16 << 16)] {
+        wav.extend_from_slice(&field.to_le_bytes());
+    }
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&length.to_le_bytes());
+    wav.extend_from_slice(&samples);
+    wav
 }
 
 /// The line shown for an operation's result: `done`, or `failed` with the
@@ -589,6 +623,7 @@ impl Plugin for Hello {
                                 .button("ping", "Ping myself")
                                 .button("copy", "Copy a greeting")
                                 .button("notify", "Notify me")
+                                .button("beep", "Beep")
                                 .button(
                                     "quiet",
                                     if self.quiet.is_some() {

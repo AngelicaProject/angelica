@@ -1175,6 +1175,37 @@ fn a_notification_is_shown_under_the_plugins_name() {
 }
 
 #[test]
+fn a_checked_sound_is_played() {
+    let test = approved(MANIFEST);
+    click(&test, "beep");
+    assert_eq!(message(&test), "beeped");
+    {
+        let played = test.game.played.lock().unwrap();
+        assert_eq!(played.len(), 1);
+        let wav = &played[0];
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(
+            wav.len(),
+            44 + 4410 * 2,
+            "16-bit samples as the host wrote them"
+        );
+    }
+    click(&test, "beep");
+    assert_eq!(
+        message(&test),
+        "cannot beep: a plugin plays at most one sound a second"
+    );
+
+    let test = approved(&MANIFEST.replace("\"sound.play\" = true\n", ""));
+    click(&test, "beep");
+    assert_eq!(
+        message(&test),
+        "cannot beep: the plugin does not hold sound.play"
+    );
+    assert!(test.game.played.lock().unwrap().is_empty());
+}
+
+#[test]
 fn a_mark_is_drawn_around_the_character() {
     use angelica_fake_game::Set;
     let test = with_character(MANIFEST, &[]);

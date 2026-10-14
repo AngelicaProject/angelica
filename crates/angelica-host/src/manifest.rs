@@ -63,6 +63,9 @@ pub enum Permission {
     /// Show notifications at the top right of the screen.
     #[serde(rename = "notifications")]
     Notifications,
+    /// Play sounds from the plugin's storage.
+    #[serde(rename = "sound.play")]
+    SoundPlay,
 }
 
 impl Permission {
@@ -83,6 +86,7 @@ impl Permission {
             Self::MessagesSend => "messages.send",
             Self::ClipboardWrite => "clipboard.write",
             Self::Notifications => "notifications",
+            Self::SoundPlay => "sound.play",
         }
     }
 
@@ -104,6 +108,7 @@ impl Permission {
             Self::MessagesSend => "Sends messages to these plugins",
             Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
             Self::Notifications => "Shows notifications and flashes the game on the taskbar",
+            Self::SoundPlay => "Plays sounds",
         }
     }
 
@@ -123,7 +128,8 @@ impl Permission {
             | Self::ChatPrint
             | Self::MessagesSend
             | Self::ClipboardWrite
-            | Self::Notifications => Class::YoursOnly,
+            | Self::Notifications
+            | Self::SoundPlay => Class::YoursOnly,
         }
     }
 }

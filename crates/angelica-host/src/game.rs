@@ -113,6 +113,13 @@ pub trait Game: Send + Sync {
         None
     }
 
+    /// Plays `wav`, a sound [`crate::sound::prepare`] checked, stopping the
+    /// one playing; whether Windows took it.
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        let _ = wav;
+        false
+    }
+
     /// Writes `bytes` at `address` of the game's data, for a Lens change;
     /// false when the range is not writable data.
     fn write(&self, address: u64, bytes: &[u8]) -> bool {

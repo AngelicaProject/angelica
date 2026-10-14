@@ -27,6 +27,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
 | `clipboard` | text put on the player's clipboard for the player's action | `clipboard.write` |
 | `notifications` | one line at the top right of the screen under the plugin's name | `notifications` |
+| `sound` | sounds from WAV files in the plugin's storage | `sound.play` |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -210,6 +211,10 @@ A plugin sends to the plugins its manifest lists in `[messages] to`, which the p
 ## Notifications
 
 `notifications.show` shows one line of 1 to 200 characters without control characters at the top right of the screen for 7 seconds, drawn by the host as Angelica's own notes are, under the plugin's name and with a mark: the attention mark when `attention` is set, the running mark otherwise. With `attention`, the game's button on the taskbar also flashes while the game is in the background, until the player returns to it. A plugin notifies at most once in 2 seconds, `limit-exceeded` otherwise; at most 3 notifications of all plugins are shown at once, the oldest leaving first, and a stopped plugin's notifications leave with it. Notes are drawn while the menu is closed. Main instance only.
+
+## Sound
+
+`sound.play` plays a WAV file from the plugin's storage at a volume from 0 to 1. The host reads the file, at most 8 MiB, and checks it: a RIFF WAVE file with one format chunk and one data chunk inside the file, PCM samples of 8, 16, or 24 bits or 32-bit float (also inside `WAVE_FORMAT_EXTENSIBLE`), 1 or 2 channels, 8 to 96 kHz, at most 10 seconds; anything else is `invalid-argument`. It then writes its own 16-bit PCM copy with the volume applied, float samples outside -1 to 1 clamped and others silenced, and Windows plays that copy, never the plugin's file. One sound plays at a time: a new one, of any plugin, stops the one playing. A plugin plays at most one sound a second, `limit-exceeded` otherwise. Main instance only.
 
 ## Drawing over the world
 

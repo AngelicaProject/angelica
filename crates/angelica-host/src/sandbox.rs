@@ -169,6 +169,8 @@ pub struct Services {
     pub clipboard: Arc<crate::clipboard::Clipboard>,
     /// Plugins' notifications on the screen.
     pub notifications: Arc<crate::notifications::Notifications>,
+    /// When plugins last played a sound.
+    pub sounds: Arc<crate::sound::Sounds>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -1428,6 +1430,36 @@ impl api::messages::Host for State {
                 },
                 &|receiver| context.message_to.contains(receiver),
             )
+        })
+        .map_err(Into::into)
+    }
+}
+
+impl api::sound::Host for State {
+    fn play(&mut self, path: String, volume: f32) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::SoundPlay))?;
+        let context = self.context.clone();
+        self.host(|_| {
+            if context.storage.size(&path)? > crate::sound::MOST_BYTES {
+                return Err(Error::new(
+                    Kind::InvalidArgument,
+                    format!(
+                        "a sound file has at most {} bytes",
+                        crate::sound::MOST_BYTES
+                    ),
+                ));
+            }
+            let wav = crate::sound::prepare(&context.storage.read(&path)?, volume)?;
+            context.services.sounds.allow(&context.id, Instant::now())?;
+            if context.services.game.play_sound(wav) {
+                Ok(())
+            } else {
+                Err(Error::new(
+                    Kind::Unavailable,
+                    "Windows did not play the sound",
+                ))
+            }
         })
         .map_err(Into::into)
     }

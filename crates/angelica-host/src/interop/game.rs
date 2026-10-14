@@ -138,6 +138,10 @@ impl Game for WindowsGame {
             .then_some(values)
     }
 
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        super::sound::play(wav)
+    }
+
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
         usize::try_from(address).is_ok_and(|address| super::memory::write(address, bytes).is_ok())
     }
