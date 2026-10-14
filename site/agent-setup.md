@@ -4,15 +4,18 @@ Instructions for a coding agent. The user asked you to set up a project for an A
 
 ## 1. Check the tools
 
-```shell
-cargo --version
-git --version
-gh --version
-gh auth status
-where.exe link.exe
-```
+The work needs:
 
-The work needs Rust (`cargo`), Git, the GitHub command `gh` signed in, and the Microsoft C++ build tools, which Rust uses on Windows to build the test host.
+- Rust: `cargo --version`.
+- Git: `git --version`.
+- The GitHub command, signed in: `gh auth status`. The work uses it to look up and file requests for capabilities Angelica lacks, and to publish the plugin.
+- The Microsoft C++ build tools, which Rust uses on Windows to build the test host. Rust finds them without `PATH`; check with:
+
+  ```shell
+  & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  ```
+
+  It prints a folder when they are installed. A `link.exe` on `PATH` proves nothing: Git ships an unrelated program with that name.
 
 ## 2. Offer to install what is missing
 
@@ -27,29 +30,34 @@ Tell the user in one message what is missing and that you can install it, and wa
 
 Open a new terminal after installing, so the new commands are found. If the user prefers to install themselves, give them the same list and wait.
 
-`gh auth login` needs the user: start it, and ask them to finish signing in in the browser it opens.
+`gh auth login` needs the user: start it, and ask them to finish signing in in the browser it opens. If `gh` fails for another reason, show the user its message instead of reinstalling it.
 
 ## 3. Install the `angelica` command
+
+If `angelica --version` already works, skip this step. Otherwise:
 
 ```shell
 cargo install --locked --git https://github.com/AngelicaProject/angelica angelica-cli
 ```
 
+It builds the command from source, which takes a few minutes. Cargo puts it into `%USERPROFILE%\.cargoin`, which the Rust installer adds to `PATH`; open a new terminal if `angelica` is not found.
+
 ## 4. Agree on the plugin
 
-If the user has not said what the plugin should do, ask now. Then agree on the plugin's ID with them. It is permanent and is also the plugin's chat command: lowercase letters, digits, and inner hyphens, starting with a letter, at most 32 characters.
+If the user has not said what the plugin should do, ask now. Then agree on the plugin's ID with them. It is permanent, and it is the plugin's chat command: a plugin with the ID `timers` answers `/timers`, and its other commands are words after it, such as `/timers add`. The ID uses lowercase letters, digits, and inner hyphens, starts with a letter, and has at most 32 characters.
 
 ## 5. Create the project
 
-In the folder the user chooses:
+`angelica plugin new <id>` creates the folder `<id>` inside the current folder. In the folder the user chooses:
 
 ```shell
 angelica plugin new <id>
 cd <id>
+git init
 cargo test
 ```
 
-The first `cargo test` fetches the Angelica repository and builds the test host, which takes a few minutes. All tests pass on a new project.
+The first `cargo test` fetches the Angelica repository and builds the test host, which takes a few minutes. All tests pass on a new project; if they do not, show the user the first error. The project becomes the plugin's own GitHub repository when it is published.
 
 ## 6. Continue with the project's AGENTS.md
 
