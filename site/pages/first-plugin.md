@@ -39,18 +39,15 @@ You do not need to know WebAssembly, and you do not need to know anything about 
 
 A plugin is an ordinary Rust project. The `angelica` command creates one for you.
 
-1. Get Angelica and install the `angelica` command:
+1. Install the `angelica` command:
 
    ```shell
-   git clone https://github.com/AngelicaProject/angelica
-   cd angelica
-   cargo install --locked --path crates/angelica-cli
+   cargo install --locked --git https://github.com/AngelicaProject/angelica angelica-cli
    ```
 
 1. Go to the folder where you keep your projects, and create the plugin:
 
    ```shell
-   cd ..
    angelica plugin new hello
    ```
 
@@ -286,7 +283,7 @@ You changed a plugin and proved the change works, without starting the game.
 
 ### The first `cargo test` fails to fetch the Angelica repository
 
-The test host is fetched with Git. Check that `git clone https://github.com/AngelicaProject/angelica` works in the same terminal, then run `cargo test` again.
+The SDK and the test host come from the Angelica repository on GitHub. Check that https://github.com/AngelicaProject/angelica opens from this computer, then run `cargo test` again.
 
 ### `error: the id is also the chat command`
 
