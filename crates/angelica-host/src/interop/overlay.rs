@@ -32,7 +32,7 @@ use windows_sys::Win32::{
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
             GetModuleHandleExW, GetModuleHandleW,
         },
-        Threading::GetCurrentProcessId,
+        Threading::{GetCurrentProcessId, GetCurrentThreadId},
     },
     UI::{
         HiDpi::GetDpiForWindow,
@@ -56,6 +56,8 @@ pub struct Overlay {
     disabled: AtomicBool,
     /// Whether frames are drawn; without, `Present` is only passed on.
     attach: bool,
+    /// The game's startup thread, which owns the game's window.
+    main_thread: u32,
     frames: Mutex<Option<Frames>>,
     frame_message: u32,
     pending_frame: Mutex<Option<f64>>,
@@ -140,6 +142,10 @@ impl OverlayHooks {
             input: Input::default(),
             disabled: AtomicBool::new(false),
             attach,
+            // SAFETY: obtains the calling thread's ID without other
+            // preconditions; the host is installed on the game's startup
+            // thread.
+            main_thread: unsafe { GetCurrentThreadId() },
             frames: Mutex::new(None),
             frame_message,
             pending_frame: Mutex::new(None),
@@ -330,11 +336,12 @@ impl Overlay {
         let description = unsafe { chain.GetDesc() }.map_err(|e| e.to_string())?;
         let mut process = 0;
         // SAFETY: swap-chain window and writable process ID are valid.
-        unsafe {
-            GetWindowThreadProcessId(description.OutputWindow.0, &raw mut process);
-        }
+        let thread =
+            unsafe { GetWindowThreadProcessId(description.OutputWindow.0, &raw mut process) };
+        // The game's swap chain presents to the window the game's startup
+        // thread made; a swap chain of another tool's window is passed on.
         // SAFETY: obtains the current process's ID without other preconditions.
-        if process != unsafe { GetCurrentProcessId() } {
+        if process != unsafe { GetCurrentProcessId() } || thread != self.main_thread {
             return Ok(());
         }
         let Ok(mut frames) = self.frames.try_lock() else {

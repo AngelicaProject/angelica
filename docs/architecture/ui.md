@@ -4,7 +4,7 @@
 
 The host draws its interface over the game with **egui** and its own Direct3D 11 painter. It hooks the swap chain's `Present` and resizing through the swap chain's vtable, obtained from Direct3D 11 itself, and receives input through a window procedure hook. Neither depends on the game map, so the overlay works on a build the map does not cover and can always report what is disabled and why.
 
-The overlay chains with other tools that draw over the game; it does not assume it is the only `Present` hook.
+The overlay chains with other tools that draw over the game; it does not assume it is the only `Present` hook. It draws only into a swap chain whose window the game's startup thread made, the thread the host starts on and the game creates its window on; a swap chain another tool presents to a window of its own is passed on untouched.
 
 The bootstrap swap chain that finds `Present` is made on the software rasterizer (WARP), never on the graphics adapter, and released with its window once `Present` is hooked; DXGI, which holds the vtable and its functions, is pinned in the process instead. One kept on a GeForce RTX 3060 after its window was destroyed made the game's device fail with a graphics exception after some seconds. Its vtable is DXGI's and the same as the game's swap chain's. Bootstrap device creation requests the swap chain, device, feature level, and immediate context together. Graphics interposers can interpret a missing device output as a capability probe and omit swap-chain creation. Incomplete outputs fail initialization and release the bootstrap window; the host log distinguishes installed hooks from attachment to a rendering swap chain.
 
