@@ -59,12 +59,12 @@ const TEXTURE_FORMATS: [u32; 13] = [
     0x1130, 0x1131, 0x1440, 0x1441, 0x1450, 0x1451, 0x2460, 0x3420, 0x3430, 0x3431, 0x6120, 0x6230,
     0x6432,
 ];
-/// The largest side of a replacement texture; the game ships up to 4096.
-const TEXTURE_MAX_SIDE: u32 = 8192;
+/// The largest side of a texture: the largest any texture of the game has.
+const TEXTURE_MAX_SIDE: u32 = 4096;
 /// The most mip levels a header describes.
 const TEXTURE_MAX_MIPS: usize = 13;
-/// The deepest 3D texture.
-const TEXTURE_MAX_DEPTH: u32 = 256;
+/// The deepest 3D texture: the deepest any texture of the game is.
+const TEXTURE_MAX_DEPTH: u32 = 32;
 
 /// What a texture's header says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +207,19 @@ const MATERIAL_SHADERS: [&str; 23] = [
     "water.shpk",
 ];
 
+/// The most a material has of each list, the most any material of the
+/// game has: textures, UV sets, color sets, shader keys, shader constants,
+/// and samplers. The game is known to load materials up to these, and
+/// nothing shows it takes more.
+const MATERIAL_MOST: [(&str, usize); 6] = [
+    ("textures", 6),
+    ("UV sets", 4),
+    ("color sets", 2),
+    ("shader keys", 5),
+    ("shader constants", 31),
+    ("samplers", 6),
+];
+
 /// What a material names, for comparing a replacement with its original.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Material {
@@ -285,6 +298,16 @@ fn material(bytes: &[u8]) -> Result<Material, String> {
     });
     color_tables(flags, data_size)?;
     let (values, keys, constants, samplers) = (half(at), half(at + 2), half(at + 4), half(at + 6));
+    for ((what, most), count) in MATERIAL_MOST
+        .iter()
+        .zip([textures, uv_sets, color_sets, keys, constants, samplers])
+    {
+        if count > *most {
+            return Err(format!(
+                "a material has at most {most} {what}, as the game's own do"
+            ));
+        }
+    }
     at += 12;
     let constants_at = at + 8 * keys;
     let samplers_at = constants_at + 8 * constants;
@@ -587,6 +610,11 @@ pub(crate) mod tests {
             &texture_file(TEXTURE_2D, BC1, 16384, 4, 1),
             "sides are 1 to",
         );
+        refused(
+            &texture_file(TEXTURE_2D, BC1, 8192, 4, 1),
+            "sides are 1 to 4096",
+        );
+        check(path, &original, &texture_file(TEXTURE_2D, BC1, 4096, 4, 1)).unwrap();
         refused(&texture_file(TEXTURE_2D, BC1, 64, 64, 8), "mip levels");
         let full = texture_file(TEXTURE_2D, BC1, 64, 64, 3);
         refused(&full[..full.len() - 1], "ends past the file");
@@ -696,6 +724,13 @@ pub(crate) mod tests {
         refused(&texture, "names texture 1 of 1");
         texture[sampler] = 0xFF;
         check(path, &original, &texture).unwrap();
+        // The counts after the color table: values, keys, constants, and
+        // samplers, before the key, the constant, the sampler, and 16
+        // bytes of values.
+        let samplers = original.len() - 16 - 12 - 8 - 8 - 12 + 6;
+        let mut many = original.clone();
+        many[samplers..samplers + 2].copy_from_slice(&7u16.to_le_bytes());
+        refused(&many, "at most 6 samplers, as the game's own do");
     }
 
     /// Every material the installed game ships passes the checks and may
