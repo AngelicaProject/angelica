@@ -442,7 +442,8 @@ function flower(art, pace) {
   field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); copy.click(); } });
   field.addEventListener("blur", () => { if (field.textContent.trim() || still) return; own = false; hero.classList.remove("typing"); at = 0; erasing = false; timer = setTimeout(demo, 600); });
   copy.addEventListener("click", () => {
-    const said = field.textContent.trim().replace(/\\.$/, "") || ideas[idea];
+    // While the card types its examples, the example is copied whole, never the part typed so far.
+    const said = (own ? field.textContent.trim().replace(/\\.$/, "") : "") || ideas[idea];
     navigator.clipboard?.writeText(PREFIX + said + ".").catch(() => {});
     copy.textContent = "Copied"; copy.classList.add("done");
     setTimeout(() => { copy.textContent = "Copy prompt"; copy.classList.remove("done"); }, 1600);
@@ -453,7 +454,7 @@ function flower(art, pace) {
 const seen = new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); seen.unobserve(e.target); } }, { threshold: 0.18, rootMargin: "0px 0px -6% 0px" });
 for (const el of document.querySelectorAll("[data-r]")) still ? el.classList.add("in") : seen.observe(el);
 
-// The night band's lily is drawn when the band comes into view, as the hero's is: the line first, the red following it, never ahead.
+// The night band's lily is drawn when the band's top reaches the upper 70% of the window, as the hero's is: the line first, the red following it, never ahead.
 const night = document.querySelector(".night"), nightPace = 1.7, nightWant = flower(night.querySelector(".art"), nightPace), turns = [...night.querySelectorAll(".turns div")];
 new IntersectionObserver(([entry], watcher) => {
   if (!entry.isIntersecting) return;
@@ -462,7 +463,7 @@ new IntersectionObserver(([entry], watcher) => {
   const start = performance.now(), lead = 900 * nightPace, last = 2600 * nightPace;
   const redden = (t) => { nightWant.fill = clamp((t - start - lead) / last); if (nightWant.fill < 1) requestAnimationFrame(redden); };
   requestAnimationFrame(redden);
-}, { threshold: 0.35 }).observe(night);
+}, { rootMargin: "0px 0px -30% 0px" }).observe(night);
 // What follows the scroll itself: the page rule, the small bar, the ticker, the plates' slight slide, and the night band's steps.
 const dock = document.querySelector(".dock"), rule = document.querySelector(".rule"), heroEl = document.querySelector(".hero"), run = document.querySelector(".ticker div");
 let asked = false;
