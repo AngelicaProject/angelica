@@ -253,7 +253,7 @@ section { margin-top: 120px; }
 .stage.calm .note { opacity: 0; }
 @media (max-width: 820px) { .split { grid-template-columns: minmax(0, 1fr); } }
 
-/* The night band: its lily is drawn by the scroll itself, and the three steps light up along the way. */
+/* The night band: its lily is drawn once the band comes into view, at the hero's pace, and the three steps light up as it scrolls by. */
 .night { --p: 0; position: relative; overflow: hidden; margin-top: 120px; border-radius: 4px; background: var(--deep); color: #f4f2ee; padding: 72px 56px 64px; }
 .night .grid { background-image: linear-gradient(rgba(143,183,214,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(143,183,214,.09) 1px, transparent 1px); transform: translateY(calc(var(--p) * -24px)); inset: -24px 0; }
 .night > * { position: relative; }
@@ -310,73 +310,18 @@ footer .big.in span { transform: none; opacity: 1; }
 footer .big span:hover { color: var(--red); }
 
 @media (max-width: 900px) { .hero, .night { padding-left: 20px; padding-right: 20px; } .hero .art, .night .art { opacity: .3; } .card { position: static !important; width: auto; height: auto; margin-top: 24px; } .ground { display: none; } section, .night { margin-top: 80px; } .dock a.nav { display: none; } }
-/* Lycoris at night. */
-:root[data-theme="dark"] { --pearl: #141211; --plate: #1c1a18; --ink: #ece6dc; --ink-2: #a49d92; --line: #34302b; --blueprint: #e8735a; --red: #e3b768; --pale: #e8735a; --dawn-1: #141211; --dawn-2: #1f1714; --dawn-3: #2a1c16; --deep: #0b0a09; --card: #221f1c; --card-text: #ece6dc; --rule: #3a3631; --on: #7cc48e; --wait: #e0a84e; --bar: rgba(20,18,17,.92); --grid: rgba(236,230,220,.05); --ghost: #221f1c; color-scheme: dark; }
-:root[data-theme="dark"] .card { box-shadow: inset 0 0 0 1px #3a3631; }
-:root[data-theme="dark"] .pre { color: #8a8378; }
-:root[data-theme="dark"] .night { box-shadow: inset 0 0 0 1px #2a2724; }
-:root[data-theme="dark"] .night .grid { background-image: linear-gradient(rgba(236,230,220,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(236,230,220,.045) 1px, transparent 1px); }
-:root[data-theme="dark"] .night .kicker, :root[data-theme="dark"] .night .more, :root[data-theme="dark"] .turns span { color: #e8735a; }
-:root[data-theme="dark"] .night .lede, :root[data-theme="dark"] .turns p { color: #b5ada1; }
-:root[data-theme="dark"] .turns::before { background: #2f2b27; }
-:root[data-theme="dark"] .turns div::before { background: #0b0a09; box-shadow: 0 0 0 1px #4a443d; }
-:root[data-theme="dark"] .shelf.in:hover { box-shadow: 0 14px 30px rgba(0,0,0,.35); }
-:root[data-theme="dark"] .note, :root[data-theme="dark"] .win { background: rgba(30,27,25,.97); color: #ece6dc; border-color: rgba(236,230,220,.13); }
-:root[data-theme="dark"] .win { box-shadow: 0 18px 40px rgba(0,0,0,.5); }
-:root[data-theme="dark"] .wm, :root[data-theme="dark"] .win .status, :root[data-theme="dark"] .win .tabs, :root[data-theme="dark"] .win .sect, :root[data-theme="dark"] .win .about { color: #a8a094; }
-:root[data-theme="dark"] .win .x { color: #80796f; }
-:root[data-theme="dark"] .win .tabs b { color: #ece6dc; }
-:root[data-theme="dark"] .win .wbar, :root[data-theme="dark"] .win .tabs { border-color: rgba(236,230,220,.08); }
-:root[data-theme="dark"] .win .sect::after { background: rgba(236,230,220,.08); }
-:root[data-theme="dark"] .win .tile { background: rgba(232,115,90,.16); color: #e8735a; }
-:root[data-theme="dark"] .win .act { color: #e8735a; }
-:root[data-theme="dark"] .win .state, :root[data-theme="dark"] .win[data-state="2"] .status i { background: #7cc48e; }
-:root[data-theme="dark"] .note i, :root[data-theme="dark"] .win .status i { background: #e0a84e; }
-:root[data-theme="dark"] .win .new .state::after { color: #e0a84e; }
-:root[data-theme="dark"] .win[data-state="1"] .new { background: #2e2a26; }
-:root[data-theme="dark"] .win[data-state="2"] .moved { background: rgba(124,196,142,.08); }
-@media (prefers-color-scheme: dark) {
-:root:not([data-theme="light"]) { --pearl: #141211; --plate: #1c1a18; --ink: #ece6dc; --ink-2: #a49d92; --line: #34302b; --blueprint: #e8735a; --red: #e3b768; --pale: #e8735a; --dawn-1: #141211; --dawn-2: #1f1714; --dawn-3: #2a1c16; --deep: #0b0a09; --card: #221f1c; --card-text: #ece6dc; --rule: #3a3631; --on: #7cc48e; --wait: #e0a84e; --bar: rgba(20,18,17,.92); --grid: rgba(236,230,220,.05); --ghost: #221f1c; color-scheme: dark; }
-:root:not([data-theme="light"]) .card { box-shadow: inset 0 0 0 1px #3a3631; }
-:root:not([data-theme="light"]) .pre { color: #8a8378; }
-:root:not([data-theme="light"]) .night { box-shadow: inset 0 0 0 1px #2a2724; }
-:root:not([data-theme="light"]) .night .grid { background-image: linear-gradient(rgba(236,230,220,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(236,230,220,.045) 1px, transparent 1px); }
-:root:not([data-theme="light"]) .night .kicker, :root:not([data-theme="light"]) .night .more, :root:not([data-theme="light"]) .turns span { color: #e8735a; }
-:root:not([data-theme="light"]) .night .lede, :root:not([data-theme="light"]) .turns p { color: #b5ada1; }
-:root:not([data-theme="light"]) .turns::before { background: #2f2b27; }
-:root:not([data-theme="light"]) .turns div::before { background: #0b0a09; box-shadow: 0 0 0 1px #4a443d; }
-:root:not([data-theme="light"]) .shelf.in:hover { box-shadow: 0 14px 30px rgba(0,0,0,.35); }
-:root:not([data-theme="light"]) .note, :root:not([data-theme="light"]) .win { background: rgba(30,27,25,.97); color: #ece6dc; border-color: rgba(236,230,220,.13); }
-:root:not([data-theme="light"]) .win { box-shadow: 0 18px 40px rgba(0,0,0,.5); }
-:root:not([data-theme="light"]) .wm, :root:not([data-theme="light"]) .win .status, :root:not([data-theme="light"]) .win .tabs, :root:not([data-theme="light"]) .win .sect, :root:not([data-theme="light"]) .win .about { color: #a8a094; }
-:root:not([data-theme="light"]) .win .x { color: #80796f; }
-:root:not([data-theme="light"]) .win .tabs b { color: #ece6dc; }
-:root:not([data-theme="light"]) .win .wbar, :root:not([data-theme="light"]) .win .tabs { border-color: rgba(236,230,220,.08); }
-:root:not([data-theme="light"]) .win .sect::after { background: rgba(236,230,220,.08); }
-:root:not([data-theme="light"]) .win .tile { background: rgba(232,115,90,.16); color: #e8735a; }
-:root:not([data-theme="light"]) .win .act { color: #e8735a; }
-:root:not([data-theme="light"]) .win .state, :root:not([data-theme="light"]) .win[data-state="2"] .status i { background: #7cc48e; }
-:root:not([data-theme="light"]) .note i, :root:not([data-theme="light"]) .win .status i { background: #e0a84e; }
-:root:not([data-theme="light"]) .win .new .state::after { color: #e0a84e; }
-:root:not([data-theme="light"]) .win[data-state="1"] .new { background: #2e2a26; }
-:root:not([data-theme="light"]) .win[data-state="2"] .moved { background: rgba(124,196,142,.08); }
-}
-.theme { display: flex; gap: 10px; font-size: 14px; }
-.theme button { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink-2); opacity: .7; }
-.theme button:hover { opacity: 1; }
-.theme button[aria-pressed="true"] { color: var(--ink); font-weight: 700; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } [data-r], footer .big span { opacity: 1; transform: none; } .ink { stroke-dashoffset: 0; } .pop { stroke-opacity: 1; fill-opacity: 1; } html { scroll-behavior: auto; } h2 .w > span { transform: none; } .live { display: none; } .plate .rest { display: inline; } }
 </style></head><body>
 <div class="rule"></div>
 <div class="dock"><div class="wrap"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download</a></div></div>
 <div class="wrap" id="top">
 
-<nav class="bar"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="nav" href="https://github.com/AngelicaProject/angelica">GitHub</a><span class="theme" role="group" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button></span></nav>
+<nav class="bar"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="nav" href="https://github.com/AngelicaProject/angelica">GitHub</a></nav>
 
 <header class="hero" data-pace="1.7" data-ideas='${JSON.stringify(ideas)}'>
   <div class="grid"></div>${lily("hero", [0.184, 0.435, 0.62], [0.659, 0.263, 0.184], true)}<div class="ground"></div>
   <div class="card"><div class="cardtop"><span class="kicker">Tell your coding agent</span><button class="copy" type="button">Copy prompt</button></div>
-    <p class="pre">Read angelicaproject.github.io/angelica/agent.md and follow it to build an Angelica plugin that</p>
+    <p class="pre">Read angelicaproject.github.io/angelica/agent-setup.md and follow it to build an Angelica plugin that</p>
     <p class="idea"><span class="field" contenteditable="plaintext-only" spellcheck="false" role="textbox" aria-label="What your plugin does"></span><i class="caret"></i></p></div>
   <div class="mid">
     <h1 class="word">angelica</h1>
@@ -434,7 +379,7 @@ footer .big span:hover { color: var(--red); }
 
 <section id="docs">
   <div class="head"><span class="kicker" data-r>Documentation</span><h2 data-r>${rise("Written for people", "and for agents")}</h2>
-    <p data-r style="--d:2">If you are reading this yourself, start with a guide. If an agent is reading for you, point it at <code>llms.txt</code>, which lists every page as plain Markdown.</p></div>
+    <p data-r style="--d:2">If you are reading this yourself, start with a guide. To have a coding agent build a plugin, give it the prompt at the top of this page.</p></div>
   <div class="shelves">
     <div class="shelf" data-r><span class="kicker">Players</span><h3>Play</h3><ul><li><a href="install.html">Install Angelica</a></li><li><a href="turn-on-a-plugin.html">Turn on a plugin</a></li><li><a href="patch-day.html">Patch day</a></li><li><a href="remove.html">Remove Angelica</a></li><li><a href="troubleshooting.html">When something goes wrong</a></li></ul></div>
     <div class="shelf" data-r style="--d:1"><span class="kicker">Authors</span><h3>Build</h3><ul><li><a href="agent.html">Build a plugin with an agent</a></li><li><a href="first-plugin.html">Write your first plugin</a></li><li><a href="run-in-the-game.html">Run your plugin in the game</a></li><li><a href="publish.html">Publish a plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md">Interface cards</a></li></ul></div>
@@ -448,18 +393,8 @@ footer .big span:hover { color: var(--red); }
 </div>
 <script>
 const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-// The theme: the reader's last choice, otherwise the system's. At night the hero's lily is printed in brighter inks.
-const inks = { light: { line: [0.184, 0.435, 0.62], fill: [0.659, 0.263, 0.184] }, dark: { line: [0.79, 0.75, 0.68], fill: [0.91, 0.42, 0.33] } };
-const themeButtons = [...document.querySelectorAll(".theme button")];
-function theme(t, keep) {
-  document.documentElement.dataset.theme = t;
-  themeButtons.forEach((b) => b.setAttribute("aria-pressed", b.dataset.t === t));
-  for (const part of ["line", "fill"]) { const funcs = document.querySelectorAll(["R", "G", "B"].map((c) => "#" + part + "-hero feFunc" + c).join(", ")); funcs.forEach((f, i) => f.setAttribute("intercept", inks[t][part][i])); }
-  if (keep) try { localStorage.setItem("theme", t); } catch {}
-}
-let savedTheme = null; try { savedTheme = localStorage.getItem("theme"); } catch {}
-theme(savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
-themeButtons.forEach((b) => b.addEventListener("click", () => theme(b.dataset.t, true)));
+// The home page is always light; the documentation follows the reader's or the system's theme.
+document.documentElement.dataset.theme = "light";
 const clamp = (v) => Math.max(0, Math.min(1, v));
 
 // A lily has two thresholds: how much of its line drawing exists, and how much of that has turned red. Each eases toward a target every frame.
@@ -485,7 +420,7 @@ function flower(art, pace) {
 
 // Hero: the sentence in the card drives the lily. It types examples until the visitor writes their own.
 {
-  const PREFIX = "Read https://angelicaproject.github.io/angelica/agent.md and follow it to build an Angelica plugin that ";
+  const PREFIX = "Read https://angelicaproject.github.io/angelica/agent-setup.md and follow it to build an Angelica plugin that ";
   const hero = document.querySelector(".hero"), field = hero.querySelector(".field"), copy = hero.querySelector(".copy");
   const ideas = JSON.parse(hero.dataset.ideas), pace = Number(hero.dataset.pace), want = flower(hero.querySelector(".art"), pace);
   let idea = 0, at = 0, erasing = false, timer = 0, own = false;
@@ -518,8 +453,17 @@ function flower(art, pace) {
 const seen = new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); seen.unobserve(e.target); } }, { threshold: 0.18, rootMargin: "0px 0px -6% 0px" });
 for (const el of document.querySelectorAll("[data-r]")) still ? el.classList.add("in") : seen.observe(el);
 
-// What follows the scroll itself: the page rule, the small bar, the ticker, the plates' slight slide, and the night band, whose lily is drawn as it passes.
-const night = document.querySelector(".night"), nightWant = flower(night.querySelector(".art"), 0.6), turns = [...night.querySelectorAll(".turns div")];
+// The night band's lily is drawn when the band comes into view, as the hero's is: the line first, the red following it, never ahead.
+const night = document.querySelector(".night"), nightPace = 1.7, nightWant = flower(night.querySelector(".art"), nightPace), turns = [...night.querySelectorAll(".turns div")];
+new IntersectionObserver(([entry], watcher) => {
+  if (!entry.isIntersecting) return;
+  watcher.disconnect();
+  nightWant.line = 1;
+  const start = performance.now(), lead = 900 * nightPace, last = 2600 * nightPace;
+  const redden = (t) => { nightWant.fill = clamp((t - start - lead) / last); if (nightWant.fill < 1) requestAnimationFrame(redden); };
+  requestAnimationFrame(redden);
+}, { threshold: 0.35 }).observe(night);
+// What follows the scroll itself: the page rule, the small bar, the ticker, the plates' slight slide, and the night band's steps.
 const dock = document.querySelector(".dock"), rule = document.querySelector(".rule"), heroEl = document.querySelector(".hero"), run = document.querySelector(".ticker div");
 let asked = false;
 const follow = () => {
@@ -530,7 +474,6 @@ const follow = () => {
   // The band's story is told by the time it sits in the middle of the window (or reaches the top, when it is taller than the window).
   const box = night.getBoundingClientRect(), rest = Math.max(70, (vh - box.height) / 2), from = vh * 0.92, p = clamp((from - box.top) / (from - rest));
   if (box.bottom > -200 && box.top < vh + 200) night.style.setProperty("--p", p.toFixed(3));
-  nightWant.line = clamp(p * 2.1); nightWant.fill = clamp((p - 0.38) * 1.7);
   turns.forEach((turn, i) => turn.classList.toggle("on", p > 0.14 + i * 0.3));
 };
 // The ticker never stops; scrolling only pushes it along.
