@@ -216,7 +216,7 @@ pub fn map_files(map: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     for folder in ["sheets", "types", "enums", "windows"] {
         add_folder(&map.join(folder), folder, &mut files)?;
     }
-    for file in ["domains.toml", "roots.toml", "events.toml", "actions.toml"] {
+    for file in angelica_map::ROOT_FILES {
         let path = map.join(file);
         if path.exists() {
             files.insert(

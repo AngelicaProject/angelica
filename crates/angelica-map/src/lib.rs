@@ -24,7 +24,7 @@ pub use events::{
     Arg, DERIVATIONS, DerivedValue, Event, MOST_OUTCOME_TEXT, MOST_RATE, Outcome, RULE_FORMATS,
     Register, Source as ArgSource, derivation,
 };
-pub use load::{FORMAT, Map};
+pub use load::{FORMAT, Map, ROOT_FILES};
 pub use model::{Abi, Check, Entry, EntryKind, Follow, Locator, Origin, Thread, ValueKind};
 pub use objects::{
     Array, Bit, Domain, DomainClass, Enum, Field, Length, MOST_ELEMENTS, MOST_TEXT, Meaning,

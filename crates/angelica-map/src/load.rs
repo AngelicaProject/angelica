@@ -80,7 +80,7 @@ impl Map {
                 }
             }
         }
-        for file in ["domains.toml", "roots.toml", "events.toml", "actions.toml"] {
+        for file in ROOT_FILES {
             let path = directory.join(file);
             if path.exists() {
                 files.push((file.to_owned(), read_text(&path)?));
@@ -506,12 +506,11 @@ fn io_error(path: &Path, error: &std::io::Error) -> MapError {
     }
 }
 
+/// The files of the object model at the map's root, beside `map.toml`;
+/// everything else is in folders.
+pub const ROOT_FILES: [&str; 4] = ["domains.toml", "roots.toml", "events.toml", "actions.toml"];
+
 /// Whether a file of the map belongs to the object model.
 fn is_object_file(path: &str) -> bool {
-    path == "domains.toml"
-        || path == "roots.toml"
-        || path == "events.toml"
-        || path == "actions.toml"
-        || path.starts_with("types/")
-        || path.starts_with("enums/")
+    ROOT_FILES.contains(&path) || path.starts_with("types/") || path.starts_with("enums/")
 }
