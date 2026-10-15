@@ -320,3 +320,38 @@ fn look_answers_a_query_from_the_command_line_between_frames() {
     let response = ask("inventory.containers { nothing }");
     assert_eq!(response.error.unwrap().kind, "not-found");
 }
+
+#[test]
+fn a_release_build_answers_look_only_in_dev_mode() {
+    use runtime::look::{REQUEST, RESPONSE, Request};
+    let test = started();
+    let installation = tempfile::tempdir().unwrap();
+    let dev = std::sync::Arc::new(runtime::dev::DevMode::new(installation.path()));
+    test.host.set_dev(dev.clone());
+    let folder = test.folder.path().join("look");
+    std::fs::create_dir_all(&folder).unwrap();
+    test.host.serve_look_in_dev_mode(folder.clone());
+    let request = Request {
+        format: 1,
+        id: "2a".into(),
+        query: "inventory.containers { kind }".into(),
+        mode: runtime::look::Mode::Rows,
+        seconds: None,
+        bytes: None,
+        entries: Vec::new(),
+    };
+    std::fs::write(folder.join(REQUEST), serde_json::to_vec(&request).unwrap()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    test.frames(1);
+    assert!(
+        folder.join(REQUEST).exists(),
+        "outside dev mode the request stays unread"
+    );
+    assert!(!folder.join(RESPONSE).exists());
+
+    dev.set(true).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    test.frames(1);
+    assert!(!folder.join(REQUEST).exists(), "taken in dev mode");
+    assert!(folder.join(RESPONSE).exists());
+}

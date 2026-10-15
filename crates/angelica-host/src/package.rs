@@ -58,8 +58,28 @@ impl FileSet {
                     .is_ok_and(|key| key.verify_strict(&manifest, &signature).is_ok())
             })
             .ok_or_else(|| PackageError("files.json signature failed".into()))?;
+        Ok((signer, Self::read_listed(directory, &manifest)?))
+    }
+
+    /// The files `files.json` lists, each checked against its hash, with
+    /// no signature: only for the local map of dev mode, which the player
+    /// put there with `angelica map try`.
+    ///
+    /// # Errors
+    /// As [`FileSet::load`], except that no signature is asked for.
+    pub fn load_unsigned(directory: &Path) -> Result<BTreeMap<String, Vec<u8>>, PackageError> {
+        let manifest = read_limited(&directory.join("files.json"), 1024 * 1024)
+            .map_err(|e| PackageError(format!("files.json: {e}")))?;
+        Self::read_listed(directory, &manifest)
+    }
+
+    /// Every file a file list names, checked against its hash.
+    fn read_listed(
+        directory: &Path,
+        manifest: &[u8],
+    ) -> Result<BTreeMap<String, Vec<u8>>, PackageError> {
         let set: Self =
-            serde_json::from_slice(&manifest).map_err(|e| PackageError(e.to_string()))?;
+            serde_json::from_slice(manifest).map_err(|e| PackageError(e.to_string()))?;
         if set.format != 1 || set.files.is_empty() || set.files.len() > 8192 {
             return Err(PackageError("unsupported format or empty file set".into()));
         }
@@ -92,7 +112,7 @@ impl FileSet {
             }
             bytes.insert(name, content);
         }
-        Ok((signer, bytes))
+        Ok(bytes)
     }
 }
 

@@ -2105,6 +2105,26 @@ impl Menu {
         let s = self.strings();
         let p = view.p;
         ui.spacing_mut().item_spacing.y = view.at(4.0);
+        if let Some(dev) = host.dev() {
+            let mut chosen = None;
+            setting(ui, view, s.dev_mode, |ui| {
+                chosen = theme::choice(ui, &[s.word_off, s.word_on], usize::from(dev.on()), view.k)
+                    .map(|index| index == 1);
+            });
+            if let Some(on) = chosen.filter(|on| *on != dev.on()) {
+                match dev.set(on) {
+                    Ok(line) | Err(line) => host.diagnostic(line),
+                }
+            }
+            ui.add(
+                egui::Label::new(
+                    RichText::new(s.dev_mode_note)
+                        .font(sans(view.at(12.0)))
+                        .color(p.secondary),
+                )
+                .wrap(),
+            );
+        }
         theme::header(ui, s.dev_map, None, p.secondary, view.k);
         for line in view.map_status {
             mono_line(ui, view, line, p.text);
@@ -2234,6 +2254,14 @@ impl Menu {
                 1.0,
                 fill(self.strings().hint_stop, &[("key", stop)]),
             ));
+        }
+        if let Some(dev) = view.host.dev().filter(|dev| dev.on()) {
+            let text = if dev.local_map().is_some() {
+                self.strings().note_dev_local
+            } else {
+                self.strings().note_dev
+            };
+            notes.push((text.to_owned(), Tone::Attention, 1.0, hint.clone()));
         }
         if !view.statuses.is_empty() && (waiting > 0 || view.time < START_TIME) {
             let fade = if waiting > 0 {

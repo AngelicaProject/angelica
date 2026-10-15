@@ -20,7 +20,7 @@ pub struct CheckArgs {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum CheckError {
+pub(crate) enum CheckError {
     #[error(transparent)]
     Map(#[from] MapError),
     #[error("{path}: {message}")]
@@ -32,7 +32,7 @@ enum CheckError {
 }
 
 impl CheckError {
-    fn to_json(&self) -> Json {
+    pub(crate) fn to_json(&self) -> Json {
         let (code, path, entry) = match self {
             Self::Map(error) => (error.code(), error.path(), error.entry()),
             Self::Io { path, .. } => ("io", Some(path.as_path()), None),
@@ -52,9 +52,9 @@ impl CheckError {
 
 /// What `check` found: the number of entries and each build record, in
 /// the order of their game versions.
-struct Checked {
-    entries: usize,
-    builds: Vec<BuildRecord>,
+pub(crate) struct Checked {
+    pub(crate) entries: usize,
+    pub(crate) builds: Vec<BuildRecord>,
 }
 
 pub fn run(args: &CheckArgs) -> ExitCode {
@@ -78,7 +78,7 @@ pub fn run(args: &CheckArgs) -> ExitCode {
     }
 }
 
-fn check(directory: &Path) -> Result<Checked, CheckError> {
+pub(crate) fn check(directory: &Path) -> Result<Checked, CheckError> {
     let map = Map::load(directory)?;
     let notices = directory.join(NOTICES);
     if map.entries().any(|entry| entry.origin.is_some()) && !notices.is_file() {

@@ -74,10 +74,12 @@ extern "system" fn angelica_start_v1() -> i32 {
 }
 
 /// `angelica look` reads the game for work on the game map: a development
-/// build answers it, a release build never does.
+/// build answers it always, a release build only in dev mode.
 fn serve_look(host: &Host, root: &Path) {
     if crate::self_update::build_channel().is_none() {
         host.serve_look(root.join("look"));
+    } else {
+        host.serve_look_in_dev_mode(root.join("look"));
     }
 }
 
@@ -208,10 +210,8 @@ fn initialize() -> Result<(), String> {
     let (base, snapshot, hash) = executable_snapshot()?;
     log_start(base, &hash)?;
     let diagnostics = diagnostics(root);
-    let (catalog, map, map_status) = load_map(&config, base, &snapshot, hash);
-    for line in &map_status {
-        super::log(line);
-    }
+    let dev = Arc::new(crate::dev::DevMode::new(root));
+    let (catalog, map, map_status) = load_map(&map_source(&config, &dev), base, &snapshot, hash);
     let catalog = Arc::new(catalog);
     let services = services(&config, root, &catalog, map.as_ref(), base)?;
     let sandbox = Arc::new(Sandbox::new()?);
@@ -237,6 +237,7 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
     ));
     host.set_plugin_installer(installer.clone());
+    host.set_dev(dev.clone());
     serve_look(&host, root);
     if diagnostics.updates {
         host.set_self_update(self_update(&config, root));
@@ -254,6 +255,7 @@ fn initialize() -> Result<(), String> {
     }
     let map_data = MapData {
         directory: config.map_directory.clone(),
+        dev,
         seen: None,
         sheets: host.services().sheets.clone(),
         lens: host.services().lens.clone(),
@@ -380,25 +382,65 @@ fn schema(
     schema
 }
 
-/// The signed map resolved for this executable, the map, and the lines the
-/// menu shows about it. Without a usable map every entry is absent and no
-/// sheet or state table is offered.
+/// Where the game map comes from: the signed map folder, or the local map
+/// of dev mode.
+enum MapSource {
+    Signed(std::path::PathBuf),
+    Local(std::path::PathBuf),
+}
+
+impl MapSource {
+    fn files(&self) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        match self {
+            Self::Signed(folder) => FileSet::load(folder, RELEASE_KEY.as_ref()),
+            Self::Local(folder) => FileSet::load_unsigned(folder),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn folder(&self) -> &Path {
+        match self {
+            Self::Signed(folder) | Self::Local(folder) => folder,
+        }
+    }
+
+    /// How the menu and the log name the map.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Signed(_) => "Game map",
+            Self::Local(_) => "Local game map of dev mode",
+        }
+    }
+}
+
+/// The local map while dev mode has one, otherwise the signed map.
+fn map_source(config: &Config, dev: &crate::dev::DevMode) -> MapSource {
+    dev.local_map().map_or_else(
+        || MapSource::Signed(config.map_directory.clone()),
+        MapSource::Local,
+    )
+}
+
+/// The map resolved for this executable, the map, and the lines the menu
+/// shows about it, which go to the log too. Without a usable map every entry is absent and no sheet
+/// or state table is offered.
 fn load_map(
-    config: &Config,
+    source: &MapSource,
     base: usize,
     snapshot: &[u8],
     hash: String,
 ) -> (Catalog, Option<angelica_map::Map>, Vec<String>) {
     let mut map_status = Vec::new();
     let mut loaded = None;
-    let catalog = match FileSet::load(&config.map_directory, RELEASE_KEY.as_ref())
-        .map_err(|e| e.to_string())
+    let catalog = match source
+        .files()
         .and_then(|files| Catalog::from_signed_files(&files, snapshot, base as u64, hash.clone()))
     {
         Ok((map, catalog)) => {
             loaded = Some(map);
             map_status.push(format!(
-                "Game map: {} for this build, {} entries present, {} absent",
+                "{}: {} for this build, {} entries present, {} absent",
+                source.name(),
                 if catalog.verified {
                     "verified"
                 } else {
@@ -416,13 +458,16 @@ fn load_map(
             catalog
         }
         Err(error) => {
-            map_status.push(format!("Game map unavailable: {error}"));
+            map_status.push(format!("{} unavailable: {error}", source.name()));
             Catalog {
                 executable_sha256: hash,
                 ..Catalog::default()
             }
         }
     };
+    for line in &map_status {
+        super::log(line);
+    }
     (catalog, loaded, map_status)
 }
 
@@ -530,31 +575,47 @@ struct FolderPackages {
 /// object model, and window schemas, which a reloaded map replaces.
 struct MapData {
     directory: std::path::PathBuf,
-    seen: Option<Vec<u8>>,
+    dev: Arc<crate::dev::DevMode>,
+    /// The folder and file list of the map loaded last.
+    seen: Option<(std::path::PathBuf, Vec<u8>)>,
     sheets: Arc<crate::sheets::Sheets>,
     lens: Arc<crate::lens::Lens>,
     data: Arc<crate::game_data::GameData>,
 }
 
 impl MapData {
+    fn source(&self) -> MapSource {
+        self.dev.local_map().map_or_else(
+            || MapSource::Signed(self.directory.clone()),
+            MapSource::Local,
+        )
+    }
+
+    /// Whether the map to use changed: a new file list, or dev mode
+    /// turning a local map on or off.
     fn changed(&mut self) -> bool {
-        let list = std::fs::read(self.directory.join("files.json")).ok();
-        if list.is_none() || list == self.seen {
+        let source = self.source();
+        let Ok(list) = std::fs::read(source.folder().join("files.json")) else {
+            return false;
+        };
+        let seen = Some((source.folder().to_path_buf(), list));
+        if seen == self.seen {
             return false;
         }
-        self.seen = list;
+        self.seen = seen;
         true
     }
 
     fn reload(&self) -> Result<String, String> {
         let (base, snapshot, hash) = executable_snapshot()?;
-        let files =
-            FileSet::load(&self.directory, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
+        let source = self.source();
+        let files = source.files()?;
         let (map, catalog) = Catalog::from_signed_files(&files, &snapshot, base as u64, hash)?;
         self.sheets.set(map.sheets().cloned());
         self.lens.replace(schema(&map, &catalog, base, &self.data));
         Ok(format!(
-            "game map reloaded: {} sheet schemas, {} object types, and {} window schemas; entries that hooks use change at the next game start",
+            "{} reloaded: {} sheet schemas, {} object types, and {} window schemas; entries that hooks use change at the next game start",
+            source.name().to_lowercase(),
             map.sheets().count(),
             map.objects().types.len(),
             map.windows().count()

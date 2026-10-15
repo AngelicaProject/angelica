@@ -6,7 +6,7 @@
 //! `ANGELICA_RELEASE_PUBLIC_KEY`; packages signed with any other key are
 //! refused.
 use crate::Output;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use ed25519_dalek::{Signer, SigningKey};
 use runtime::installer::{read_key, write, write_package as package};
 use std::{
@@ -21,6 +21,27 @@ pub enum DevCommand {
     Key(KeyArgs),
     /// Sign a runtime, a map, and plugins into an installation folder.
     Install(InstallArgs),
+    /// Turn dev mode on or off: `angelica look` and a local map from
+    /// `angelica map try`, on the player's own Angelica.
+    Mode(ModeArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+#[derive(Debug, Args)]
+pub struct ModeArgs {
+    #[arg(value_enum)]
+    switch: Switch,
+    /// The installation folder (`%LOCALAPPDATA%\Angelica` for an installed
+    /// Angelica).
+    #[arg(long)]
+    installation: PathBuf,
+    #[command(flatten)]
+    reporting: Output,
 }
 
 #[derive(Debug, Args)]
@@ -60,6 +81,7 @@ pub fn run(command: &DevCommand) -> ExitCode {
     let (result, reporting) = match command {
         DevCommand::Key(args) => (key(args), &args.reporting),
         DevCommand::Install(args) => (install(args), &args.reporting),
+        DevCommand::Mode(args) => (mode(args), &args.reporting),
     };
     match result {
         Ok(report) => {
@@ -184,6 +206,21 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
     }
     report.insert("plugins".into(), plugins.into());
     Ok(serde_json::Value::Object(report))
+}
+
+/// Writes dev mode's switch; the running game follows within a second.
+fn mode(args: &ModeArgs) -> Result<serde_json::Value, String> {
+    if !args.installation.join("current.json").is_file()
+        && !args.installation.join("runtime.dll").is_file()
+    {
+        return Err(format!(
+            "{} is not an Angelica installation",
+            args.installation.display()
+        ));
+    }
+    let on = matches!(args.switch, Switch::On);
+    runtime::dev::write(&args.installation.join(runtime::dev::FOLDER), on)?;
+    Ok(serde_json::json!({"dev_mode": on}))
 }
 
 /// The files of the map in `map` that a map package holds, by their paths
