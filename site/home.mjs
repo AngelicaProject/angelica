@@ -15,7 +15,6 @@ const ideas = ["shows where to gather any material I search for", "tells me when
 const status = JSON.parse(feeds);
 const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const day = (iso) => { const d = new Date(iso); return `${d.getUTCDate()} ${months[d.getUTCMonth()]}`; };
-const state = `As of ${day(status.checked)}, ${status.checked.slice(11, 16)} UTC`;
 const [release, nightly] = status.angelica.version.split("-nightly.");
 const facts = [
   ["Angelica", release, nightly ? `nightly ${nightly}` : "stable"],
@@ -166,10 +165,8 @@ h2.in .w > span { transform: none; }
 .lead { font-family: var(--soft); font-size: 30px; line-height: 1.15; margin: 22px 0 0; max-width: 20ch; }
 .sub { margin: 12px 0 0; color: var(--ink-2); max-width: 42ch; }
 .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
-/* Under the buttons: when the release feeds were read, then the three versions they gave, each named in plain words. The feeds do not say which game version is live, so nothing here claims Angelica is up to date with it. */
-.state { display: flex; align-items: baseline; gap: 9px; margin: 22px 0 0; font-size: 15.5px; font-weight: 600; }
-.state i { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--on); transform: translateY(-1px); animation: pulse 2.6s ease-in-out infinite; }
-.facts { display: flex; margin: 12px 0 0; border-top: 1px solid var(--rule); max-width: 440px; }
+/* Under the buttons: the three versions the release feeds gave, each named in plain words. The feeds do not say which game version is live, so nothing here claims Angelica is up to date with it. */
+.facts { display: flex; margin: 22px 0 0; border-top: 1px solid var(--rule); max-width: 440px; }
 .facts div { flex: 1; padding: 9px 14px 0 0; }
 .facts span { display: block; font-size: 12.5px; color: var(--ink-2); }
 .facts b { font-size: 15px; font-weight: 600; }
@@ -243,7 +240,7 @@ section { margin-top: 120px; }
 .win .name { font-weight: 500; }
 .win .about { color: rgba(36,33,28,.6); font-size: 12.5px; margin-left: auto; }
 .win .act { display: none; margin-left: auto; color: #7a5c2e; font-weight: 600; }
-.win .state { width: 8px; height: 8px; border-radius: 50%; background: #2e7d46; flex: none; }
+.win .state { display: flex; align-items: baseline; gap: 9px; margin: 22px 0 0; font-size: 15.5px; font-weight: 600; width: 8px; height: 8px; border-radius: 50%; background: #2e7d46; flex: none; }
 .win .new .state { background: none; width: auto; height: auto; }
 .win .new .state::after { content: "!"; color: #b76e00; font-weight: 600; font-style: normal; }
 .win .moved { height: 0; opacity: 0; }
@@ -386,8 +383,7 @@ footer .big span:hover { color: var(--red); }
     <p class="lead">An engine for every idea you bring to Eorzea.</p>
     <p class="sub">A plugin platform for FINAL FANTASY XIV. Plugins run in a sandbox and can do only what you allowed.</p>
     <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a><a class="b two" href="#docs">Documentation</a></div>
-    <div class="status"><p class="state"><i></i><span>${state}</span></p>
-      <div class="facts">${facts.map(([label, value, detail]) => `<div><span>${label}</span><b>${value}</b><small>${detail}</small></div>`).join("")}</div></div>
+    <div class="status"><div class="facts">${facts.map(([label, value, detail]) => `<div><span>${label}</span><b>${value}</b><small>${detail}</small></div>`).join("")}</div></div>
   </div>
 </header>
 

@@ -68,7 +68,6 @@ export async function status() {
   }
   const game = recordVersions(pack).at(-1) ?? null;
   return {
-    checked: new Date().toISOString(),
     angelica: { version: nightly.version },
     map: { version: map.version, published: map.published },
     game: game && { version: game, date: versionDate(game) },
