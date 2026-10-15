@@ -7,7 +7,7 @@ use crate::{
     host::{Action, Event, Host, Plugin, Status},
     key::MenuKey,
     language::{Language, Settings, Strings, fill},
-    manifest::{Class, Manifest, Origin, Permission},
+    manifest::{Asked, Class, Manifest, Origin, Permission},
     plugin_installer::{Failure, PluginInstaller, Report},
     sandbox::{LogLine, bindings::angelica::plugin::runtime::Level},
     theme::{self, Icon, Palette, Size, Theme, Word, medium, mono, sans, strong, wordmark},
@@ -93,7 +93,8 @@ pub fn lines(entries: &[Entry<'_>], query: &str, class: Option<Class>) -> Vec<Li
 }
 
 /// The classes of permissions, in the order they are shown.
-const CLASSES: [Class; 4] = [
+const CLASSES: [Class; 5] = [
+    Class::Acts,
     Class::Network,
     Class::OtherPlayers,
     Class::WhatYouSee,
@@ -104,6 +105,7 @@ const CLASSES: [Class; 4] = [
 #[must_use]
 pub fn class_icon(class: Class) -> Icon {
     match class {
+        Class::Acts => Icon::Acts,
         Class::Network => Icon::Network,
         Class::OtherPlayers => Icon::OtherPlayers,
         Class::WhatYouSee => Icon::WhatYouSee,
@@ -111,13 +113,20 @@ pub fn class_icon(class: Class) -> Icon {
     }
 }
 
-/// The classes of `permissions`, each once, in the order they are shown.
-fn classes_of(permissions: impl IntoIterator<Item = Permission>) -> Vec<Class> {
-    let held: Vec<Class> = permissions.into_iter().map(Permission::class).collect();
+/// The classes of `held`, each once, in the order they are shown.
+fn classes_of(held: impl IntoIterator<Item = Class>) -> Vec<Class> {
+    let held: Vec<Class> = held.into_iter().collect();
     CLASSES
         .into_iter()
         .filter(|class| held.contains(class))
         .collect()
+}
+
+/// A key the player can choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyFor {
+    Menu,
+    Stop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,8 +193,9 @@ pub struct Menu {
     applied: Option<Theme>,
     settings: Settings,
     settings_path: PathBuf,
-    /// Whether the next key the player presses becomes the menu's key.
-    choosing_key: bool,
+    /// Which key the next key the player presses becomes: the menu's or
+    /// the one that stops plugins acting.
+    choosing: Option<KeyFor>,
     tab: Tab,
     section: Section,
     query: String,
@@ -266,7 +276,7 @@ impl Menu {
             applied: None,
             settings,
             settings_path,
-            choosing_key: false,
+            choosing: None,
             tab: Tab::Installed,
             section: Section::General,
             query: String::new(),
@@ -335,11 +345,17 @@ impl Menu {
         self.settings.key.unwrap_or_default()
     }
 
-    /// Whether the menu waits for the player to press its new key; the
-    /// next key pressed then comes to [`Self::key_pressed`] and nowhere else.
+    /// The key that stops every plugin acting, and lets them act again.
+    #[must_use]
+    pub fn stop_key(&self) -> MenuKey {
+        self.settings.stop_key.unwrap_or_else(MenuKey::stop)
+    }
+
+    /// Whether the menu waits for the player to press a new key; the next
+    /// key pressed then comes to [`Self::key_pressed`] and nowhere else.
     #[must_use]
     pub fn choosing_key(&self) -> bool {
-        self.choosing_key
+        self.choosing.is_some()
     }
 
     /// The key with the Windows virtual-key code `code` was pressed while
@@ -347,15 +363,22 @@ impl Menu {
     /// can be on becomes it, and any other key is waited out.
     pub fn key_pressed(&mut self, host: &Host, code: u32) {
         const ESCAPE: u32 = 0x1b;
-        if !self.choosing_key {
+        let Some(choosing) = self.choosing else {
             return;
-        }
+        };
         if code == ESCAPE {
-            self.choosing_key = false;
+            self.choosing = None;
         } else if let Some(key) = MenuKey::from_virtual_key(code) {
-            self.choosing_key = false;
-            if key != self.key() {
-                self.settings.key = Some(key);
+            self.choosing = None;
+            let (current, other, setting) = match choosing {
+                KeyFor::Menu => (self.key(), self.stop_key(), &mut self.settings.key),
+                KeyFor::Stop => (self.stop_key(), self.key(), &mut self.settings.stop_key),
+            };
+            // The two keys stay apart: a key already taken is waited out.
+            if key == other {
+                self.choosing = Some(choosing);
+            } else if key != current {
+                *setting = Some(key);
                 self.save(host);
             }
         }
@@ -399,7 +422,7 @@ impl Menu {
         } else {
             self.dialog = None;
             self.removing = None;
-            self.choosing_key = false;
+            self.choosing = None;
             self.draw_notes(context, &view);
             false
         }
@@ -434,7 +457,7 @@ impl Menu {
             });
         self.apply_withdrawals(view);
         if self.tab != Tab::Settings || self.section != Section::General {
-            self.choosing_key = false;
+            self.choosing = None;
         }
         if self.dialog.is_some() {
             self.draw_dialog(context, view);
@@ -1095,19 +1118,7 @@ impl Menu {
                         .wrap(),
                     );
                 }
-                let permissions = manifest.permissions();
-                if permissions.is_empty() {
-                    permission_line(ui, view, None, s.asks_nothing, p.secondary);
-                }
-                for &permission in permissions {
-                    permission_line(
-                        ui,
-                        view,
-                        Some(class_icon(permission.class())),
-                        &self.permission_text(plugin, permission),
-                        p.text,
-                    );
-                }
+                self.held(ui, view, plugin);
                 ui.label(
                     RichText::new(format!(
                         "{}, {}",
@@ -1258,14 +1269,51 @@ impl Menu {
         }
     }
 
+    /// What a plugin may do, one line each, and the domains it asks for that
+    /// are not granted.
+    fn held(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin) {
+        let s = self.strings();
+        let p = view.p;
+        let asked = plugin.asked();
+        let ungranted = plugin.ungranted();
+        if asked.is_empty() && ungranted.is_empty() {
+            permission_line(ui, view, None, s.asks_nothing, p.secondary);
+        }
+        for asked in &asked {
+            permission_line(
+                ui,
+                view,
+                Some(class_icon(asked.class())),
+                &self.permission_text(plugin, asked),
+                p.text,
+            );
+        }
+        for domain in &ungranted {
+            let text = if let Some(acting) = domain.strip_suffix(".act") {
+                fill(s.lens_act_ungranted, &[("domain", acting)])
+            } else if let Some(changing) = domain.strip_suffix(".change") {
+                fill(s.lens_change_ungranted, &[("domain", changing)])
+            } else {
+                fill(s.lens_ungranted, &[("domain", domain)])
+            };
+            permission_line(ui, view, None, &text, p.secondary);
+        }
+    }
+
     /// A permission in plain words, with the sites of a network one.
-    fn permission_text(&self, plugin: &Plugin, permission: Permission) -> String {
-        let text = self.language.permission(permission);
-        if permission == Permission::HttpGet {
+    fn permission_text(&self, plugin: &Plugin, asked: &Asked) -> String {
+        let text = self.language.asked(asked);
+        if *asked == Asked::Permission(Permission::HttpGet) {
             let hosts: Vec<String> = plugin.manifest.http_hosts().into_iter().collect();
             format!("{text}: {}", hosts.join(", "))
+        } else if *asked == Asked::Permission(Permission::MessagesSend) {
+            let receivers: Vec<String> = plugin.manifest.message_to().into_iter().collect();
+            format!("{text}: {}", receivers.join(", "))
+        } else if *asked == Asked::Permission(Permission::StorageCache) {
+            let gib = plugin.manifest.cache_gib().unwrap_or_default();
+            format!("{text}: {}", self.language.up_to_gib(gib))
         } else {
-            text.to_owned()
+            text
         }
     }
 
@@ -1486,9 +1534,9 @@ impl Menu {
         let s = self.strings();
         let p = view.p;
         let requests = plugin.requests();
-        let asked: Vec<Permission> = requests
+        let asked: Vec<&Asked> = requests
             .iter()
-            .flat_map(|(_, requests)| requests.iter().map(|request| request.permission))
+            .flat_map(|(_, requests)| requests.iter().map(|request| &request.asked))
             .collect();
         let title = if more { s.asks_first } else { s.asks };
         theme::header(
@@ -1522,7 +1570,7 @@ impl Menu {
                             ui,
                             view,
                             Some(class_icon(*class)),
-                            self.language.permission(request.permission),
+                            &self.language.asked(&request.asked),
                             p.text,
                         );
                         if !request.hosts.is_empty() {
@@ -1537,13 +1585,18 @@ impl Menu {
                         }
                     }
                 }
+                if requests.iter().any(|(class, _)| *class == Class::Acts) {
+                    ui.label(
+                        RichText::new(s.acts_warning)
+                            .size(view.at(12.0))
+                            .color(p.attention),
+                    );
+                }
             });
-        let already: Vec<Permission> = plugin
-            .manifest
-            .permissions()
-            .iter()
-            .copied()
-            .filter(|permission| !asked.contains(permission))
+        let already: Vec<Asked> = plugin
+            .asked()
+            .into_iter()
+            .filter(|held| !asked.contains(&held))
             .collect();
         if more && !already.is_empty() {
             ui.add_space(view.at(6.0));
@@ -1555,7 +1608,7 @@ impl Menu {
                         ui,
                         view,
                         Some(class_icon(permission.class())),
-                        &self.permission_text(plugin, permission),
+                        &self.permission_text(plugin, &permission),
                         p.secondary,
                     );
                 });
@@ -1686,23 +1739,33 @@ impl Menu {
     fn general(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
-        let key = self.key().name();
-        setting(ui, view, s.setting_key, |ui| {
-            let text = if self.choosing_key { s.key_press } else { key };
-            if theme::key(ui, text, view.k).clicked() {
-                self.choosing_key = !self.choosing_key;
+        for (which, title, key, note) in [
+            (KeyFor::Menu, s.setting_key, self.key().name(), s.key_note),
+            (
+                KeyFor::Stop,
+                s.setting_stop_key,
+                self.stop_key().name(),
+                s.stop_key_note,
+            ),
+        ] {
+            let choosing = self.choosing == Some(which);
+            setting(ui, view, title, |ui| {
+                let text = if choosing { s.key_press } else { key };
+                if theme::key(ui, text, view.k).clicked() {
+                    self.choosing = if choosing { None } else { Some(which) };
+                }
+            });
+            if choosing {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(fill(note, &[("key", key)]))
+                            .font(sans(view.at(12.0)))
+                            .color(p.secondary),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(view.at(10.0));
             }
-        });
-        if self.choosing_key {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(fill(s.key_note, &[("key", key)]))
-                        .font(sans(view.at(12.0)))
-                        .color(p.secondary),
-                )
-                .wrap(),
-            );
-            ui.add_space(view.at(10.0));
         }
         let mut language = None;
         setting(ui, view, s.setting_language, |ui| {
@@ -2146,7 +2209,32 @@ impl Menu {
             .iter()
             .filter(|status| Group::of(status) == Group::Attention)
             .count();
-        let mut notes: Vec<(String, Tone, f32)> = Vec::new();
+        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
+        let mut notes: Vec<(String, Tone, f32, String)> = Vec::new();
+        let mut heads: Vec<Option<String>> = Vec::new();
+        let acting = &view.host.services().lens.acting;
+        let stop = self.stop_key().name();
+        if acting.stopped() {
+            notes.push((
+                self.strings().note_stopped.to_owned(),
+                Tone::Attention,
+                1.0,
+                fill(self.strings().hint_resume, &[("key", stop)]),
+            ));
+        } else if let Some(plugin) = acting.acting(std::time::Instant::now()) {
+            let shown = view
+                .host
+                .plugins()
+                .into_iter()
+                .find(|found| found.manifest.id() == plugin)
+                .map_or(plugin, |found| found.manifest.plugin.name.clone());
+            notes.push((
+                fill(self.strings().note_acting, &[("name", &shown)]),
+                Tone::Attention,
+                1.0,
+                fill(self.strings().hint_stop, &[("key", stop)]),
+            ));
+        }
         if !view.statuses.is_empty() && (waiting > 0 || view.time < START_TIME) {
             let fade = if waiting > 0 {
                 1.0
@@ -2158,7 +2246,7 @@ impl Menu {
             } else {
                 Tone::Good
             };
-            notes.push((self.pulse(view.statuses), tone, fade));
+            notes.push((self.pulse(view.statuses), tone, fade, hint.clone()));
         }
         for note in self.notes.iter().rev() {
             let (text, tone) = self.note_text(view.host, &note.report);
@@ -2167,11 +2255,32 @@ impl Menu {
                 text,
                 tone,
                 fraction((age / 0.25).min((NOTE_TIME - age) / 0.5)),
+                hint.clone(),
             ));
         }
-        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
+        heads.resize(notes.len(), None);
+        let now = std::time::Instant::now();
+        for shown in view.host.services().notifications.current(now) {
+            let age = now.duration_since(shown.at).as_secs_f64();
+            let shown_for = crate::notifications::SHOWN.as_secs_f64();
+            notes.push((
+                shown.text,
+                if shown.attention {
+                    Tone::Attention
+                } else {
+                    Tone::Good
+                },
+                fraction((age / 0.25).min((shown_for - age) / 0.5)),
+                String::new(),
+            ));
+            heads.push(Some(
+                view.host
+                    .plugin(&shown.plugin)
+                    .map_or(shown.plugin, |plugin| plugin.manifest.plugin.name.clone()),
+            ));
+        }
         let mut top = view.screen.top() + view.at(24.0);
-        for (index, (text, tone, fade)) in notes.into_iter().enumerate() {
+        for (index, ((text, tone, fade, hint), head)) in notes.into_iter().zip(heads).enumerate() {
             let area = egui::Area::new(Id::new(("angelica-note", index)))
                 .order(egui::Order::Foreground)
                 .interactable(false)
@@ -2179,7 +2288,7 @@ impl Menu {
                 .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
                 .show(context, |ui| {
                     ui.multiply_opacity(fade);
-                    note(ui, view, &text, tone, &hint);
+                    note(ui, view, head.as_deref(), &text, tone, &hint);
                 });
             top = area.response.rect.bottom() + view.at(8.0);
         }
@@ -2239,7 +2348,17 @@ fn report_text<'a>(
         Status::Faulted(reason) => format!("stopped: {reason}"),
     };
     let _ = writeln!(out, "State: {state}");
-    let permissions: Vec<&str> = manifest.permissions().iter().map(|p| p.name()).collect();
+    let permissions: Vec<String> = manifest
+        .permissions()
+        .iter()
+        .map(|p| p.name().to_owned())
+        .chain(
+            manifest
+                .lens_read()
+                .iter()
+                .map(|domain| format!("{domain}.read")),
+        )
+        .collect();
     let _ = writeln!(
         out,
         "Permissions: {}",
@@ -2678,16 +2797,11 @@ fn row_facts(
 /// The classes a plugin holds, and for one waiting for approval, also
 /// those it asks for.
 fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
-    let mut permissions: Vec<Permission> = plugin.manifest.permissions().iter().copied().collect();
+    let mut classes: Vec<Class> = plugin.asked().iter().map(Asked::class).collect();
     if *status == Status::AwaitingApproval {
-        permissions.extend(
-            plugin
-                .requests()
-                .into_iter()
-                .flat_map(|(_, requests)| requests.into_iter().map(|request| request.permission)),
-        );
+        classes.extend(plugin.requests().into_iter().map(|(class, _)| class));
     }
-    classes_of(permissions)
+    classes_of(classes)
 }
 
 /// A search field: a plain field with a thin border and a magnifier.
@@ -2847,9 +2961,9 @@ fn setting(ui: &mut Ui, view: &View<'_>, name: &str, value: impl FnOnce(&mut Ui)
     });
 }
 
-/// A note over the game: the word `angelica`, a mark, one line, and how to
-/// open Angelica.
-fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
+/// A note over the game: the word `angelica`, or the name of the plugin
+/// that notifies, a mark, one line, and how to open Angelica, when given.
+fn note(ui: &mut Ui, view: &View<'_>, plugin: Option<&str>, text: &str, tone: Tone, hint: &str) {
     let p = view.p;
     egui::Frame::new()
         .fill(p.window)
@@ -2863,11 +2977,14 @@ fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
         .show(ui, |ui| {
             ui.set_max_width(view.at(320.0));
             ui.spacing_mut().item_spacing.y = view.at(5.0);
-            ui.label(
-                RichText::new("angelica")
+            ui.label(match plugin {
+                Some(name) => RichText::new(name)
+                    .font(strong(view.at(12.0)))
+                    .color(p.secondary),
+                None => RichText::new("angelica")
                     .font(wordmark(view.at(12.0)))
                     .color(p.secondary),
-            );
+            });
             ui.horizontal(|ui| {
                 let (rect, _) =
                     ui.allocate_exact_size(vec2(view.at(14.0), view.at(16.0)), Sense::hover());
@@ -2884,7 +3001,9 @@ fn note(ui: &mut Ui, view: &View<'_>, text: &str, tone: Tone, hint: &str) {
                         .wrap(),
                 );
             });
-            ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
+            if !hint.is_empty() {
+                ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
+            }
         });
 }
 
@@ -3119,12 +3238,15 @@ mod tests {
     #[test]
     fn classes_come_once_in_their_order() {
         assert_eq!(
-            classes_of([
-                Permission::StateSelf,
-                Permission::ExcelText,
-                Permission::HttpGet,
-                Permission::FilesReplace,
-            ]),
+            classes_of(
+                [
+                    Permission::ChatPrint,
+                    Permission::DrawWorld,
+                    Permission::HttpGet,
+                    Permission::FilesReplace,
+                ]
+                .map(Permission::class)
+            ),
             vec![Class::Network, Class::WhatYouSee, Class::YoursOnly]
         );
         for class in CLASSES {

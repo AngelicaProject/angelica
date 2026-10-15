@@ -7,7 +7,8 @@ package angelica:plugin@1.0.0;
 /// redirect. Only `https` on port 443 is used; a host that resolves to a
 /// loopback, private, link-local, or other non-public address is refused.
 /// The host sends no cookies and no credentials and sets the user agent.
-/// Requires `http.get`. Requests block, so they are made from jobs only;
+/// Requires `http.get`; sending data requires `http.send` too. Requests
+/// block, so they are made from jobs only;
 /// the main instance gets `wrong-context`.
 interface http {
     use types.{error};
@@ -25,6 +26,15 @@ interface http {
         /// `if-modified-since`, and `range`, each at most once and at most
         /// 1024 bytes.
         headers: list<header>,
+    }
+
+    /// How data is sent.
+    enum method {
+        post,
+        put,
+        patch,
+        /// Sends no body.
+        delete,
     }
 
     /// The final response, after at most 5 redirects.
@@ -50,4 +60,18 @@ interface http {
     /// request takes at most 15 minutes. Returns the response's head and
     /// the bytes written.
     download: func(request: request, path: string) -> result<tuple<head, u64>, error>;
+
+    /// Sends `body` with `method` and returns the response, whatever its
+    /// status. The request may also set `authorization` and
+    /// `content-type`. The body sent and the body received are at most 16
+    /// MiB each; the request takes at most 60 seconds. Requires
+    /// `http.send`.
+    send: func(method: method, request: request, body: list<u8>) -> result<response, error>;
+
+    /// Sends the file at `path` in the plugin's storage, at most 1 GiB,
+    /// with `method`, not `delete`, and its length as `content-length`,
+    /// and returns the response, whatever its status. The request may set
+    /// the headers of `send`; the body received is at most 16 MiB; the
+    /// request takes at most 15 minutes. Requires `http.send`.
+    upload: func(method: method, request: request, path: string) -> result<response, error>;
 }

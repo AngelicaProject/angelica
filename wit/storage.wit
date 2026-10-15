@@ -5,6 +5,13 @@ package angelica:plugin@1.0.0;
 /// empty, or `.` parts, no drive or device names, no trailing dots or
 /// spaces. The player can open the folder from the Angelica menu, for
 /// example to put a file there for the plugin.
+///
+/// Paths under `cache/` lead to the plugin's cache: a folder of its own
+/// for files it can fetch again, with the size the manifest's
+/// `[storage] cache` names and the player approved with `storage.cache`.
+/// Without it they return `permission-denied`. The cache keeps its own
+/// quota, files do not move between it and the rest of the folder, and
+/// Angelica removes it with the plugin.
 interface storage {
     use types.{error};
 

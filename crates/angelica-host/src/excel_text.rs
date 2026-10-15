@@ -1,11 +1,16 @@
-//! Text tables plugins activate (the `excel-text` interface) and the rows
-//! they change. Platform independent: the Windows adapter and the scripted
-//! game hand rows to [`SheetBinding::rewrite`] the same way.
+//! The text of cells of the game's sheets as plugins' rules decide it, at
+//! the map's derived decision point of the `sheet_cell` derivation: single
+//! rules of equality conditions (`lens.decide`) and rule files in the text
+//! table format (`lens.decide-file`). Platform independent: the Windows
+//! adapter and the scripted game hand rows to [`SheetBinding::rewrite`] the
+//! same way.
 //!
-//! A row is changed only when the sheet matches a table exactly (name,
-//! variant, language, text columns), its buffer has the version 3 layout
-//! (`docs/formats/game-structures.md`), and the original text of each replaced
-//! cell matches the cell's guard.
+//! A row is changed only when its buffer has the version 3 layout
+//! (`docs/formats/game-structures.md`); a rule file applies to a sheet only
+//! when the sheet matches it exactly (name, variant, language, text
+//! columns) and to a cell only when the cell's original text matches the
+//! cell's guard. The first rule, in the order plugins added them, that
+//! holds for a cell decides its text.
 #![forbid(unsafe_code)]
 use angelica_text::table::{ANY_LANGUAGE, Column, OwnedTable, Variant};
 use std::{
@@ -16,11 +21,11 @@ use std::{
     },
 };
 
-/// Tables one plugin can keep active at once.
+/// Rule files one plugin can keep at once.
 pub const MAX_TABLES_PER_PLUGIN: usize = 8;
-/// Bytes of one table file; the host keeps active tables in memory.
+/// Bytes of one rule file; the host keeps them in memory.
 pub const MAX_TABLE_SIZE: u64 = 512 * 1024 * 1024;
-/// Bytes of one plugin's active tables together.
+/// Bytes of one plugin's rule files together.
 pub const MAX_TABLES_SIZE_PER_PLUGIN: usize = 1024 * 1024 * 1024;
 /// Rebuilt rows stay below this size; text fields address at most 24 bits.
 pub const MAX_ROW_SIZE: usize = 1 << 20;
@@ -43,6 +48,19 @@ pub enum Mismatch {
     Language,
 }
 
+impl Mismatch {
+    /// What the player and the plugin are told.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Layout => "its text columns differ from the file's",
+            Self::Variant => "it has subrows and the file says it has none, or the reverse",
+            Self::Language => "it is in another language than the file's",
+        }
+    }
+}
+
+/// What a rule or a rule file did since it was added.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Status {
     pub rows_changed: u64,
@@ -58,14 +76,54 @@ pub struct TableInfo {
     pub cells: u64,
 }
 
-/// An active table.
+/// A single rule: every condition it has, and the text it gives.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CellRule {
+    pub sheet: Option<String>,
+    pub language: Option<u8>,
+    pub row: Option<u32>,
+    pub subrow: Option<u16>,
+    pub column: Option<u16>,
+    /// The cell's original text, exactly.
+    pub original: Option<Vec<u8>>,
+    pub text: Vec<u8>,
+}
+
+impl CellRule {
+    fn fits(&self, sheet: &SheetInfo) -> bool {
+        self.sheet.as_ref().is_none_or(|name| *name == sheet.name)
+            && self
+                .language
+                .is_none_or(|language| language == sheet.language)
+            && self
+                .column
+                .is_none_or(|column| sheet.columns.iter().any(|known| known.index == column))
+    }
+
+    fn lists(&self, row: u32, subrow: u16) -> bool {
+        self.row.is_none_or(|known| known == row) && self.subrow.is_none_or(|known| known == subrow)
+    }
+
+    fn holds(&self, column: u16, original: &[u8]) -> bool {
+        self.column.is_none_or(|known| known == column)
+            && self
+                .original
+                .as_ref()
+                .is_none_or(|known| known.as_slice() == original)
+    }
+}
+
+/// Where a source's rules come from.
+enum Rules {
+    Table { table: OwnedTable, size: usize },
+    Single(CellRule),
+}
+
+/// A plugin's rule or rule file, under the handle Lens gave it.
 pub struct Entry {
     plugin: String,
-    name: String,
-    priority: i32,
-    table: OwnedTable,
-    /// Bytes of the table file.
-    size: usize,
+    handle: u32,
+    rules: Rules,
     rows_changed: AtomicU64,
     cells_replaced: AtomicU64,
     guard_mismatches: AtomicU64,
@@ -73,10 +131,32 @@ pub struct Entry {
     mismatched: Mutex<BTreeMap<String, Mismatch>>,
 }
 
+impl Entry {
+    fn new(plugin: &str, handle: u32, rules: Rules) -> Self {
+        Self {
+            plugin: plugin.into(),
+            handle,
+            rules,
+            rows_changed: AtomicU64::new(0),
+            cells_replaced: AtomicU64::new(0),
+            guard_mismatches: AtomicU64::new(0),
+            rows_refused: AtomicU64::new(0),
+            mismatched: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match &self.rules {
+            Rules::Table { size, .. } => *size,
+            Rules::Single(_) => 0,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Snapshot {
     generation: u64,
-    /// Sorted by descending priority, then plugin id and table name.
+    /// In the order the plugins added them.
     entries: Vec<Arc<Entry>>,
 }
 
@@ -86,16 +166,15 @@ pub struct ExcelText {
 }
 
 impl ExcelText {
-    /// Activates `bytes` as the plugin's table `name`, replacing the one of
-    /// that name. The previous table stays when `bytes` is invalid.
+    /// Adds `bytes`, a rule file in the text table format, as the plugin's
+    /// rules under `handle`.
     ///
     /// # Errors
-    /// Names why the table is invalid or the plugin has too many tables.
-    pub fn activate(
+    /// Names why the file is invalid or the plugin has too many files.
+    pub fn add_table(
         &self,
         plugin: &str,
-        name: &str,
-        priority: i32,
+        handle: u32,
         bytes: Vec<u8>,
     ) -> Result<TableInfo, String> {
         let size = bytes.len();
@@ -105,59 +184,57 @@ impl ExcelText {
             sheets: u32::try_from(view.sheet_count()).unwrap_or(u32::MAX),
             cells: view.cell_count() as u64,
         };
-        let entry = Arc::new(Entry {
-            plugin: plugin.into(),
-            name: name.into(),
-            priority,
-            table,
-            size,
-            rows_changed: AtomicU64::new(0),
-            cells_replaced: AtomicU64::new(0),
-            guard_mismatches: AtomicU64::new(0),
-            rows_refused: AtomicU64::new(0),
-            mismatched: Mutex::new(BTreeMap::new()),
-        });
         let mut snapshot = self
             .snapshot
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut entries: Vec<_> = snapshot
+        let files = snapshot
             .entries
             .iter()
-            .filter(|e| !(e.plugin == plugin && e.name == name))
-            .cloned()
-            .collect();
-        let others = entries.iter().filter(|e| e.plugin == plugin);
-        if others.clone().count() >= MAX_TABLES_PER_PLUGIN {
+            .filter(|e| e.plugin == plugin && matches!(e.rules, Rules::Table { .. }));
+        if files.clone().count() >= MAX_TABLES_PER_PLUGIN {
             return Err(format!(
-                "a plugin can keep at most {MAX_TABLES_PER_PLUGIN} tables active"
+                "a plugin keeps at most {MAX_TABLES_PER_PLUGIN} rule files"
             ));
         }
-        if others.map(|e| e.size).sum::<usize>() + size > MAX_TABLES_SIZE_PER_PLUGIN {
+        if files.map(|e| e.size()).sum::<usize>() + size > MAX_TABLES_SIZE_PER_PLUGIN {
             return Err(format!(
-                "a plugin's active tables have at most {MAX_TABLES_SIZE_PER_PLUGIN} bytes together"
+                "a plugin's rule files have at most {MAX_TABLES_SIZE_PER_PLUGIN} bytes together"
             ));
         }
+        let entry = Arc::new(Entry::new(plugin, handle, Rules::Table { table, size }));
+        Self::push(&mut snapshot, entry);
+        Ok(info)
+    }
+
+    /// Adds a single rule of the plugin under `handle`.
+    pub fn add_rule(&self, plugin: &str, handle: u32, rule: CellRule) {
+        let mut snapshot = self
+            .snapshot
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        Self::push(
+            &mut snapshot,
+            Arc::new(Entry::new(plugin, handle, Rules::Single(rule))),
+        );
+    }
+
+    fn push(snapshot: &mut Arc<Snapshot>, entry: Arc<Entry>) {
+        let mut entries = snapshot.entries.clone();
         entries.push(entry);
-        entries.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| a.plugin.cmp(&b.plugin))
-                .then_with(|| a.name.cmp(&b.name))
-        });
         *snapshot = Arc::new(Snapshot {
             generation: snapshot.generation + 1,
             entries,
         });
-        Ok(info)
     }
 
-    /// Removes the plugin's table; false when it had none of that name.
-    pub fn deactivate(&self, plugin: &str, name: &str) -> bool {
-        self.retain(|e| !(e.plugin == plugin && e.name == name))
+    /// Removes the plugin's rule or rule file under `handle`; false when it
+    /// has none.
+    pub fn remove(&self, plugin: &str, handle: u32) -> bool {
+        self.retain(|e| !(e.plugin == plugin && e.handle == handle))
     }
 
-    /// Removes every table of the plugin.
+    /// Removes every rule of the plugin.
     pub fn remove_plugin(&self, plugin: &str) {
         self.retain(|e| e.plugin != plugin);
     }
@@ -183,13 +260,14 @@ impl ExcelText {
         true
     }
 
+    /// What the plugin's rule or rule file under `handle` did.
     #[must_use]
-    pub fn status(&self, plugin: &str, name: &str) -> Option<Status> {
+    pub fn status(&self, plugin: &str, handle: u32) -> Option<Status> {
         let snapshot = self.current();
         let entry = snapshot
             .entries
             .iter()
-            .find(|e| e.plugin == plugin && e.name == name)?;
+            .find(|e| e.plugin == plugin && e.handle == handle)?;
         Some(Status {
             rows_changed: entry.rows_changed.load(Ordering::Relaxed),
             cells_replaced: entry.cells_replaced.load(Ordering::Relaxed),
@@ -205,7 +283,7 @@ impl ExcelText {
         })
     }
 
-    /// Changes whenever a table is activated or removed; a cached
+    /// Changes whenever a rule is added or removed; a cached
     /// [`SheetBinding`] of another generation must be bound again.
     #[must_use]
     pub fn generation(&self) -> u64 {
@@ -219,10 +297,9 @@ impl ExcelText {
             .clone()
     }
 
-    /// The text the active tables put in place of `original` in a cell: of
-    /// the first table, by priority, that lists the sheet in this language,
-    /// has the cell, and whose guard matches the game's text. `column` is
-    /// the column's index among all of the sheet's columns.
+    /// The text the rules put in place of `original` in a cell: of the
+    /// first, in the order they were added, that holds. `column` is the
+    /// column's index among all of the sheet's columns.
     #[must_use]
     pub fn shown(
         &self,
@@ -235,34 +312,56 @@ impl ExcelText {
     ) -> Option<Vec<u8>> {
         let snapshot = self.current();
         for entry in &snapshot.entries {
-            let table = entry.table.table();
-            if table.language() != ANY_LANGUAGE && language != 0 && table.language() != language {
-                continue;
-            }
-            let Some(listed) = table
-                .sheet_index(sheet)
-                .and_then(|index| table.sheet_by_index(index))
-            else {
-                continue;
-            };
-            let cells = listed.row(row, subrow);
-            if let Some(cell) = cells.iter().find(|cell| cell.column == column)
-                && angelica_text::guard(table.domain(), original) == cell.guard
-            {
-                return Some(cell.text.to_vec());
+            match &entry.rules {
+                Rules::Single(rule) => {
+                    let place = rule.sheet.as_ref().is_none_or(|name| name == sheet)
+                        && rule.language.is_none_or(|known| known == language);
+                    if place && rule.lists(row, subrow) && rule.holds(column, original) {
+                        return Some(rule.text.clone());
+                    }
+                }
+                Rules::Table { table, .. } => {
+                    let table = table.table();
+                    if table.language() != ANY_LANGUAGE
+                        && language != 0
+                        && table.language() != language
+                    {
+                        continue;
+                    }
+                    let Some(listed) = table
+                        .sheet_index(sheet)
+                        .and_then(|index| table.sheet_by_index(index))
+                    else {
+                        continue;
+                    };
+                    let cells = listed.row(row, subrow);
+                    if let Some(cell) = cells.iter().find(|cell| cell.column == column)
+                        && angelica_text::guard(table.domain(), original) == cell.guard
+                    {
+                        return Some(cell.text.to_vec());
+                    }
+                }
             }
         }
         None
     }
 
-    /// The tables that apply to a sheet. Tables that list the sheet but do
-    /// not match it record why.
+    /// The rules that apply to a sheet. Rule files that list the sheet but
+    /// do not match it record why.
     #[must_use]
     pub fn bind(&self, sheet: &SheetInfo) -> SheetBinding {
         let snapshot = self.current();
         let mut parts = Vec::new();
         for entry in &snapshot.entries {
-            let table = entry.table.table();
+            let table = match &entry.rules {
+                Rules::Single(rule) => {
+                    if rule.fits(sheet) {
+                        parts.push(Part::Rule(entry.clone()));
+                    }
+                    continue;
+                }
+                Rules::Table { table, .. } => table.table(),
+            };
             let Some(index) = table.sheet_index(&sheet.name) else {
                 continue;
             };
@@ -289,7 +388,7 @@ impl ExcelText {
                         .unwrap_or_else(PoisonError::into_inner)
                         .insert(sheet.name.clone(), reason);
                 }
-                None => parts.push((entry.clone(), index)),
+                None => parts.push(Part::Table(entry.clone(), index)),
             }
         }
         SheetBinding {
@@ -300,17 +399,32 @@ impl ExcelText {
     }
 }
 
-/// The active tables that match one sheet, in the order they are tried.
+/// A source of rules bound to one sheet.
+enum Part {
+    /// A rule file and the index of the sheet in it.
+    Table(Arc<Entry>, usize),
+    Rule(Arc<Entry>),
+}
+
+impl Part {
+    fn entry(&self) -> &Arc<Entry> {
+        match self {
+            Self::Table(entry, _) | Self::Rule(entry) => entry,
+        }
+    }
+}
+
+/// The rules that apply to one sheet, in the order they are tried.
 pub struct SheetBinding {
     generation: u64,
     columns: Vec<Column>,
-    parts: Vec<(Arc<Entry>, usize)>,
+    parts: Vec<Part>,
 }
 
 /// What [`SheetBinding::rewrite`] did with a row.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Rewrite {
-    /// No table has a cell for the row whose guard matched.
+    /// No rule holds for a cell of the row.
     Unchanged,
     /// The buffer does not have the expected layout; the row keeps the
     /// game's text.
@@ -326,8 +440,14 @@ struct Field {
     length: usize,
 }
 
+/// A part's rules for one row.
+enum Listed<'a> {
+    Cells(Vec<angelica_text::table::Cell<'a>>),
+    Rule(&'a CellRule),
+}
+
 impl SheetBinding {
-    /// A binding without tables, for a sheet that cannot be read.
+    /// A binding without rules, for a sheet that cannot be read.
     #[must_use]
     pub fn none(generation: u64) -> Self {
         Self {
@@ -347,7 +467,7 @@ impl SheetBinding {
         self.parts.is_empty()
     }
 
-    /// How many active tables apply to the sheet.
+    /// How many rules and rule files apply to the sheet.
     #[must_use]
     pub fn table_count(&self) -> usize {
         self.parts.len()
@@ -359,17 +479,40 @@ impl SheetBinding {
         self.columns.len()
     }
 
-    /// Whether any bound table lists cells of the row; the adapter reads
-    /// the row's text only then.
+    /// Whether any bound rule lists cells of the row; the adapter reads the
+    /// row's text only then.
     #[must_use]
     pub fn lists(&self, row: u32, subrow: u16) -> bool {
-        self.parts.iter().any(|(entry, index)| {
-            entry
-                .table
-                .table()
-                .sheet_by_index(*index)
-                .is_some_and(|sheet| !sheet.row(row, subrow).is_empty())
+        self.parts.iter().any(|part| match part {
+            Part::Table(entry, index) => match &entry.rules {
+                Rules::Table { table, .. } => table
+                    .table()
+                    .sheet_by_index(*index)
+                    .is_some_and(|sheet| !sheet.row(row, subrow).is_empty()),
+                Rules::Single(_) => false,
+            },
+            Part::Rule(entry) => match &entry.rules {
+                Rules::Single(rule) => rule.lists(row, subrow),
+                Rules::Table { .. } => false,
+            },
         })
+    }
+
+    /// The parts with rules for the row, and those rules.
+    fn candidates(&self, row: u32, subrow: u16) -> Vec<(&Arc<Entry>, Listed<'_>)> {
+        self.parts
+            .iter()
+            .filter_map(|part| match (part, &part.entry().rules) {
+                (Part::Table(entry, index), Rules::Table { table, .. }) => {
+                    let cells = table.table().sheet_by_index(*index)?.row(row, subrow);
+                    (!cells.is_empty()).then_some((entry, Listed::Cells(cells)))
+                }
+                (Part::Rule(entry), Rules::Single(rule)) => rule
+                    .lists(row, subrow)
+                    .then_some((entry, Listed::Rule(rule))),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Rewrites a row of the sheet. `buffer` holds the row as the game built
@@ -377,15 +520,7 @@ impl SheetBinding {
     /// its terminator, in column order. It may extend past the last string.
     #[must_use]
     pub fn rewrite(&self, row: u32, subrow: u16, buffer: &[u8], fixed_size: usize) -> Rewrite {
-        let candidates: Vec<_> = self
-            .parts
-            .iter()
-            .filter_map(|(entry, index)| {
-                let sheet = entry.table.table().sheet_by_index(*index)?;
-                Some((entry, sheet.row(row, subrow)))
-            })
-            .filter(|(_, cells)| !cells.is_empty())
-            .collect();
+        let candidates = self.candidates(row, subrow);
         if candidates.is_empty() {
             return Rewrite::Unchanged;
         }
@@ -402,24 +537,42 @@ impl SheetBinding {
             let field = &fields[ordinal];
             let original = &buffer[field.start..field.start + field.length];
             let mut guards: Vec<(&[u8], u64)> = Vec::new();
-            for (position, (entry, cells)) in candidates.iter().enumerate() {
-                let Some(cell) = cells.iter().find(|cell| cell.column == column.index) else {
-                    continue;
+            for (position, (entry, listed)) in candidates.iter().enumerate() {
+                let replacement = match listed {
+                    Listed::Rule(rule) => {
+                        if !rule.holds(column.index, original) {
+                            continue;
+                        }
+                        rule.text.as_slice()
+                    }
+                    Listed::Cells(cells) => {
+                        let Some(cell) = cells.iter().find(|cell| cell.column == column.index)
+                        else {
+                            continue;
+                        };
+                        let Rules::Table { table, .. } = &entry.rules else {
+                            continue;
+                        };
+                        let domain = table.table().domain();
+                        let guard = if let Some(&(_, guard)) =
+                            guards.iter().find(|(known, _)| *known == domain)
+                        {
+                            guard
+                        } else {
+                            let guard = angelica_text::guard(domain, original);
+                            guards.push((domain, guard));
+                            guard
+                        };
+                        if guard != cell.guard {
+                            entry.guard_mismatches.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        cell.text
+                    }
                 };
-                let domain = entry.table.table().domain();
-                let guard = if let Some(&(_, guard)) = guards.iter().find(|(d, _)| *d == domain) {
-                    guard
-                } else {
-                    let guard = angelica_text::guard(domain, original);
-                    guards.push((domain, guard));
-                    guard
-                };
-                if guard == cell.guard {
-                    replacements[ordinal] = Some(cell.text);
-                    applied[position] += 1;
-                    break;
-                }
-                entry.guard_mismatches.fetch_add(1, Ordering::Relaxed);
+                replacements[ordinal] = Some(replacement);
+                applied[position] += 1;
+                break;
             }
         }
         if replacements.iter().all(Option::is_none) {
@@ -578,13 +731,13 @@ mod tests {
     }
 
     #[test]
-    fn the_shown_text_of_a_cell_is_the_first_matching_tables() {
+    fn the_shown_text_of_a_cell_is_the_first_rule_that_holds() {
         let text = ExcelText::default();
-        text.activate("a", "high", 5, table("A", &[(7, 4, b"Other")]))
+        text.add_table("a", 1, table("A", &[(7, 4, b"Other")]))
             .unwrap();
-        text.activate("b", "low", 0, table("Зелье", &[(7, 4, b"Potion")]))
+        text.add_table("b", 1, table("Зелье", &[(7, 4, b"Potion")]))
             .unwrap();
-        // The table of higher priority guards another text: the next one has it.
+        // The first file guards another text: the next one has it.
         assert_eq!(
             text.shown("Item", 2, 7, 0, 4, b"Potion"),
             Some("Зелье".as_bytes().to_vec())
@@ -603,7 +756,7 @@ mod tests {
     #[test]
     fn rewrites_guarded_cells_and_keeps_everything_else() {
         let text = ExcelText::default();
-        text.activate("a", "main", 0, table("Зелье", &[(7, 4, b"Potion")]))
+        text.add_table("a", 1, table("Зелье", &[(7, 4, b"Potion")]))
             .unwrap();
         let binding = text.bind(&sheet());
         let original = row(b"Name", b"Potion");
@@ -617,26 +770,92 @@ mod tests {
         });
         assert_eq!(rebuilt[3], 0x11, "untouched string keeps its hash byte");
         assert_eq!(binding.rewrite(8, 0, &original, 12), Rewrite::Unchanged);
-        let status = text.status("a", "main").unwrap();
+        let status = text.status("a", 1).unwrap();
         assert_eq!((status.rows_changed, status.cells_replaced), (1, 1));
+    }
+
+    #[test]
+    fn single_rules_hold_by_their_conditions_in_the_order_they_were_added() {
+        let text = ExcelText::default();
+        let rule = |row: Option<u32>, original: Option<&[u8]>, shown: &str| CellRule {
+            sheet: Some("Item".into()),
+            row,
+            column: Some(4),
+            original: original.map(<[u8]>::to_vec),
+            text: shown.as_bytes().to_vec(),
+            ..CellRule::default()
+        };
+        text.add_rule("a", 1, rule(Some(7), Some(b"Other"), "A"));
+        text.add_rule("a", 2, rule(Some(7), None, "B"));
+        text.add_rule("b", 1, rule(None, None, "C"));
+        text.add_rule(
+            "b",
+            2,
+            CellRule {
+                sheet: Some("Action".into()),
+                ..rule(None, None, "D")
+            },
+        );
+        let binding = text.bind(&sheet());
+        assert_eq!(
+            binding.table_count(),
+            3,
+            "the rule of another sheet is left out"
+        );
+        assert!(binding.lists(8, 0), "a rule without a row lists every row");
+        let Rewrite::Changed(seven) = binding.rewrite(7, 0, &row(b"Name", b"Potion"), 12) else {
+            panic!("row not changed");
+        };
+        assert_eq!(
+            &seven[12..],
+            b"Name\0B\0",
+            "the first rule's original differs"
+        );
+        let Rewrite::Changed(eight) = binding.rewrite(8, 0, &row(b"Name", b"Potion"), 12) else {
+            panic!("row not changed");
+        };
+        assert_eq!(&eight[12..], b"Name\0C\0");
+        assert_eq!(text.status("a", 2).unwrap().cells_replaced, 1);
+        assert_eq!(
+            text.shown("Item", 2, 7, 0, 4, b"Other"),
+            Some(b"A".to_vec())
+        );
+        assert!(text.remove("a", 2));
+        assert!(!text.remove("a", 2));
+        let binding = text.bind(&sheet());
+        assert!(matches!(
+            binding.rewrite(7, 0, &row(b"Name", b"Potion"), 12),
+            Rewrite::Changed(rebuilt) if &rebuilt[12..] == b"Name\0C\0"
+        ));
+        // A rule of a column the sheet does not have never holds.
+        let other = ExcelText::default();
+        other.add_rule(
+            "a",
+            1,
+            CellRule {
+                column: Some(9),
+                ..rule(None, None, "X")
+            },
+        );
+        assert!(other.bind(&sheet()).is_empty());
     }
 
     #[test]
     fn guard_mismatch_keeps_text_and_tries_the_next_table() {
         let text = ExcelText::default();
-        text.activate("a", "high", 5, table("A", &[(1, 1, b"Other")]))
+        text.add_table("a", 1, table("A", &[(1, 1, b"Other")]))
             .unwrap();
-        text.activate("b", "low", 0, table("B", &[(1, 1, b"Name")]))
+        text.add_table("b", 1, table("B", &[(1, 1, b"Name")]))
             .unwrap();
         let binding = text.bind(&sheet());
         let Rewrite::Changed(rebuilt) = binding.rewrite(1, 0, &row(b"Name", b"x"), 12) else {
             panic!("row not changed");
         };
         assert_eq!(&rebuilt[12..14], b"B\0");
-        assert_eq!(text.status("a", "high").unwrap().guard_mismatches, 1);
-        assert_eq!(text.status("b", "low").unwrap().cells_replaced, 1);
+        assert_eq!(text.status("a", 1).unwrap().guard_mismatches, 1);
+        assert_eq!(text.status("b", 1).unwrap().cells_replaced, 1);
 
-        text.deactivate("b", "low");
+        text.remove("b", 1);
         let binding = text.bind(&sheet());
         assert_eq!(
             binding.rewrite(1, 0, &row(b"Name", b"x"), 12),
@@ -647,7 +866,7 @@ mod tests {
     #[test]
     fn sheets_that_differ_from_the_table_are_not_bound() {
         let text = ExcelText::default();
-        text.activate("a", "main", 0, table("X", &[(1, 1, b"Name")]))
+        text.add_table("a", 1, table("X", &[(1, 1, b"Name")]))
             .unwrap();
         let mut moved = sheet();
         moved.columns[1].offset = 12;
@@ -662,7 +881,7 @@ mod tests {
         neutral.language = 0;
         assert!(!text.bind(&neutral).is_empty());
         assert_eq!(
-            text.status("a", "main").unwrap().sheets_mismatched,
+            text.status("a", 1).unwrap().sheets_mismatched,
             [("Item".to_owned(), Mismatch::Language)],
             "the last reason recorded for the sheet"
         );
@@ -671,7 +890,7 @@ mod tests {
     #[test]
     fn unexpected_buffers_are_refused() {
         let text = ExcelText::default();
-        text.activate("a", "main", 0, table("X", &[(1, 1, b"Name")]))
+        text.add_table("a", 1, table("X", &[(1, 1, b"Name")]))
             .unwrap();
         let binding = text.bind(&sheet());
         let original = row(b"Name", b"x");
@@ -684,23 +903,26 @@ mod tests {
             "missing terminator"
         );
         assert_eq!(binding.rewrite(1, 0, &original, 0), Rewrite::Refused);
-        assert_eq!(text.status("a", "main").unwrap().rows_refused, 3);
+        assert_eq!(text.status("a", 1).unwrap().rows_refused, 3);
     }
 
     #[test]
     fn invalid_tables_and_too_many_tables_are_refused() {
         let text = ExcelText::default();
-        assert!(text.activate("a", "bad", 0, vec![1, 2, 3]).is_err());
-        for index in 0..MAX_TABLES_PER_PLUGIN {
-            text.activate("a", &index.to_string(), 0, table("X", &[(1, 1, b"Name")]))
-                .unwrap();
+        assert!(text.add_table("a", 1, vec![1, 2, 3]).is_err());
+        for handle in 0..MAX_TABLES_PER_PLUGIN {
+            text.add_table(
+                "a",
+                u32::try_from(handle).unwrap(),
+                table("X", &[(1, 1, b"Name")]),
+            )
+            .unwrap();
         }
         assert!(
-            text.activate("a", "one more", 0, table("X", &[(1, 1, b"Name")]))
+            text.add_table("a", 99, table("X", &[(1, 1, b"Name")]))
                 .is_err()
         );
-        text.activate("a", "0", 0, table("Y", &[(1, 1, b"Name")]))
-            .unwrap();
+        text.add_rule("a", 100, CellRule::default());
         let generation = text.generation();
         text.remove_plugin("a");
         assert!(text.generation() > generation);

@@ -1,0 +1,214 @@
+package angelica:plugin@1.0.0;
+
+/// Lens: the game's objects, read by path, the game's events watched, and
+/// the game's actions taken for the player.
+///
+/// The game map describes the game's objects: their types and fields, the
+/// roots where paths start, and the domain each field belongs to. A query
+/// is a path from a root through fields, with filters on arrays and the
+/// values to answer with:
+///
+/// ```text
+/// inventory.containers[kind in (bag_1, bag_2)].items[item != 0] { item, quantity }
+/// ```
+///
+/// `prepare` checks a query against the map for the running game build
+/// and plans its reads; `run` reads the game's memory along the plan. Every
+/// domain a query reads must be listed in the manifest's `[lens] read` and
+/// approved by the player. The language is specified in
+/// `docs/formats/plugin-api-v1.md`.
+///
+/// A watch is a query that starts at an event of the map instead of a
+/// root, such as `action_used { kind, action }`: when the game reaches the
+/// event's point, the host reads the query's rows from the call's arguments
+/// and the objects they point to, and delivers them in the next frame as a
+/// `watched` game event.
+///
+/// A field the map marks changeable, a value that exists on the player's
+/// computer alone such as the camera's zoom limits or what the game's
+/// windows show, is changed by `set` and put back by `restore` or when the
+/// plugin stops.
+///
+/// An action is a function of the game the map describes, such as
+/// `use_action`, which `act` calls for the player with named parameters, as
+/// the game's own interface calls it.
+///
+/// Every function runs in the main instance, on the game's main thread
+/// between frames; only `act` changes anything in the game. Jobs get
+/// `wrong-context`.
+interface lens {
+    use types.{error};
+
+    /// A row of one of the game's sheets.
+    record sheet-row {
+        sheet: string,
+        row: u32,
+    }
+
+    /// The names of the set bits that have one, and every bit.
+    record flag-set {
+        names: list<string>,
+        bits: u64,
+    }
+
+    variant value {
+        boolean(bool),
+        signed(s64),
+        unsigned(u64),
+        float(f64),
+        /// Text as the game stores it, without its terminator.
+        text(list<u8>),
+        /// A number that is a row of a sheet, such as an item.
+        sheet(sheet-row),
+        /// A number that is one of the named values of an enum.
+        named(string),
+        %flags(flag-set),
+    }
+
+    /// One answer: the position in each array on the query's path, and a
+    /// value per column, `none` where the game holds nothing: a pointer on
+    /// its way is zero.
+    record row {
+        indexes: list<u32>,
+        values: list<option<value>>,
+    }
+
+    record column {
+        /// The name in the query's braces, or its alias.
+        name: string,
+        /// What the field holds, from the game map.
+        doc: string,
+    }
+
+    record prepared {
+        /// The handle `run` and `release` take.
+        query: u32,
+        columns: list<column>,
+    }
+
+    /// Checks and plans a query. A query that breaks the syntax or the
+    /// model's rules returns `invalid-argument`; an unknown root or field,
+    /// `not-found`; a domain the plugin may not read or a field no plugin
+    /// reads, `permission-denied`; anything the running build lacks,
+    /// `unavailable`; a plugin holding 256 queries, `limit-exceeded`. The
+    /// message names the field.
+    prepare: func(query: string) -> result<prepared, error>;
+
+    /// The rows of a prepared query now: none while its root's object does
+    /// not exist, such as before the player logs in. After the game map is
+    /// reloaded, the query is planned again and returns `prepare`'s errors
+    /// when it no longer fits. More than 4096 rows or 16 MiB of memory read
+    /// returns `limit-exceeded`. An unknown handle returns `not-found`.
+    run: func(query: u32) -> result<list<row>, error>;
+
+    /// Checks and plans a watch: a query that starts at an event, with a
+    /// filter on the event's arguments in brackets after its name, and
+    /// starts it. The rows of each firing arrive in the next frame as a
+    /// `watched` game event with the returned handle; a firing whose filter
+    /// leaves everything out arrives as nothing. An event keeps at most its
+    /// map's rate of firings per watch between two frames; more, and
+    /// firings past 256 rows or 256 KiB of memory read, arrive counted as
+    /// `watch-dropped`. Errors as for `prepare`; `unavailable` also when the
+    /// host cannot hook the event's point in this build.
+    watch: func(query: string) -> result<prepared, error>;
+
+    /// Forgets a prepared query, and ends a watch or a rule.
+    release: func(query: u32);
+
+    /// Takes the map's action `action` for the player now, with each
+    /// parameter by name; a parameter left out takes the map's default.
+    /// An enum parameter takes `named`, a sheet row `sheet` or a number, a
+    /// float `float` or a number, a bool `boolean`. The action's domain
+    /// must be listed in the manifest's `[lens] act` and approved by the
+    /// player. An unknown action returns `not-found`; a parameter that does
+    /// not fit, `invalid-argument`; a domain the plugin may not act in, or
+    /// acting while the player stopped plugins from acting,
+    /// `permission-denied`; more often than the map's rate,
+    /// `limit-exceeded`; a condition of the action that does not hold now
+    /// (the message says which), something the build lacks, or the game
+    /// refusing the action, `unavailable`.
+    act: func(action: string, params: list<tuple<string, value>>) -> result<_, error>;
+
+    /// Changes the value at `path`, a path without braces ending at a field
+    /// the map marks changeable, such as `camera.camera.max_distance`, in
+    /// every object the path reaches (at most 256), and returns how many:
+    /// none while it reaches no object. The value takes the forms `act`'s
+    /// parameters take, within the map's range. The field's domain must be
+    /// listed in the manifest's `[lens] change` and approved; the domains on
+    /// the way in `[lens] read` or `[lens] change`. A field the map does
+    /// not mark changeable, or a domain the plugin may not change, returns
+    /// `permission-denied`; a value that does not fit, `invalid-argument`;
+    /// a value another plugin changed, or memory that cannot be written,
+    /// `unavailable`; more than 64 paths changed, `limit-exceeded`. A text
+    /// field takes `text`: UTF-8 shorter than the map's length, without
+    /// control characters. The original is put back by `restore` and when
+    /// the plugin stops, only where the path still reaches the same place
+    /// and the value is still the one written. A field the map marks held,
+    /// such as an element of a game window, the game sets again itself: the
+    /// host applies the value again every frame wherever the path reaches
+    /// until then.
+    set: func(path: string, value: value) -> result<u32, error>;
+
+    /// Puts back the originals of what `set` changed through `path`.
+    restore: func(path: string) -> result<_, error>;
+
+    /// Adds a rule at a decision point: an event of the map with outcomes,
+    /// such as `chat_message_added`. `rule` is a query from the event
+    /// without braces, with conditions in brackets and paths through its
+    /// arguments as for `watch`; whenever it reaches anything, the host
+    /// takes `outcome`, such as `hide`, itself: the game's function returns
+    /// at once with the outcome's value and does not run.
+    ///
+    /// At an event the host derives, such as each text cell of a sheet row
+    /// the game builds, the rule is equality conditions on the event's
+    /// arguments joined by `and`, and the outcome takes `value`, text of
+    /// the game: `decide("sheet_text[sheet = \"Item\" and row = 4 and
+    /// column = 9]", "replace", some(text(...)))`. Such rules are looked up
+    /// by their values. Other outcomes take no value.
+    ///
+    /// Rules apply in the order they were added, across plugins; the first
+    /// that holds decides. Returns the handle `release` ends it with. The
+    /// event's domain must be listed in the manifest's `[lens] change` and
+    /// approved; domains on the rule's paths in `[lens] read` or
+    /// `[lens] change`. An event without outcomes, a rule that breaks the
+    /// syntax, or a value that does not fit returns `invalid-argument`; an
+    /// unknown event or outcome, `not-found`; a domain the plugin may not
+    /// change, `permission-denied`; an event the build lacks or cannot
+    /// hook, `unavailable`. Rules count toward the 256 held queries.
+    decide: func(rule: string, outcome: string, value: option<value>) -> result<u32, error>;
+
+    /// What a file of rules holds.
+    record rule-file {
+        /// The handle `release` ends the file's rules with.
+        handle: u32,
+        /// The parts of the game it names, such as sheets.
+        parts: u32,
+        rules: u64,
+    }
+
+    /// Adds the rules of a file in the plugin's storage at a derived event
+    /// that takes rule files, in the format the map names for it, such as
+    /// a text table for `sheet_text`. The file's rules apply as one rule
+    /// added now. The file is read whole and checked; a file of at most
+    /// 512 MiB, at most 8 files and 1 GiB of a plugin together. Errors as
+    /// for `decide`, and `invalid-argument` for a file that is not valid.
+    decide-file: func(event: string, path: string) -> result<rule-file, error>;
+
+    /// What a rule or a file of rules did since it was added.
+    record decision-status {
+        /// How often its outcome was taken.
+        taken: u64,
+        /// How often a rule of a file held for a place but not for the
+        /// game's text there, which changed since the file was made.
+        stale: u64,
+        /// How often the host could not take the outcome, such as a row
+        /// whose layout it did not expect.
+        refused: u64,
+        /// Parts of the game the file does not fit, each with why.
+        mismatched: list<string>,
+    }
+
+    /// What the rule or file under `handle` did; `not-found` for a handle
+    /// that is not a rule at a derived event.
+    decisions: func(handle: u32) -> result<decision-status, error>;
+}

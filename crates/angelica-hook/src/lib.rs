@@ -37,7 +37,7 @@ pub mod testing;
 pub use detour::Detour;
 pub use error::HookError;
 #[cfg(windows)]
-pub use mid::{Context, MidHandler, MidHook};
+pub use mid::{Context, MidDataHandler, MidHandler, MidHook, MidReturnHandler};
 #[cfg(windows)]
 pub use patch::CodePatch;
 pub use relocate::RelocateError;

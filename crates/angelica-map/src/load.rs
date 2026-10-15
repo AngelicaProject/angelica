@@ -9,14 +9,14 @@ use crate::MapError;
 use crate::model::{Entry, EntryKind, Locator, RawFile};
 
 /// The map format version this reader supports.
-pub const FORMAT: i64 = 1;
+pub const FORMAT: i64 = 2;
 
 /// A map whose entries are valid and reference each other without cycles.
 #[derive(Debug, Clone)]
 pub struct Map {
     entries: BTreeMap<String, Entry>,
     sheets: BTreeMap<String, crate::SheetSchema>,
-    state: BTreeMap<String, crate::StateTable>,
+    objects: crate::objects::Objects,
     windows: BTreeMap<String, crate::WindowSchema>,
     /// Entry names, each after every entry it references.
     order: Vec<String>,
@@ -30,7 +30,8 @@ struct RawMapFile {
 }
 
 impl Map {
-    /// Reads a map directory: `map.toml`, every file in `entries/`, `state/`,
+    /// Reads a map directory: `map.toml`, `domains.toml`, `roots.toml`, every
+    /// file in `entries/`, `types/`, `enums/`,
     /// and `windows/`, and every file under `sheets/`.
     ///
     /// # Errors
@@ -58,23 +59,31 @@ impl Map {
                 files.push((format!("entries/{file_name}"), read_text(&path)?));
             }
         }
-        let state_directory = directory.join("state");
-        if state_directory.exists() {
-            let listing = std::fs::read_dir(&state_directory)
-                .map_err(|error| io_error(&state_directory, &error))?;
-            for item in listing {
-                let path = item
-                    .map_err(|error| io_error(&state_directory, &error))?
-                    .path();
-                let file_name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                if !path.is_file() || path.extension().is_none_or(|extension| extension != "toml") {
-                    return Err(MapError::UnexpectedFile { path });
+        for folder in ["types", "enums"] {
+            let folder_path = directory.join(folder);
+            if folder_path.exists() {
+                let listing = std::fs::read_dir(&folder_path)
+                    .map_err(|error| io_error(&folder_path, &error))?;
+                for item in listing {
+                    let path = item.map_err(|error| io_error(&folder_path, &error))?.path();
+                    let file_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default()
+                        .to_owned();
+                    if !path.is_file()
+                        || path.extension().is_none_or(|extension| extension != "toml")
+                    {
+                        return Err(MapError::UnexpectedFile { path });
+                    }
+                    files.push((format!("{folder}/{file_name}"), read_text(&path)?));
                 }
-                files.push((format!("state/{file_name}"), read_text(&path)?));
+            }
+        }
+        for file in ROOT_FILES {
+            let path = directory.join(file);
+            if path.exists() {
+                files.push((file.to_owned(), read_text(&path)?));
             }
         }
         let windows_directory = directory.join("windows");
@@ -105,7 +114,8 @@ impl Map {
 
     /// Builds a map from the text of `map.toml` and of each entries and
     /// schema file, given with its path relative to the map directory
-    /// (`entries/<area>.toml`, `sheets/<sheet>.toml`, `state/<domain>.toml`,
+    /// (`entries/<area>.toml`, `sheets/<sheet>.toml`, `types/<area>.toml`,
+    /// `enums/<name>.toml`, `domains.toml`, `roots.toml`,
     /// `windows/<window>.toml`).
     ///
     /// # Errors
@@ -133,21 +143,13 @@ impl Map {
             sheets.insert(schema.sheet.clone(), schema);
         }
         let windows = window_schemas(files)?;
-        let mut state = Vec::new();
-        for (relative, text) in files.iter().filter(|(path, _)| path.starts_with("state/")) {
-            let tables =
-                crate::state::parse(relative, text).map_err(|message| MapError::InvalidState {
-                    path: PathBuf::from(relative),
-                    message,
-                })?;
-            state.extend(tables.into_iter().map(|table| (relative.clone(), table)));
-        }
+        let mut objects = object_model(files)?;
         let mut sorted = files
             .iter()
             .filter(|(path, _)| {
                 !path.starts_with("sheets/")
-                    && !path.starts_with("state/")
                     && !path.starts_with("windows/")
+                    && !is_object_file(path)
             })
             .collect::<Vec<_>>();
         sorted.sort_by(|left, right| left.0.cmp(&right.0));
@@ -186,20 +188,28 @@ impl Map {
 
         check_references(&entries)?;
         let order = dependency_order(&entries)?;
-        let mut tables = BTreeMap::new();
-        for (relative, mut table) in state {
-            crate::state::check(&mut table, &entries).map_err(|message| {
-                MapError::InvalidState {
-                    path: PathBuf::from(&relative),
-                    message,
-                }
-            })?;
-            tables.insert(table.name.clone(), table);
-        }
+        crate::objects::check(&mut objects, &entries).map_err(|message| {
+            MapError::InvalidObjects {
+                path: PathBuf::from("types"),
+                message,
+            }
+        })?;
+        crate::events::check(&mut objects, &entries).map_err(|message| {
+            MapError::InvalidObjects {
+                path: PathBuf::from("events.toml"),
+                message,
+            }
+        })?;
+        crate::actions::check(&mut objects, &entries).map_err(|message| {
+            MapError::InvalidObjects {
+                path: PathBuf::from("actions.toml"),
+                message,
+            }
+        })?;
         Ok(Self {
             entries,
             sheets,
-            state: tables,
+            objects,
             windows,
             order,
             entries_sha256: content_hash(map_toml, &sorted),
@@ -216,15 +226,10 @@ impl Map {
         self.entries.get(name)
     }
 
-    /// Every state table, by name.
-    pub fn state_tables(&self) -> impl Iterator<Item = &crate::StateTable> {
-        self.state.values()
-    }
-
-    /// A state table.
+    /// The object model: domains, enums, types, and roots.
     #[must_use]
-    pub fn state_table(&self, name: &str) -> Option<&crate::StateTable> {
-        self.state.get(name)
+    pub fn objects(&self) -> &crate::objects::Objects {
+        &self.objects
     }
 
     /// Every sheet schema, by sheet name.
@@ -270,6 +275,44 @@ impl Map {
     pub(crate) fn order(&self) -> &[String] {
         &self.order
     }
+}
+
+/// The object model among `files`, before it is checked against the
+/// entries.
+fn object_model(files: &[(String, String)]) -> Result<crate::objects::Objects, MapError> {
+    let mut objects = crate::objects::Objects::default();
+    for (relative, text) in files.iter().filter(|(path, _)| is_object_file(path)) {
+        let invalid = |message: String| MapError::InvalidObjects {
+            path: PathBuf::from(relative),
+            message,
+        };
+        if relative == "domains.toml" {
+            objects.domains = crate::objects::parse_domains(text).map_err(invalid)?;
+        } else if relative == "roots.toml" {
+            objects.roots = crate::objects::parse_roots(text).map_err(invalid)?;
+        } else if relative == "events.toml" {
+            objects.events = crate::events::parse(text).map_err(invalid)?;
+        } else if relative == "actions.toml" {
+            objects.actions = crate::actions::parse(text).map_err(invalid)?;
+        } else if let Some(name) = relative
+            .strip_prefix("enums/")
+            .and_then(|name| name.strip_suffix(".toml"))
+        {
+            let parsed = crate::objects::parse_enum(name, text).map_err(invalid)?;
+            objects.enums.insert(parsed.name.clone(), parsed);
+        } else if let Some(area) = relative
+            .strip_prefix("types/")
+            .and_then(|name| name.strip_suffix(".toml"))
+        {
+            for parsed in crate::objects::parse_types(area, text).map_err(invalid)? {
+                if objects.types.contains_key(&parsed.name) {
+                    return Err(invalid(format!("type `{}` is defined twice", parsed.name)));
+                }
+                objects.types.insert(parsed.name.clone(), parsed);
+            }
+        }
+    }
+    Ok(objects)
 }
 
 /// The window schemas among `files`, by window name.
@@ -461,4 +504,13 @@ fn io_error(path: &Path, error: &std::io::Error) -> MapError {
         path: path.to_owned(),
         message: error.to_string(),
     }
+}
+
+/// The files of the object model at the map's root, beside `map.toml`;
+/// everything else is in folders.
+pub const ROOT_FILES: [&str; 4] = ["domains.toml", "roots.toml", "events.toml", "actions.toml"];
+
+/// Whether a file of the map belongs to the object model.
+fn is_object_file(path: &str) -> bool {
+    ROOT_FILES.contains(&path) || path.starts_with("types/") || path.starts_with("enums/")
 }

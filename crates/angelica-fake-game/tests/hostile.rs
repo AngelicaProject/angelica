@@ -27,7 +27,56 @@ fn component(package: &'static str) -> &'static [u8] {
 
 /// Both plugins approved and running.
 fn started(limits: Limits) -> TestHost {
+    started_over(limits, |_| {})
+}
+
+/// The derived event of the game's sheet text, which takes rule files.
+const TEXT_MAP: [(&str, &str); 3] = [
+    (
+        "entries/excel.toml",
+        r#"
+[function."excel.store_row"]
+locator = { signature = "C3" }
+abi = { args = ["ptr", "ptr"], ret = "ptr" }
+thread = "any"
+"#,
+    ),
+    (
+        "domains.toml",
+        r#"
+[domains.text]
+doc = "The game's text."
+class = "display"
+read = { en = "Sees the game's text", ru = "Видит тексты игры" }
+change = { en = "Changes the game's text", ru = "Меняет тексты игры" }
+"#,
+    ),
+    (
+        "events.toml",
+        r#"
+[events.sheet_text]
+doc = "A text cell of a sheet row the game builds."
+at = "excel.store_row"
+derived = "sheet_cell"
+domain = "text"
+rules = "text-table-v1"
+
+[events.sheet_text.args.sheet]
+doc = "The sheet."
+from = "sheet"
+text = 256
+
+[events.sheet_text.outcomes.replace]
+doc = "The cell shows the rule's text."
+text = 65535
+"#,
+    ),
+];
+
+/// Both plugins approved, after `setup` prepared the host.
+fn started_over(limits: Limits, setup: impl FnOnce(&TestHost)) -> TestHost {
     let mut test = TestHost::new(limits);
+    setup(&test);
     test.install(HOSTILE, component("angelica-hostile"))
         .unwrap();
     test.install(HELLO, component("angelica-hello")).unwrap();
@@ -172,7 +221,7 @@ fn storage_paths_stay_in_the_folder() {
 
 #[test]
 fn files_the_host_reads_are_bounded() {
-    let test = started(Limits::default());
+    let test = started_over(Limits::default(), |test| test.use_map(&TEXT_MAP, &[]));
     let file = std::fs::File::create(test.folder.path().join("storage/hostile/big.table")).unwrap();
     file.set_len(runtime::excel_text::MAX_TABLE_SIZE + 1)
         .unwrap();
@@ -213,7 +262,27 @@ fn operations_stay_in_their_instance() {
 #[test]
 fn undeclared_permissions_are_refused() {
     let test = started(Limits::default());
-    test.define_state_table("self", "self", &["level"], &[]);
+    test.use_map(
+        &[
+            (
+                "entries/test.toml",
+                "[global.\"test.player\"]\nlocator = { signature = \"C3\" }\ntype = \"ptr\"\n\n[field.\"test.character.level\"]\nof = \"test.character\"\ntype = \"u8\"\noffset = 0x2B\n",
+            ),
+            (
+                "types/test.toml",
+                "[types.\"test.character\"]\ndoc = \"A character.\"\ndomain = \"character\"\n\n[types.\"test.character\".fields.level]\ndoc = \"Level.\"\n",
+            ),
+            (
+                "domains.toml",
+                "[domains.character]\ndoc = \"The character.\"\nclass = \"you\"\nread = { en = \"Sees your character\", ru = \"Видит вашего персонажа\" }\n",
+            ),
+            (
+                "roots.toml",
+                "[roots.player]\ndoc = \"The player.\"\nglobal = \"test.player\"\ntype = \"test.character\"\n",
+            ),
+        ],
+        &[],
+    );
     click(&test, "permissions");
     assert_eq!(
         report(&test).matches("PermissionDenied: ").count(),

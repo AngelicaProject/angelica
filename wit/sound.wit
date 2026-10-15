@@ -1,0 +1,17 @@
+package angelica:plugin@1.0.0;
+
+/// Sounds the plugin plays from WAV files in its storage, which it ships,
+/// downloads, or lets the player put in its folder. The host checks each
+/// file and plays its own re-encoding of it, never the file as given. Main
+/// instance only.
+interface sound {
+    use types.{error};
+
+    /// Plays the WAV file at `path` in the plugin's storage at `volume`,
+    /// from 0 to 1, stopping the sound playing, the plugin's or another's.
+    /// The file is at most 8 MiB of PCM samples of 8, 16, or 24 bits or
+    /// 32-bit float, 1 or 2 channels, 8 to 96 kHz, and at most 10 seconds;
+    /// anything else is `invalid-argument`. Needs `sound.play`. A plugin
+    /// plays at most one sound a second, `limit-exceeded` otherwise.
+    play: func(path: string, volume: f32) -> result<_, error>;
+}

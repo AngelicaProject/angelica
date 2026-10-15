@@ -2,19 +2,19 @@
 //! with each kind of widget, files in its storage, a job, the game's files
 //! and sheets, a text table, letter case, a replaced game file, chat
 //! commands that print in the chat log, HTTPS requests from a job, the
-//! player's character from the game's state, the chat log's messages as
-//! events, and rules for the game's own windows. The host's integration
-//! tests drive
-//! it through its window and its commands.
+//! player's character read through Lens, the actions the player uses
+//! watched through Lens, the chat log's messages watched through Lens,
+//! and the game's own windows changed through Lens. The host's integration
+//! tests drive it through its window and its commands.
 use angelica_sdk::{
     Plugin,
-    api::{excel_text, file_replacements, game_files, runtime, storage as files, text_case},
+    api::{file_replacements, game_files, runtime, storage as files},
     chat::{Message, Tone as ChatTone},
     commands::{Command, Invocation, Parameter},
-    events::{self, EventKind, GameEvent},
-    excel, game_ui, http,
+    events::GameEvent,
+    excel, http,
     jobs::{self, Job, Poll},
-    state, storage,
+    lens, storage,
     text::{
         guard,
         table::{Column, Variant, Writer},
@@ -37,11 +37,32 @@ struct Hello {
     message: String,
     /// The last message the chat log received, as `sender: text`.
     heard: Option<String>,
+    /// The watch of the chat log, or why there is none.
+    chat: Result<lens::Watch, String>,
+    /// The watch of the actions the player uses, or why there is none.
+    used: Result<lens::Watch, String>,
+    /// The last action the player used.
+    last_used: Option<String>,
+    /// The rule hiding system messages while the player wants them hidden.
+    quiet: Option<lens::Rule>,
+    /// The example table's rules for the game's sheet text.
+    table: Option<lens::RuleFile>,
+    /// The rules that give the game's case conversion Cyrillic letters.
+    letters: Vec<lens::Rule>,
     /// The selected tab of the widgets section.
     tab: u32,
     volume: f64,
     bar: ExperienceBar,
 }
+
+/// Whether the game's experience bar is shown: the element the game map
+/// names `window` in the window `_Exp`.
+const EXPERIENCE_BAR: &str =
+    "windows.unit_manager.windows[name = \"_Exp\"].layout.elements[name = window].visible";
+
+/// The text above the experience bar.
+const EXPERIENCE_TEXT: &str =
+    "windows.unit_manager.windows[name = \"_Exp\"].layout.elements[name = text].text";
 
 /// What the example does to the game's experience bar.
 #[derive(Default)]
@@ -53,38 +74,77 @@ struct ExperienceBar {
 }
 
 impl Hello {
+    /// Greets the echo server once the connection opens, shows its answer,
+    /// and closes.
+    fn socket_event(&mut self, event: &GameEvent) {
+        use angelica_sdk::api::websocket::{self, Data};
+        match event {
+            GameEvent::SocketOpened(opened) => {
+                if let Err(error) = websocket::send(opened.socket, &Data::Text("hello".into())) {
+                    self.say(format!("cannot greet: {}", error.message));
+                }
+            }
+            GameEvent::SocketMessage(message) => {
+                if let Data::Text(text) = &message.data {
+                    self.say(format!("socket said {text}"));
+                }
+                let _ = websocket::close(message.socket);
+            }
+            GameEvent::SocketClosed(closed) if closed.code != 1000 => {
+                self.say(format!("socket closed: {}", closed.reason));
+            }
+            _ => {}
+        }
+    }
+
     fn say(&mut self, message: impl Into<String>) {
         self.message = message.into();
         angelica_sdk::info(&self.message);
     }
 
-    /// Puts the clicks after the game's experience text, or removes them.
+    /// Writes the example table and adds its rules for the game's sheet
+    /// text.
+    fn add_table(&mut self) {
+        let added = write_table().and_then(|()| {
+            lens::RuleFile::new("sheet_text", "example.table").map_err(|e| e.message)
+        });
+        match added {
+            Ok(table) => {
+                let text = format!(
+                    "table active: {} sheets, {} cells",
+                    table.info().parts,
+                    table.info().rules
+                );
+                self.table = Some(table);
+                self.say(text);
+            }
+            Err(error) => self.say(format!("table refused: {error}")),
+        }
+    }
+
+    /// Shows the clicks in place of the game's experience text, or puts the
+    /// game's text back. The host keeps the text while the game writes its
+    /// own again, and whenever the bar is built again.
     fn show_clicks(&mut self) {
-        let rules = if self.bar.clicks {
-            vec![game_ui::after(
-                "_Exp",
-                "text",
-                format!(" · {} clicks", self.clicks),
-            )]
+        let result = if self.bar.clicks {
+            lens::set(EXPERIENCE_TEXT, format!("{} clicks", self.clicks)).map(drop)
         } else {
-            Vec::new()
+            lens::restore(EXPERIENCE_TEXT)
         };
-        match game_ui::texts(&rules) {
-            Ok(missing) if missing.is_empty() => {}
-            Ok(_) => self.say("this game build has no name for the experience text"),
-            Err(error) => self.say(format!("text refused: {}", error.message)),
+        if let Err(error) = result {
+            self.say(format!("text refused: {}", error.message));
         }
     }
 
     /// Hides the game's experience bar, or shows it again.
     fn hide_bar(&mut self) {
-        let elements = if self.bar.hidden {
-            Vec::new()
+        let result = if self.bar.hidden {
+            lens::restore(EXPERIENCE_BAR)
         } else {
-            vec![game_ui::element("_Exp", "window")]
+            lens::set(EXPERIENCE_BAR, false).map(drop)
         };
-        match game_ui::hide(&elements) {
-            Ok(missing) if missing.is_empty() => {
+        match result {
+            Ok(()) => {
                 self.bar.hidden = !self.bar.hidden;
                 self.say(if self.bar.hidden {
                     "experience bar hidden"
@@ -92,7 +152,6 @@ impl Hello {
                     "experience bar shown"
                 });
             }
-            Ok(_) => self.say("this game build has no name for the experience bar"),
             Err(error) => self.say(format!("hiding refused: {}", error.message)),
         }
     }
@@ -109,6 +168,10 @@ impl Hello {
     }
 
     fn click(&mut self, id: &str) {
+        if let Some(text) = around_lens(id) {
+            self.say(text);
+            return;
+        }
         match id {
             "click" => {
                 self.clicks += 1;
@@ -125,53 +188,14 @@ impl Hello {
                 Ok(job) => self.job = Some(job),
                 Err(error) => self.say(format!("job refused: {}", error.message)),
             },
-            "table" => {
-                let result = write_table().and_then(|()| {
-                    excel_text::activate("example", "example.table", 0).map_err(|e| e.message)
-                });
-                match result {
-                    Ok(info) => self.say(format!(
-                        "table active: {} sheets, {} cells",
-                        info.sheets, info.cells
-                    )),
-                    Err(error) => self.say(format!("table refused: {error}")),
-                }
-            }
+            "table" => self.add_table(),
             "read" => {
-                let text = excel::row("Item", excel::ENGLISH, &["name"], 1)
-                    .map_err(|e| e.message)
-                    .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
-                    .map(|values| {
-                        values.first().and_then(excel::Value::text).map_or_else(
-                            || "not text".to_owned(),
-                            |bytes| String::from_utf8_lossy(bytes).into_owned(),
-                        )
-                    });
-                let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
-                match (text, font) {
-                    (Ok(text), Ok(size)) => {
-                        self.say(format!("Item 1 is {text}; the font file has {size} bytes"));
-                    }
-                    (Err(error), _) => self.say(format!("cannot read Item: {error}")),
-                    (_, Err(error)) => self.say(format!("cannot read the font: {}", error.message)),
-                }
+                let text = read_item_and_font();
+                self.say(text);
             }
             "texture" => {
-                // The font texture with its last pixel changed.
-                let result = game_files::read("common/font/font1.tex")
-                    .and_then(|mut texture| {
-                        if let Some(last) = texture.last_mut() {
-                            *last ^= 0xFF;
-                        }
-                        files::write("font1.tex", &texture)
-                    })
-                    .and_then(|()| {
-                        file_replacements::replace("common/font/font1.tex", "font1.tex")
-                    });
-                match result {
-                    Ok(()) => self.say("texture replaced"),
-                    Err(error) => self.say(format!("texture refused: {}", error.message)),
-                }
+                let text = replace_texture();
+                self.say(text);
             }
             "where" => match who() {
                 Ok(text) => self.say(text),
@@ -184,29 +208,248 @@ impl Hello {
                     |line| format!("heard {line}"),
                 ));
             }
+            "used" => {
+                let text = self.used_text();
+                self.say(text);
+            }
+            "yes" => self.say(answer_yes()),
+            "quiet" => {
+                if self.quiet.take().is_some() {
+                    self.say("system messages shown");
+                } else {
+                    // Log kind 57 is the game's system messages.
+                    match lens::Rule::new("chat_message_added[kind = 57]", "hide") {
+                        Ok(rule) => {
+                            self.quiet = Some(rule);
+                            self.say("system messages hidden");
+                        }
+                        Err(error) => self.say(format!("cannot hide: {}", error.message)),
+                    }
+                }
+            }
+            "zoom" => match lens::set("camera.camera.max_distance", 40.0f32) {
+                Ok(count) => self.say(format!("zoom limit 40 on {count} cameras")),
+                Err(error) => self.say(format!("cannot zoom: {}", error.message)),
+            },
+            "sprint" => {
+                // Sprint is general action 4, used as its hotbar slot does.
+                let sprint = [
+                    ("kind", lens::named("general_action")),
+                    ("action", 4u32.into()),
+                ];
+                match lens::act("use_action", &sprint) {
+                    Ok(()) => self.say("sprinting"),
+                    Err(error) => self.say(format!("cannot sprint: {}", error.message)),
+                }
+            }
+            "teleport" => {
+                // Aetheryte 8 is Limsa Lominsa Lower Decks.
+                match lens::act("teleport", &[("aetheryte", 8u32.into())]) {
+                    Ok(()) => self.say("teleporting to Limsa Lominsa"),
+                    Err(error) => self.say(format!("cannot teleport: {}", error.message)),
+                }
+            }
             "statuses" => match statuses() {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the statuses: {error}")),
             },
-            "status" => match excel_text::status("example") {
-                Ok(status) => self.say(format!(
-                    "table: {} rows changed, {} cells, {} mismatches",
-                    status.rows_changed, status.cells_replaced, status.guard_mismatches
+            "status" => match self.table.as_ref().map(lens::RuleFile::decisions) {
+                Some(Ok(status)) => self.say(format!(
+                    "table: {} cells, {} stale",
+                    status.taken, status.stale
                 )),
-                Err(error) => self.say(format!("no status: {}", error.message)),
+                Some(Err(error)) => self.say(format!("no status: {}", error.message)),
+                None => self.say("no status: the table is not active"),
             },
-            "letters" => {
-                let letters: Vec<_> = ('а'..='я')
-                    .zip('А'..='Я')
-                    .map(|(lower, upper)| text_case::Letter { lower, upper })
-                    .collect();
-                match text_case::set_letters(&letters) {
-                    Ok(()) => self.say("letters added"),
-                    Err(error) => self.say(format!("letters refused: {}", error.message)),
+            "letters" => match cyrillic_letters() {
+                Ok(rules) => {
+                    self.letters = rules;
+                    self.say("letters added");
                 }
-            }
+                Err(error) => self.say(format!("letters refused: {}", error.message)),
+            },
             _ => {}
         }
+    }
+}
+
+/// Rules that give the game's case conversion the Cyrillic letters а to я,
+/// both ways.
+fn cyrillic_letters() -> Result<Vec<lens::Rule>, angelica_sdk::Error> {
+    let mut rules = Vec::new();
+    for (small, capital) in ('а'..='я').zip('А'..='Я') {
+        rules.push(lens::Rule::with(
+            &format!("letter_upper[letter = \"{small}\"]"),
+            "becomes",
+            capital.to_string(),
+        )?);
+        rules.push(lens::Rule::with(
+            &format!("letter_lower[letter = \"{capital}\"]"),
+            "becomes",
+            small.to_string(),
+        )?);
+    }
+    Ok(rules)
+}
+
+/// Item 1's name and the size of a font file, read from the game's files.
+fn read_item_and_font() -> String {
+    let text = excel::row("Item", excel::ENGLISH, &["name"], 1)
+        .map_err(|e| e.message)
+        .and_then(|row| row.ok_or_else(|| "no row 1".to_owned()))
+        .map(|values| {
+            values.first().and_then(excel::Value::text).map_or_else(
+                || "not text".to_owned(),
+                |bytes| String::from_utf8_lossy(bytes).into_owned(),
+            )
+        });
+    let font = game_files::read("common/font/AXIS_12.fdt").map(|bytes| bytes.len());
+    match (text, font) {
+        (Ok(text), Ok(size)) => format!("Item 1 is {text}; the font file has {size} bytes"),
+        (Err(error), _) => format!("cannot read Item: {error}"),
+        (_, Err(error)) => format!("cannot read the font: {}", error.message),
+    }
+}
+
+/// Replaces the font texture with a copy whose last pixel is changed.
+fn replace_texture() -> String {
+    let result = game_files::read("common/font/font1.tex")
+        .and_then(|mut texture| {
+            if let Some(last) = texture.last_mut() {
+                *last ^= 0xFF;
+            }
+            files::write("font1.tex", &texture)
+        })
+        .and_then(|()| file_replacements::replace("common/font/font1.tex", "font1.tex"));
+    match result {
+        Ok(()) => "texture replaced".to_owned(),
+        Err(error) => format!("texture refused: {}", error.message),
+    }
+}
+
+/// What the buttons of the host's services beside Lens say: drawing,
+/// messages, the clipboard, notifications, sound, and sockets.
+fn around_lens(id: &str) -> Option<String> {
+    match id {
+        "mark" => Some(mark_where_i_am()),
+        // The example sends to itself; a plugin lists the others it talks to.
+        "ping" => Some(said(
+            angelica_sdk::messages::send("hello", "ping", b"ping"),
+            "ping sent",
+            "cannot send",
+        )),
+        "copy" => Some(said(
+            angelica_sdk::clipboard::copy("Hello from Angelica"),
+            "copied",
+            "cannot copy",
+        )),
+        "notify" => Some(said(
+            angelica_sdk::notifications::show("Hello from Angelica"),
+            "notified",
+            "cannot notify",
+        )),
+        "cache" => Some(said(
+            files::write("cache/hello.txt", b"fetched again when gone"),
+            "cached",
+            "cannot cache",
+        )),
+        "socket" => Some(said(
+            angelica_sdk::websocket::Socket::open("wss://example.com/echo"),
+            "connecting",
+            "cannot connect",
+        )),
+        "beep" => Some(said(
+            files::write("beep.wav", &beep())
+                .and_then(|()| angelica_sdk::sound::play("beep.wav", 0.5)),
+            "beeped",
+            "cannot beep",
+        )),
+        _ => None,
+    }
+}
+
+/// A WAV file of a fifth of a second of A4, 16-bit mono at 22 050 Hz.
+fn beep() -> Vec<u8> {
+    const RATE: u32 = 22_050;
+    let samples: Vec<u8> = (0..RATE / 5)
+        .flat_map(|index| {
+            #[allow(clippy::cast_precision_loss)] // small sample indexes
+            let phase = index as f32 * 440.0 * std::f32::consts::TAU / RATE as f32;
+            #[allow(clippy::cast_possible_truncation)] // within i16
+            let value = (phase.sin() * 12_000.0) as i16;
+            value.to_le_bytes()
+        })
+        .collect();
+    let length = u32::try_from(samples.len()).unwrap_or_default();
+    let mut wav = Vec::with_capacity(44 + samples.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + length).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    // Format size, PCM and one channel, rate, bytes a second, and two
+    // bytes a frame of 16 bits.
+    for field in [16u32, 1 | (1 << 16), RATE, RATE * 2, 2 | (16 << 16)] {
+        wav.extend_from_slice(&field.to_le_bytes());
+    }
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&length.to_le_bytes());
+    wav.extend_from_slice(&samples);
+    wav
+}
+
+/// The line shown for an operation's result: `done`, or `failed` with the
+/// reason.
+fn said<T>(result: Result<T, angelica_sdk::Error>, done: &str, failed: &str) -> String {
+    match result {
+        Ok(_) => done.to_owned(),
+        Err(error) => format!("{failed}: {}", error.message),
+    }
+}
+
+/// Draws a circle around where the character stands, with a label.
+fn mark_where_i_am() -> String {
+    let place = lens::Query::prepare("player { position_x, position_y, position_z }")
+        .and_then(|query| query.run().map(|rows| (query, rows)))
+        .map(|(query, rows)| {
+            rows.first().map(|row| {
+                ["position_x", "position_y", "position_z"].map(|name| {
+                    let value = query.get(row, name).and_then(lens::Value::float);
+                    #[allow(clippy::cast_possible_truncation)] // a position in yalms
+                    let value = value.unwrap_or_default() as f32;
+                    value
+                })
+            })
+        });
+    match place {
+        Ok(Some([x, y, z])) => match angelica_sdk::draw::set(&[
+            angelica_sdk::draw::circle([x, y, z], 3.0, 0xE873_5AFF),
+            angelica_sdk::draw::text([x, y + 2.5, z], "here", 0xFFFF_FFFF),
+        ]) {
+            Ok(()) => format!("marked {x:.1}, {z:.1}"),
+            Err(error) => format!("cannot draw: {}", error.message),
+        },
+        Ok(None) => "not in the world".to_owned(),
+        Err(error) => format!("cannot read the position: {}", error.message),
+    }
+}
+
+/// Answers the open yes or no dialog with yes, saying what it asked.
+fn answer_yes() -> String {
+    let question = lens::Query::prepare(
+        "windows.unit_manager.windows[name = \"SelectYesno\"].values[0] { text }",
+    )
+    .and_then(|query| query.run().map(|rows| (query, rows)))
+    .map(|(query, rows)| {
+        rows.first()
+            .and_then(|row| query.get(row, "text"))
+            .and_then(lens::Value::plain)
+            .unwrap_or_default()
+    });
+    match (
+        question,
+        lens::act("answer_yes_no", &[("answer", lens::named("yes"))]),
+    ) {
+        (Ok(question), Ok(())) => format!("said yes to {question}"),
+        (Err(error), _) | (_, Err(error)) => format!("cannot say yes: {}", error.message),
     }
 }
 
@@ -245,74 +488,68 @@ const TONES: [(&str, ChatTone); 6] = [
     ("bad", ChatTone::Bad),
 ];
 
-/// The player's character and zone from the game's state.
+/// The player's character and zone, read through Lens.
 fn who() -> Result<String, String> {
-    let Some(values) = state::read_one(
-        "self",
-        &[
-            "name",
-            "class_job",
-            "level",
-            "health",
-            "max_health",
-            "mana",
-            "max_mana",
-            "position_x",
-            "position_y",
-            "position_z",
-        ],
-    )?
-    else {
+    let character = lens::Query::prepare(
+        "player { name, class_job: data.class_job, level: data.level, health: data.health,          max_health: data.max_health, mana: data.mana, max_mana: data.max_mana,          position_x, position_y, position_z }",
+    )?;
+    let rows = character.run()?;
+    let Some(row) = rows.first() else {
         return Ok("no character yet".into());
     };
-    let name = values[0]
-        .as_ref()
-        .and_then(state::Value::text)
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    let name = character
+        .get(row, "name")
+        .and_then(lens::Value::plain)
         .unwrap_or_default();
-    let number = |index: usize| {
-        values[index]
-            .as_ref()
-            .and_then(state::Value::unsigned)
+    let number = |name: &str| {
+        character
+            .get(row, name)
+            .and_then(lens::Value::unsigned)
             .unwrap_or(0)
     };
-    let float = |index: usize| {
-        values[index]
-            .as_ref()
-            .and_then(state::Value::float)
+    let float = |name: &str| {
+        character
+            .get(row, name)
+            .and_then(lens::Value::float)
             .unwrap_or(0.0)
     };
-    let zone = state::read_one("self.zone", &["territory_type"])?
-        .and_then(|values| values[0].as_ref().and_then(state::Value::unsigned))
+    let zone = lens::Query::prepare("game.current_territory_type")?;
+    let zone = zone
+        .run()?
+        .first()
+        .and_then(|row| row.values[0].as_ref())
+        .and_then(lens::Value::unsigned)
         .unwrap_or(0);
     Ok(format!(
         "{name} is class {} at level {}, HP {}/{}, MP {}/{}, at ({:.1}, {:.1}, {:.1}) in zone {zone}",
-        number(1),
-        number(2),
-        number(3),
-        number(4),
-        number(5),
-        number(6),
-        float(7),
-        float(8),
-        float(9)
+        number("class_job"),
+        number("level"),
+        number("health"),
+        number("max_health"),
+        number("mana"),
+        number("max_mana"),
+        float("position_x"),
+        float("position_y"),
+        float("position_z")
     ))
 }
 
 /// The statuses on the player's character, with the seconds they last.
 fn statuses() -> Result<String, String> {
-    let rows = state::read("self.statuses", &["status_id", "remaining_time"])?;
+    let statuses =
+        lens::Query::prepare("player.status_manager.statuses { status_id, remaining_time }")?;
+    let rows = statuses.run()?;
     if rows.is_empty() {
         return Ok("no statuses".into());
     }
     let listed: Vec<String> = rows
         .iter()
         .map(|row| {
-            let id = row[0]
+            let id = row.values[0]
                 .as_ref()
-                .and_then(state::Value::unsigned)
+                .and_then(lens::Value::unsigned)
                 .unwrap_or(0);
-            match row[1].as_ref().and_then(state::Value::float) {
+            match row.values[1].as_ref().and_then(lens::Value::float) {
                 Some(time) if time > 0.0 => format!("{id} ({time:.0}s)"),
                 _ => id.to_string(),
             }
@@ -349,6 +586,17 @@ fn write_table() -> Result<(), String> {
     Ok(files::write("example.table", &bytes)?)
 }
 
+impl Hello {
+    /// The last action the player used, or why the watch is missing.
+    fn used_text(&self) -> String {
+        match (&self.used, &self.last_used) {
+            (Err(error), _) => format!("cannot watch the actions: {error}"),
+            (Ok(_), None) => "no action used yet".into(),
+            (Ok(_), Some(used)) => format!("used {used}"),
+        }
+    }
+}
+
 impl Plugin for Hello {
     fn start() -> Result<Self, String> {
         let clicks = storage::load("clicks.json")?.unwrap_or(0);
@@ -367,12 +615,21 @@ impl Plugin for Hello {
             progress: 0.0,
             message: String::new(),
             heard: None,
+            chat: lens::Watch::new("chat_message_added { kind, sender.text, message.text }")
+                .map_err(|error| error.message),
+            used: lens::Watch::new("action_used[kind in (action, item)] { kind, action, target }")
+                .map_err(|error| error.message),
+            last_used: None,
+            quiet: None,
+            table: None,
+            letters: Vec::new(),
             tab: 0,
             volume: 0.5,
             bar: ExperienceBar::default(),
         };
-        if let Err(error) = events::subscribe(&[EventKind::ChatMessage]) {
-            hello.say(format!("events refused: {}", error.message));
+        if let Err(reason) = &hello.chat {
+            let reason = format!("cannot watch the chat: {reason}");
+            hello.say(reason);
         }
         if let Err(error) = angelica_sdk::commands::define(&[commands()]) {
             hello.say(format!("commands refused: {}", error.message));
@@ -436,6 +693,26 @@ impl Plugin for Hello {
                                 .button("where", "Who am I")
                                 .button("statuses", "My statuses")
                                 .button("heard", "Last chat message")
+                                .button("used", "Last action used")
+                                .button("sprint", "Sprint")
+                                .button("teleport", "Teleport to Limsa Lominsa")
+                                .button("zoom", "Zoom out further")
+                                .button("yes", "Say yes")
+                                .button("mark", "Mark where I am")
+                                .button("ping", "Ping myself")
+                                .button("copy", "Copy a greeting")
+                                .button("notify", "Notify me")
+                                .button("beep", "Beep")
+                                .button("cache", "Fill the cache")
+                                .button("socket", "Echo over a socket")
+                                .button(
+                                    "quiet",
+                                    if self.quiet.is_some() {
+                                        "Show system messages"
+                                    } else {
+                                        "Hide system messages"
+                                    },
+                                )
                                 .button("texture", "Replace a texture")
                         })
                         .row(|row| {
@@ -488,12 +765,52 @@ impl Plugin for Hello {
     }
 
     fn game_event(&mut self, event: GameEvent) {
-        if let GameEvent::ChatMessage(message) = event {
+        if let Ok(used) = &self.used
+            && let Some(rows) = used.rows(&event)
+            && let Some(row) = rows.last()
+        {
+            let kind = used
+                .get(row, "kind")
+                .and_then(lens::Value::named)
+                .unwrap_or("?");
+            let action = used
+                .get(row, "action")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or(0);
+            let target = used
+                .get(row, "target")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or(0);
+            self.last_used = Some(format!("{kind} {action} on {target:#x}"));
+        }
+        if let GameEvent::Message(message) = &event {
+            if message.in_reply_to.is_some() {
+                self.say(format!(
+                    "{} answered {}",
+                    message.sender,
+                    String::from_utf8_lossy(&message.payload)
+                ));
+            } else if let Err(error) = angelica_sdk::messages::reply(message, b"pong") {
+                self.say(format!("cannot answer: {}", error.message));
+            }
+        }
+        self.socket_event(&event);
+        if let Ok(chat) = &self.chat
+            && let Some(row) = chat.rows(&event).and_then(<[_]>::last)
+        {
+            let text = |name: &str| {
+                chat.get(row, name)
+                    .and_then(lens::Value::plain)
+                    .unwrap_or_default()
+            };
+            let kind = chat
+                .get(row, "kind")
+                .and_then(lens::Value::unsigned)
+                .unwrap_or_default();
             self.heard = Some(format!(
-                "{} ({}): {}",
-                String::from_utf8_lossy(&message.sender),
-                message.kind,
-                String::from_utf8_lossy(&message.message)
+                "{} ({kind}): {}",
+                text("sender_text"),
+                text("message_text")
             ));
         }
     }

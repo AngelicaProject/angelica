@@ -9,7 +9,9 @@ pub enum MapError {
     Toml { path: PathBuf, message: String },
     #[error("map.toml: format {found:?} is not supported; this reader supports format {supported}")]
     Format { found: Option<i64>, supported: i64 },
-    #[error("{path}: only `.toml` files belong in `entries/`, `sheets/`, `state/`, and `windows/`")]
+    #[error(
+        "{path}: only `.toml` files belong in `entries/`, `sheets/`, `types/`, `enums/`, and `windows/`"
+    )]
     UnexpectedFile { path: PathBuf },
     #[error("{path}: `{name}` is not a valid entry name")]
     InvalidName { path: PathBuf, name: String },
@@ -30,7 +32,7 @@ pub enum MapError {
     #[error("{path}: {message}")]
     InvalidSheet { path: PathBuf, message: String },
     #[error("{path}: {message}")]
-    InvalidState { path: PathBuf, message: String },
+    InvalidObjects { path: PathBuf, message: String },
     #[error("{path}: {message}")]
     InvalidWindow { path: PathBuf, message: String },
 }
@@ -51,7 +53,7 @@ impl MapError {
             Self::BadReference { .. } => "bad-reference",
             Self::Cycle { .. } => "cycle",
             Self::InvalidSheet { .. } => "invalid-sheet",
-            Self::InvalidState { .. } => "invalid-state",
+            Self::InvalidObjects { .. } => "invalid-objects",
             Self::InvalidWindow { .. } => "invalid-window",
         }
     }
@@ -66,7 +68,7 @@ impl MapError {
             | Self::InvalidName { path, .. }
             | Self::WrongArea { path, .. }
             | Self::InvalidSheet { path, .. }
-            | Self::InvalidState { path, .. }
+            | Self::InvalidObjects { path, .. }
             | Self::InvalidWindow { path, .. } => Some(path),
             _ => None,
         }

@@ -9,6 +9,9 @@
 pub use angelica_sqpack::excel::{ColumnKind, Language};
 pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
+pub use objects::{Fire, Set};
+
+mod objects;
 /// The host the tests run plugins in.
 pub use runtime;
 /// The windows and window events of the plugin API.
@@ -42,73 +45,30 @@ pub struct ScriptedGame {
     pub chat_available: AtomicBool,
     /// Every message printed in the chat log, as the game's text.
     pub printed: Mutex<Vec<Vec<u8>>>,
-    /// The rows of each state table by table name: each row's fields by
-    /// name. A table without rows has no object, as before log-in.
-    pub state: Mutex<std::collections::BTreeMap<String, Vec<StateRow>>>,
-    /// False when the game build lacks what rules for its windows need.
-    pub windows_available: AtomicBool,
-    /// The elements of the game's own windows, by window name and id.
-    pub windows: Mutex<std::collections::BTreeMap<(String, u32), WindowElement>>,
+    /// The game's objects, laid out as the game map a test named
+    /// describes them ([`TestHost::use_map`]).
+    objects: Mutex<objects::Objects>,
+    /// False when the hooks of watched events cannot be installed.
+    pub watch_available: AtomicBool,
+    /// The map entries hooked for watched events, in order.
+    pub watched: Mutex<Vec<String>>,
+    /// Every call of the game's functions an action made, in order: the
+    /// function's map entry and each argument's 64 bits.
+    pub acted: Mutex<Vec<(String, Vec<u64>)>>,
+    /// What the game's functions return to actions: `1` (taken) unless a
+    /// test says otherwise.
+    pub act_returns: Mutex<u64>,
+    /// The map entries hooked for decision points, in order.
+    pub decided: Mutex<Vec<String>>,
+    /// The game camera's view-projection matrix; none unless a test sets
+    /// one.
+    pub view_projection: Mutex<Option<[f32; 16]>>,
+    /// Every sound played, as the host re-encoded it.
+    pub played: Mutex<Vec<Vec<u8>>>,
+    /// The server on this computer that plugins' WebSocket connections
+    /// reach, whatever their URL; none unless a test starts one.
+    pub socket_server: Mutex<Option<std::net::SocketAddr>>,
 }
-
-/// An element of one of the game's own windows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WindowElement {
-    /// Changes when the game builds the window again.
-    pub handle: usize,
-    pub visible: bool,
-    /// The text of a text element; `None` for any other element.
-    pub text: Option<Vec<u8>>,
-}
-
-struct ScriptedScreen<'a>(
-    std::sync::MutexGuard<'a, std::collections::BTreeMap<(String, u32), WindowElement>>,
-);
-
-impl ScriptedScreen<'_> {
-    fn at(&mut self, element: runtime::game_ui::Element) -> Option<&mut WindowElement> {
-        self.0
-            .values_mut()
-            .find(|found| found.handle == element.handle)
-    }
-}
-
-impl runtime::game_ui::Screen for ScriptedScreen<'_> {
-    fn element(&mut self, window: &str, id: u32, text: bool) -> Option<runtime::game_ui::Element> {
-        self.0
-            .get(&(window.to_owned(), id))
-            .filter(|element| element.text.is_some() || !text)
-            .map(|element| runtime::game_ui::Element {
-                handle: element.handle,
-            })
-    }
-
-    fn visible(&mut self, element: runtime::game_ui::Element) -> bool {
-        self.at(element).is_some_and(|element| element.visible)
-    }
-
-    fn set_visible(&mut self, element: runtime::game_ui::Element, visible: bool) {
-        if let Some(element) = self.at(element) {
-            element.visible = visible;
-        }
-    }
-
-    fn text(&mut self, element: runtime::game_ui::Element) -> Vec<u8> {
-        self.at(element)
-            .and_then(|element| element.text.clone())
-            .unwrap_or_default()
-    }
-
-    fn set_text(&mut self, element: runtime::game_ui::Element, text: &[u8]) {
-        if let Some(element) = self.at(element) {
-            element.text = Some(text.to_vec());
-        }
-    }
-}
-
-/// A row of a state table: values by field name; a field without a value
-/// reads as `None`.
-pub type StateRow = std::collections::BTreeMap<String, runtime::state::StateValue>;
 
 impl Default for ScriptedGame {
     fn default() -> Self {
@@ -120,9 +80,15 @@ impl Default for ScriptedGame {
             commands_available: AtomicBool::new(true),
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
-            state: Mutex::new(std::collections::BTreeMap::new()),
-            windows_available: AtomicBool::new(true),
-            windows: Mutex::new(std::collections::BTreeMap::new()),
+            objects: Mutex::new(objects::Objects::default()),
+            watch_available: AtomicBool::new(true),
+            watched: Mutex::new(Vec::new()),
+            acted: Mutex::new(Vec::new()),
+            act_returns: Mutex::new(1),
+            decided: Mutex::new(Vec::new()),
+            view_projection: Mutex::new(None),
+            played: Mutex::new(Vec::new()),
+            socket_server: Mutex::new(None),
         }
     }
 }
@@ -164,43 +130,92 @@ impl Game for ScriptedGame {
         }
     }
 
-    fn enable_chat_messages(&self) -> Result<(), String> {
-        if self.chat_available.load(Ordering::Acquire) {
-            Ok(())
-        } else {
-            Err("map entry ui.log_module.print_message is absent".into())
-        }
+    fn query(
+        &self,
+        prepared: &runtime::lens::Prepared,
+    ) -> runtime::error::Result<Vec<runtime::lens::Row>> {
+        runtime::lens::run(
+            &*self.objects.lock().unwrap_or_else(PoisonError::into_inner),
+            prepared,
+        )
     }
 
-    fn with_screen(
-        &self,
-        work: &mut dyn FnMut(&mut dyn runtime::game_ui::Screen),
-    ) -> Result<(), String> {
-        if !self.windows_available.load(Ordering::Acquire) {
-            return Err("map entry ui.stage is absent".into());
-        }
-        work(&mut ScriptedScreen(
-            self.windows.lock().unwrap_or_else(PoisonError::into_inner),
-        ));
+    fn memory(&self) -> &dyn runtime::lens::Memory {
+        self
+    }
+
+    fn call(&self, address: u64, args: &[u64]) -> Result<runtime::lens::act::Returned, String> {
+        let entry = self
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .code
+            .get(&address)
+            .cloned()
+            .ok_or_else(|| format!("nothing in the scripted game at {address:#x}"))?;
+        self.acted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((entry, args.to_vec()));
+        let returned = *self
+            .act_returns
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Ok(runtime::lens::act::Returned {
+            integer: returned,
+            float: 0,
+        })
+    }
+
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        *self
+            .view_projection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        self.played
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(wav);
+        true
+    }
+
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .write_data(address, bytes)
+    }
+
+    fn call_setter(&self, function: u64, object: u64, value: &runtime::lens::set::Setting) -> bool {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_through(function, object, value)
+    }
+
+    fn enable_decision(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
+        self.decided
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(entry.to_owned());
         Ok(())
     }
 
-    fn read_state(
-        &self,
-        table: &runtime::state::TablePlan,
-        names: &[String],
-        _fields: &[runtime::state::FieldPlan],
-    ) -> Vec<Vec<Option<runtime::state::StateValue>>> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&table.name)
-            .map(|rows| {
-                rows.iter()
-                    .map(|row| names.iter().map(|name| row.get(name).cloned()).collect())
-                    .collect()
-            })
-            .unwrap_or_default()
+    fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {
+        if self.watch_available.load(Ordering::Acquire) {
+            self.watched
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(entry.to_owned());
+            Ok(())
+        } else {
+            Err(format!(
+                "map entry {entry} cannot be hooked in the scripted build"
+            ))
+        }
     }
 
     fn print(&self, message: &[u8]) -> Result<(), String> {
@@ -215,7 +230,53 @@ impl Game for ScriptedGame {
     }
 }
 
+impl runtime::lens::Memory for ScriptedGame {
+    fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .read(address, buffer)
+    }
+}
+
 impl ScriptedGame {
+    /// Sets `values` of the object `path` names in the game map a test
+    /// named, making everything on the way that does not exist yet. An
+    /// array's element is named by position, `[3]`, or by values,
+    /// `[kind = bag_1]`: the first element with them, or else the first
+    /// empty one, which gets them. A dotted value name goes through
+    /// references and embedded objects.
+    ///
+    /// ```ignore
+    /// test.game.set(
+    ///     "inventory.containers[kind = bag_1].items[0]",
+    ///     &[("item", 5057.into()), ("quantity", 12.into())],
+    /// );
+    /// ```
+    ///
+    /// # Panics
+    /// When the path or a value does not fit the map.
+    pub fn set(&self, path: &str, values: &[(&str, Set)]) {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set(path, values)
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+    }
+
+    /// The game has no object at `root` now, as before the player logs in:
+    /// the pointer its global holds is zero.
+    ///
+    /// # Panics
+    /// When the root is unknown or not behind a pointer.
+    pub fn clear(&self, root: &str) {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear(root)
+            .unwrap_or_else(|error| panic!("{root}: {error}"));
+    }
+
     /// Forgets the printed messages.
     pub fn clear_printed(&self) {
         self.printed
@@ -297,8 +358,6 @@ pub struct TestHost {
     limits: Limits,
     /// The packages installed with [`TestHost::install`], for a restart.
     installed: Vec<(String, Vec<u8>)>,
-    /// The window schemas tests named, as the game map would hold them.
-    window_schemas: Mutex<Vec<angelica_map::WindowSchema>>,
 }
 
 /// One frame at 60 frames a second.
@@ -331,9 +390,35 @@ impl TestHost {
             commands: Arc::new(runtime::commands::Commands::default()),
             chat: Arc::new(runtime::chat::Chat::default()),
             sheets: Arc::new(runtime::sheets::Sheets::default()),
-            state: Arc::new(runtime::state::StateTables::default()),
-            events: Arc::new(runtime::events::Events::default()),
-            ui: Arc::new(runtime::game_ui::GameUi::default()),
+            lens: Arc::new(runtime::lens::Lens::default()),
+            draw: Arc::new(runtime::draw::Drawings::default()),
+            messages: Arc::new(runtime::messages::Messages::default()),
+            clipboard: Arc::new(runtime::clipboard::Clipboard::default()),
+            notifications: Arc::new(runtime::notifications::Notifications::default()),
+            sounds: Arc::new(runtime::sound::Sounds::default()),
+            sockets: Arc::new(runtime::sockets::Sockets::dialing({
+                let game = game.clone();
+                Arc::new(move |_client: &runtime::http::Client, _url: &str| {
+                    let server = game
+                        .socket_server
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .ok_or_else(|| {
+                            runtime::error::Error::new(
+                                runtime::error::Kind::Network,
+                                "no server in the scripted game",
+                            )
+                        })?;
+                    let stream: Box<dyn runtime::sockets::Stream> =
+                        Box::new(std::net::TcpStream::connect(server).map_err(|error| {
+                            runtime::error::Error::new(
+                                runtime::error::Kind::Network,
+                                error.to_string(),
+                            )
+                        })?);
+                    Ok(stream)
+                })
+            })),
             game: game.clone(),
             starting: AtomicBool::new(false),
             russian: AtomicBool::new(false),
@@ -350,6 +435,7 @@ impl TestHost {
                 grants: root.join("grants"),
                 state: root.join("state"),
                 storage: root.join("storage"),
+                cache: root.join("cache").join("plugins"),
             },
             Arc::new(|_: &str| {}),
             Box::new(move |path: &Path| {
@@ -366,7 +452,6 @@ impl TestHost {
             opened,
             limits,
             installed: Vec::new(),
-            window_schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -533,54 +618,88 @@ impl TestHost {
             .collect()
     }
 
-    /// The game adds a message to the chat log: plugins that subscribed
-    /// receive it in the next frame, which this runs.
-    pub fn chat_message(&self, info: u16, sender: &str, message: &str) {
-        let events = &self.services().events;
-        if events.wanted(runtime::events::EventKind::ChatMessage) {
-            events.push(runtime::events::GameEvent::ChatMessage(
-                runtime::events::ChatMessage {
-                    info,
-                    sender: sender.as_bytes().to_vec(),
-                    message: message.as_bytes().to_vec(),
-                    timestamp: 1_800_000_000,
-                },
-            ));
+    /// The game calls the function of the decision point `event` with
+    /// `args`: what the plugins' rules make it return at once, or `None`
+    /// when it runs. Watches of the event are fired too.
+    ///
+    /// # Panics
+    /// When the event or an argument does not fit the map.
+    pub fn decide(&self, event: &str, args: &[(&str, Fire)]) -> Option<u64> {
+        let services = self.services();
+        let (schema, _) = services.lens.schema();
+        let at = schema.objects.events.get(event)?.at.clone();
+        let decided = services.lens.decisions.point_of(&at).and_then(|point| {
+            let mut objects = self
+                .game
+                .objects
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let call = objects
+                .call(event, args)
+                .unwrap_or_else(|error| panic!("{event}: {error}"));
+            services.lens.decisions.decide(point, &call, &*objects)
+        });
+        if decided.is_none() {
+            self.fire(event, args);
         }
-        self.host.frame(FRAME);
+        decided
     }
 
-    /// Defines a state table of `domain` with `fields`, present in the
-    /// game build unless listed in `absent`, as a game map would; its rows
-    /// come from [`ScriptedGame::state`].
-    pub fn define_state_table(&self, table: &str, domain: &str, fields: &[&str], absent: &[&str]) {
-        self.services().state.insert(runtime::state::TablePlan {
-            name: table.to_owned(),
-            domain: domain.to_owned(),
-            doc: "A test table.".into(),
-            object: Ok(Vec::new()),
-            list: None,
-            fields: fields
-                .iter()
-                .map(|name| {
-                    (
-                        (*name).to_owned(),
-                        runtime::state::FieldPlan {
-                            doc: "A test field.".into(),
-                            steps: if absent.contains(name) {
-                                Err(format!("map entry test.{name} is absent"))
-                            } else {
-                                Ok(Vec::new())
-                            },
-                            representation: angelica_map::Representation::Value(
-                                angelica_map::ValueKind::U32,
-                            ),
-                            index: false,
-                        },
-                    )
-                })
-                .collect(),
-        });
+    /// The game reaches the point of `event` with `args`: every plugin's
+    /// watch of the event reads its rows now, from the scripted game's
+    /// objects, and receives them in the next frame. Nothing happens when
+    /// no plugin watches it.
+    ///
+    /// # Panics
+    /// When the event or an argument does not fit the map.
+    pub fn fire(&self, event: &str, args: &[(&str, Fire)]) {
+        let services = self.services();
+        let watches = &services.lens.watches;
+        let (schema, _) = services.lens.schema();
+        let Some(point) = schema
+            .objects
+            .events
+            .get(event)
+            .and_then(|found| watches.point_of(&found.at))
+        else {
+            return;
+        };
+        let mut objects = self
+            .game
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let call = objects
+            .call(event, args)
+            .unwrap_or_else(|error| panic!("{event}: {error}"));
+        watches.fire(point, &call, &*objects);
+    }
+
+    /// The game map's object model for Lens: `files` as a map's
+    /// `entries/`, `types/`, `enums/`, `domains.toml`, and `roots.toml`
+    /// files hold them, with constant field offsets. Entries in `absent`
+    /// are absent in the scripted build. The game's objects start empty;
+    /// [`ScriptedGame::set`] fills them.
+    ///
+    /// # Panics
+    /// When the files are not a valid map.
+    pub fn use_map(&self, files: &[(&str, &str)], absent: &[&str]) {
+        let files: Vec<(String, String)> = files
+            .iter()
+            .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()))
+            .collect();
+        let map =
+            angelica_map::Map::from_sources(&format!("format = {}", angelica_map::FORMAT), &files)
+                .unwrap_or_else(|error| panic!("the test's map: {error}"));
+        let (objects, mut schema) = objects::Objects::new(map.clone(), absent);
+        let data = self.services().data.clone();
+        schema.resolve_windows(&map, &|path| data.read(path).map_err(|error| error.message));
+        *self
+            .game
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = objects;
+        self.services().lens.replace(schema);
     }
 
     /// Names columns of a sheet of the game in `game_folder`, as a game map
@@ -619,115 +738,6 @@ impl TestHost {
                 columns,
             }],
         });
-    }
-
-    /// Names elements of the game's window `window` as a game map would,
-    /// for a layout file this writes nothing for: the game's files must
-    /// already have `ui/uld/<layout>.uld`. Each element is a name, its id,
-    /// and whether it shows text.
-    ///
-    /// # Panics
-    /// When the game's files lack the layout file.
-    pub fn name_elements(&self, window: &str, layout: &str, names: &[(&str, u32, bool)]) {
-        let services = self.services();
-        let path = format!("ui/uld/{layout}.uld");
-        let file = services
-            .data
-            .read(&path)
-            .unwrap_or_else(|error| panic!("{path}: {}", error.message));
-        let mut schemas: Vec<angelica_map::WindowSchema> = self
-            .window_schemas
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        schemas.retain(|schema| schema.window != window);
-        schemas.push(angelica_map::WindowSchema {
-            window: window.to_owned(),
-            doc: "A test schema.".into(),
-            layout: path,
-            elements: names
-                .iter()
-                .map(|(name, _, text)| {
-                    (
-                        (*name).to_owned(),
-                        angelica_map::NamedElement {
-                            kind: if *text {
-                                angelica_map::ElementKind::Text
-                            } else {
-                                angelica_map::ElementKind::Other
-                            },
-                            doc: "A test element.".into(),
-                        },
-                    )
-                })
-                .collect(),
-            layouts: vec![angelica_map::KnownWindowLayout {
-                fingerprint: angelica_map::window_layout_fingerprint(&file),
-                elements: names
-                    .iter()
-                    .map(|(name, id, _)| ((*name).to_owned(), *id))
-                    .collect(),
-            }],
-        });
-        services.ui.set(schemas.clone());
-        *self
-            .window_schemas
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = schemas;
-    }
-
-    /// The game builds an element of one of its windows: visible, with
-    /// `text` when it is a text element. Building it again gives it a new
-    /// handle, as when the game opens the window again.
-    pub fn build_element(&self, window: &str, id: u32, text: Option<&str>) {
-        let mut windows = self
-            .game
-            .windows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let handle = windows
-            .values()
-            .map(|element| element.handle)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        windows.insert(
-            (window.to_owned(), id),
-            WindowElement {
-                handle,
-                visible: true,
-                text: text.map(|text| text.as_bytes().to_vec()),
-            },
-        );
-    }
-
-    /// An element of one of the game's windows as it is now.
-    ///
-    /// # Panics
-    /// When the game has not built the element.
-    #[must_use]
-    pub fn element(&self, window: &str, id: u32) -> WindowElement {
-        self.game
-            .windows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&(window.to_owned(), id))
-            .unwrap_or_else(|| panic!("no element {id} in {window}"))
-            .clone()
-    }
-
-    /// The game writes a text element's text again.
-    ///
-    /// # Panics
-    /// When the game has not built the element.
-    pub fn game_writes(&self, window: &str, id: u32, text: &str) {
-        self.game
-            .windows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_mut(&(window.to_owned(), id))
-            .unwrap_or_else(|| panic!("no element {id} in {window}"))
-            .text = Some(text.as_bytes().to_vec());
     }
 
     /// The player sends `line` from the chat box: a plugin's command runs in

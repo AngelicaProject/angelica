@@ -155,12 +155,20 @@ pub struct Services {
     pub chat: Arc<Chat>,
     /// Names of sheet columns from the game map.
     pub sheets: Arc<crate::sheets::Sheets>,
-    /// State tables from the game map.
-    pub state: Arc<crate::state::StateTables>,
-    /// Events for the next frame and the plugins' subscriptions.
-    pub events: Arc<crate::events::Events>,
-    /// Rules for the game's own windows.
-    pub ui: Arc<crate::game_ui::GameUi>,
+    /// The game map's object model for the running build, for Lens.
+    pub lens: Arc<crate::lens::Lens>,
+    /// What plugins draw over the game world.
+    pub draw: Arc<crate::draw::Drawings>,
+    /// Messages between plugins.
+    pub messages: Arc<crate::messages::Messages>,
+    /// Text plugins put on the clipboard this frame.
+    pub clipboard: Arc<crate::clipboard::Clipboard>,
+    /// Plugins' notifications on the screen.
+    pub notifications: Arc<crate::notifications::Notifications>,
+    /// When plugins last played a sound.
+    pub sounds: Arc<crate::sound::Sounds>,
+    /// Plugins' WebSocket connections.
+    pub sockets: Arc<crate::sockets::Sockets>,
     pub game: Arc<dyn crate::game::Game>,
     /// True while the host starts plugins before the game's code runs.
     pub starting: AtomicBool,
@@ -228,6 +236,15 @@ pub struct Context {
     pub name: String,
     /// Permissions the manifest declares and the player granted.
     pub permissions: BTreeSet<Permission>,
+    /// The domains the manifest's `[lens] read` lists and the player
+    /// granted.
+    pub lens_read: BTreeSet<String>,
+    /// The domains it may act in through Lens.
+    pub lens_act: BTreeSet<String>,
+    /// The domains it may change through Lens.
+    pub lens_change: BTreeSet<String>,
+    /// The plugins it may send messages to.
+    pub message_to: BTreeSet<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -293,6 +310,10 @@ pub struct State {
     limits: StoreLimits,
     budget: Budget,
     exceeded: Option<Exceeded>,
+    /// The Lens queries this instance prepared.
+    queries: crate::lens::Queries,
+    /// True while the instance handles an action of the player.
+    player_action: bool,
 }
 
 /// A store with its instance's state.
@@ -313,6 +334,8 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
             limits,
             budget: Budget::new(Duration::ZERO, Duration::ZERO),
             exceeded: None,
+            queries: crate::lens::Queries::default(),
+            player_action: false,
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -355,6 +378,18 @@ pub fn call<T>(store: &mut Store<State>, work: impl FnOnce(&mut Store<State>) ->
     budget.wall_before = budget.wall();
     budget.started = Instant::now();
     budget.host = Duration::ZERO;
+    result
+}
+
+/// [`call`] for a call that handles an action of the player: a
+/// `ui-event` or a `command`.
+pub fn call_for_player<T>(
+    store: &mut Store<State>,
+    work: impl FnOnce(&mut Store<State>) -> T,
+) -> T {
+    store.data_mut().player_action = true;
+    let result = call(store, work);
+    store.data_mut().player_action = false;
     result
 }
 
@@ -767,229 +802,6 @@ impl api::file_replacements::Host for State {
     }
 }
 
-/// Table names are 1 to 64 ASCII letters, digits, hyphens, and underscores.
-fn valid_table_name(name: &str) -> bool {
-    (1..=64).contains(&name.len())
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-impl api::excel_text::Host for State {
-    fn activate(
-        &mut self,
-        name: String,
-        path: String,
-        priority: i32,
-    ) -> ApiResult<api::excel_text::TableInfo> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        if !valid_table_name(&name) {
-            return Err(Error::invalid(format!("{name:?} is not a valid table name")).into());
-        }
-        self.host(|state| {
-            let services = &state.context.services;
-            services
-                .game
-                .enable_excel_text()
-                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            let size = state.context.storage.size(&path)?;
-            if size > crate::excel_text::MAX_TABLE_SIZE {
-                return Err(Error::new(
-                    Kind::LimitExceeded,
-                    format!(
-                        "{path}: a table has at most {} bytes",
-                        crate::excel_text::MAX_TABLE_SIZE
-                    ),
-                ));
-            }
-            let bytes = state.context.storage.read_unbounded(&path)?;
-            let info = services
-                .excel
-                .activate(&state.context.id, &name, priority, bytes)
-                .map_err(|reason| Error::invalid(format!("{path}: {reason}")))?;
-            Ok(api::excel_text::TableInfo {
-                sheets: info.sheets,
-                cells: info.cells,
-            })
-        })
-        .map_err(|error: Error| error.into())
-    }
-
-    fn deactivate(&mut self, name: String) -> ApiResult<()> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        if self
-            .context
-            .services
-            .excel
-            .deactivate(&self.context.id, &name)
-        {
-            Ok(())
-        } else {
-            Err(Error::new(Kind::NotFound, format!("no active table {name}")).into())
-        }
-    }
-
-    fn status(&mut self, name: String) -> ApiResult<api::excel_text::TableStatus> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::ExcelText))?;
-        let status = self
-            .context
-            .services
-            .excel
-            .status(&self.context.id, &name)
-            .ok_or_else(|| Error::new(Kind::NotFound, format!("no active table {name}")))?;
-        Ok(api::excel_text::TableStatus {
-            rows_changed: status.rows_changed,
-            cells_replaced: status.cells_replaced,
-            guard_mismatches: status.guard_mismatches,
-            rows_refused: status.rows_refused,
-            sheets_mismatched: status
-                .sheets_mismatched
-                .into_iter()
-                .map(|(sheet, reason)| api::excel_text::SheetMismatch {
-                    sheet,
-                    reason: match reason {
-                        crate::excel_text::Mismatch::Layout => api::excel_text::Mismatch::Layout,
-                        crate::excel_text::Mismatch::Variant => api::excel_text::Mismatch::Variant,
-                        crate::excel_text::Mismatch::Language => {
-                            api::excel_text::Mismatch::Language
-                        }
-                    },
-                })
-                .collect(),
-        })
-    }
-}
-
-impl api::text_case::Host for State {
-    fn set_letters(&mut self, letters: Vec<api::text_case::Letter>) -> ApiResult<()> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::TextCase))?;
-        self.host(|state| {
-            let pairs: Vec<_> = letters.iter().map(|l| (l.lower, l.upper)).collect();
-            if !pairs.is_empty() {
-                state
-                    .context
-                    .services
-                    .game
-                    .enable_text_case()
-                    .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            }
-            state
-                .context
-                .services
-                .case
-                .set(&state.context.id, &pairs)
-                .map_err(Error::invalid)
-        })
-        .map_err(Into::into)
-    }
-}
-
-fn target_from_api(element: api::game_ui::Element) -> crate::game_ui::Target {
-    crate::game_ui::Target {
-        window: element.window,
-        element: element.name,
-    }
-}
-
-fn targets_to_api(targets: Vec<crate::game_ui::Target>) -> Vec<api::game_ui::Element> {
-    targets
-        .into_iter()
-        .map(|target| api::game_ui::Element {
-            window: target.window,
-            name: target.element,
-        })
-        .collect()
-}
-
-impl State {
-    /// Fails when the game build lacks what rules for its windows need.
-    fn screen_available(&self) -> crate::error::Result<()> {
-        self.context
-            .services
-            .game
-            .with_screen(&mut |_| {})
-            .map_err(|reason| Error::new(Kind::Unavailable, reason))
-    }
-}
-
-impl api::game_ui::Host for State {
-    fn elements(&mut self, window: String) -> ApiResult<Vec<api::game_ui::ElementInfo>> {
-        api(self.main_only())?;
-        self.host(|state| {
-            let services = &state.context.services;
-            services.ui.elements(&window, &services.data).map(|named| {
-                named
-                    .into_iter()
-                    .map(|named| api::game_ui::ElementInfo {
-                        name: named.name,
-                        text: named.kind == angelica_map::ElementKind::Text,
-                    })
-                    .collect()
-            })
-        })
-        .map_err(Into::into)
-    }
-
-    fn set_hidden(
-        &mut self,
-        elements: Vec<api::game_ui::Element>,
-    ) -> ApiResult<Vec<api::game_ui::Element>> {
-        api(self.main_only())?;
-        api(self.permitted(Permission::GameUiHide))?;
-        self.host(|state| {
-            if !elements.is_empty() {
-                state.screen_available()?;
-            }
-            let services = &state.context.services;
-            services
-                .ui
-                .set_hidden(
-                    &state.context.id,
-                    elements.into_iter().map(target_from_api).collect(),
-                    &services.data,
-                )
-                .map(targets_to_api)
-        })
-        .map_err(Into::into)
-    }
-
-    fn set_texts(
-        &mut self,
-        rules: Vec<api::game_ui::TextRule>,
-    ) -> ApiResult<Vec<api::game_ui::Element>> {
-        use crate::game_ui::Placement;
-        api(self.main_only())?;
-        api(self.permitted(Permission::GameUiText))?;
-        self.host(|state| {
-            if !rules.is_empty() {
-                state.screen_available()?;
-            }
-            let services = &state.context.services;
-            let rules = rules
-                .into_iter()
-                .map(|rule| crate::game_ui::TextRule {
-                    target: target_from_api(rule.element),
-                    text: rule.text,
-                    placement: match rule.placement {
-                        api::game_ui::Placement::After => Placement::After,
-                        api::game_ui::Placement::Before => Placement::Before,
-                        api::game_ui::Placement::Instead => Placement::Instead,
-                    },
-                })
-                .collect();
-            services
-                .ui
-                .set_texts(&state.context.id, rules, &services.data)
-                .map(targets_to_api)
-        })
-        .map_err(Into::into)
-    }
-}
-
 impl api::commands::Host for State {
     fn define(&mut self, commands: Vec<api::commands::Command>) -> ApiResult<()> {
         api(self.main_only())?;
@@ -1064,6 +876,15 @@ pub fn invocation_to_api(invocation: crate::commands::Invocation) -> api::comman
     }
 }
 
+fn http_method(method: api::http::Method) -> crate::http::Method {
+    match method {
+        api::http::Method::Post => crate::http::Method::Post,
+        api::http::Method::Put => crate::http::Method::Put,
+        api::http::Method::Patch => crate::http::Method::Patch,
+        api::http::Method::Delete => crate::http::Method::Delete,
+    }
+}
+
 fn http_request(request: api::http::Request) -> crate::http::Request {
     crate::http::Request {
         url: request.url,
@@ -1091,6 +912,44 @@ impl api::http::Host for State {
         let (client, slot) = api(self.http())?;
         let request = http_request(request);
         let (head, body) = self.host(|_| api(client.get(&request, move || slot.cancelled())))?;
+        Ok(api::http::Response {
+            head: http_head(head),
+            body,
+        })
+    }
+
+    fn send(
+        &mut self,
+        method: api::http::Method,
+        request: api::http::Request,
+        body: Vec<u8>,
+    ) -> ApiResult<api::http::Response> {
+        let (client, slot) = api(self.http())?;
+        api(self.permitted(Permission::HttpSend))?;
+        let method = http_method(method);
+        let request = http_request(request);
+        let (head, body) = self
+            .host(|_| api(client.send_data(method, &request, &body, move || slot.cancelled())))?;
+        Ok(api::http::Response {
+            head: http_head(head),
+            body,
+        })
+    }
+
+    fn upload(
+        &mut self,
+        method: api::http::Method,
+        request: api::http::Request,
+        path: String,
+    ) -> ApiResult<api::http::Response> {
+        let (client, slot) = api(self.http())?;
+        api(self.permitted(Permission::HttpSend))?;
+        let method = http_method(method);
+        let request = http_request(request);
+        let (head, body) = self.host(|state| {
+            let (file, size) = api(state.context.storage.open(&path))?;
+            api(client.upload(method, &request, file, size, move || slot.cancelled()))
+        })?;
         Ok(api::http::Response {
             head: http_head(head),
             body,
@@ -1151,109 +1010,672 @@ fn copy_body(
     }
 }
 
-impl api::state::Host for State {
-    fn tables(&mut self) -> Vec<api::state::Table> {
-        self.context
-            .services
-            .state
-            .tables()
-            .into_iter()
-            .map(|table| api::state::Table {
-                present: table.object.is_ok(),
-                fields: table
-                    .fields
-                    .into_iter()
-                    .map(|(name, field)| api::state::Field {
-                        name,
-                        doc: field.doc,
-                        present: field.steps.is_ok(),
-                    })
-                    .collect(),
-                name: table.name,
-                domain: table.domain,
-                doc: table.doc,
+impl api::lens::Host for State {
+    fn prepare(&mut self, query: String) -> ApiResult<api::lens::Prepared> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let (handle, prepared) = self
+            .host(|state| {
+                state
+                    .queries
+                    .prepare(&context.services.lens, &query, &permitted)
             })
-            .collect()
+            .map_err(api::types::Error::from)?;
+        Ok(api::lens::Prepared {
+            query: handle,
+            columns: prepared
+                .columns
+                .into_iter()
+                .map(|column| api::lens::Column {
+                    name: column.name,
+                    doc: column.doc,
+                })
+                .collect(),
+        })
     }
 
-    fn read(
-        &mut self,
-        table: String,
-        fields: Vec<String>,
-    ) -> ApiResult<Vec<Vec<Option<api::state::Value>>>> {
-        use crate::state::StateValue as S;
-        use api::state::Value;
+    fn run(&mut self, query: u32) -> ApiResult<Vec<api::lens::Row>> {
         api(self.main_only())?;
-        let services = self.context.services.clone();
-        let (plan, plans) = api(services.state.plan(&table, &fields))?;
-        let permission = crate::state::permission(&plan.domain).ok_or_else(|| {
-            api::types::Error::from(Error::new(
-                Kind::Unavailable,
-                format!("this host has no permission for domain {}", plan.domain),
-            ))
-        })?;
-        api(self.permitted(permission))?;
-        let rows = self.host(|_| services.game.read_state(&plan, &fields, &plans));
-        Ok(rows
-            .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(|value| {
-                        value.map(|value| match value {
-                            S::Boolean(value) => Value::Boolean(value),
-                            S::Signed(value) => Value::Signed(value),
-                            S::Unsigned(value) => Value::Unsigned(value),
-                            S::Float(value) => Value::Float(value),
-                            S::Text(bytes) => Value::Text(bytes),
-                        })
-                    })
-                    .collect()
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let rows = self
+            .host(|state| {
+                let prepared = state
+                    .queries
+                    .plan(&context.services.lens, query, &permitted)?;
+                context.services.game.query(&prepared)
             })
-            .collect())
+            .map_err(api::types::Error::from)?;
+        Ok(rows.into_iter().map(row_to_api).collect())
+    }
+
+    fn watch(&mut self, query: String) -> ApiResult<api::lens::Prepared> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let permitted = |domain: &str| context.lens_read.contains(domain);
+        let services = &context.services;
+        let (handle, prepared) = self
+            .host(|state| state.queries.watch(&services.lens, &query, &permitted))
+            .map_err(api::types::Error::from)?;
+        let columns = prepared
+            .columns
+            .iter()
+            .map(|column| api::lens::Column {
+                name: column.name.clone(),
+                doc: column.doc.clone(),
+            })
+            .collect();
+        let started = self.host(|_| {
+            services.lens.watch(
+                &context.id,
+                handle,
+                &query,
+                context.lens_read.clone(),
+                prepared,
+                &|point, entry, address| services.game.enable_watch(point, entry, address),
+            )
+        });
+        if let Err(error) = started {
+            self.queries.release(handle);
+            return Err(error.into());
+        }
+        Ok(api::lens::Prepared {
+            query: handle,
+            columns,
+        })
+    }
+
+    fn act(&mut self, action: String, params: Vec<(String, api::lens::Value)>) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        if services.starting.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::new(
+                Kind::Unavailable,
+                "the game is still starting: act from tick or a player's action",
+            )
+            .into());
+        }
+        let params: Vec<(String, crate::lens::Value)> = params
+            .into_iter()
+            .map(|(name, value)| (name, value_from_api(value)))
+            .collect();
+        self.host(|_| {
+            let (schema, _) = services.lens.schema();
+            let ready = crate::lens::act::prepare(&schema, &action, &params, &|domain| {
+                context.lens_act.contains(domain)
+            })?;
+            services.lens.acting.take(
+                &context.id,
+                &ready,
+                &GameCaller(services.game.as_ref()),
+                Instant::now(),
+            )
+        })
+        .map_err(Into::into)
+    }
+
+    fn set(&mut self, path: String, value: api::lens::Value) -> ApiResult<u32> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        let value = value_from_api(value);
+        self.host(|_| {
+            let (schema, _) = services.lens.schema();
+            let ready = crate::lens::set::prepare(
+                &schema,
+                &path,
+                &value,
+                &|domain| context.lens_read.contains(domain),
+                &|domain| context.lens_change.contains(domain),
+            )?;
+            services
+                .lens
+                .changes
+                .set(&context.id, &ready, &GameCaller(services.game.as_ref()))
+                .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
+        })
+        .map_err(Into::into)
+    }
+
+    fn restore(&mut self, path: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        self.host(|_| {
+            services
+                .lens
+                .changes
+                .restore(&context.id, &path, &GameCaller(services.game.as_ref()));
+        });
+        Ok(())
+    }
+
+    fn decide(
+        &mut self,
+        rule: String,
+        outcome: String,
+        value: Option<api::lens::Value>,
+    ) -> ApiResult<u32> {
+        api(self.main_only())?;
+        let (schema, _) = self.context.services.lens.schema();
+        if crate::lens::derived::event(&schema, &rule).is_some() {
+            let value = value.map(value_from_api);
+            return self.decide_derived(&rule, &outcome, value.as_ref());
+        }
+        if value.is_some() {
+            return Err(Error::invalid(format!("outcome {outcome} takes no value")).into());
+        }
+        let context = self.context.clone();
+        let services = &context.services;
+        let permitted: BTreeSet<String> = context
+            .lens_read
+            .union(&context.lens_change)
+            .cloned()
+            .collect();
+        let may_change = |domain: &str| context.lens_change.contains(domain);
+        services
+            .lens
+            .may_decide(&rule, &may_change)
+            .map_err(api::types::Error::from)?;
+        let (handle, prepared) = self
+            .host(|state| {
+                state
+                    .queries
+                    .rule(&services.lens, &rule, &|domain| permitted.contains(domain))
+            })
+            .map_err(api::types::Error::from)?;
+        let started = self.host(|_| {
+            services.lens.decide(
+                crate::lens::decide::Request {
+                    plugin: &context.id,
+                    handle,
+                    text: &rule,
+                    outcome: &outcome,
+                    permitted: permitted.clone(),
+                },
+                &may_change,
+                prepared,
+                &|point, entry, address| services.game.enable_decision(point, entry, address),
+            )
+        });
+        if let Err(error) = started {
+            self.queries.release(handle);
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+
+    fn decide_file(&mut self, event: String, path: String) -> ApiResult<api::lens::RuleFile> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        let services = &context.services;
+        let (schema, _) = services.lens.schema();
+        let Some(found) = schema.objects.events.get(&event) else {
+            return Err(
+                Error::new(Kind::NotFound, format!("the game map has no event {event}")).into(),
+            );
+        };
+        if found.rules.as_deref() != Some("text-table-v1") {
+            return Err(Error::invalid(format!("event {event} takes no rule files")).into());
+        }
+        if !context.lens_change.contains(&found.domain) {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                format!(
+                    "deciding at {event} changes domain {}, which the plugin may not change: list it in the manifest's [lens] change",
+                    found.domain
+                ),
+            )
+            .into());
+        }
+        let bytes = self.host(|state| {
+            services
+                .game
+                .enable_excel_text()
+                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            let size = state.context.storage.size(&path)?;
+            if size > crate::excel_text::MAX_TABLE_SIZE {
+                return Err(Error::new(
+                    Kind::LimitExceeded,
+                    format!(
+                        "{path}: a rule file has at most {} bytes",
+                        crate::excel_text::MAX_TABLE_SIZE
+                    ),
+                ));
+            }
+            state.context.storage.read_unbounded(&path)
+        })?;
+        let handle = self.queries.derived(&format!("{event} {path}"))?;
+        let info = services
+            .excel
+            .add_table(&context.id, handle, bytes)
+            .map_err(|reason| Error::invalid(format!("{path}: {reason}")));
+        match info {
+            Ok(info) => Ok(api::lens::RuleFile {
+                handle,
+                parts: info.sheets,
+                rules: info.cells,
+            }),
+            Err(error) => {
+                self.queries.release(handle);
+                Err(error.into())
+            }
+        }
+    }
+
+    fn decisions(&mut self, handle: u32) -> ApiResult<api::lens::DecisionStatus> {
+        api(self.main_only())?;
+        if self.queries.kind(handle) != Some(crate::lens::HeldKind::Derived) {
+            return Err(Error::new(
+                Kind::NotFound,
+                format!("{handle} is not a rule at a derived event"),
+            )
+            .into());
+        }
+        let status = self
+            .context
+            .services
+            .excel
+            .status(&self.context.id, handle)
+            .unwrap_or_default();
+        Ok(api::lens::DecisionStatus {
+            taken: status.cells_replaced,
+            stale: status.guard_mismatches,
+            refused: status.rows_refused,
+            mismatched: status
+                .sheets_mismatched
+                .into_iter()
+                .map(|(sheet, reason)| format!("{sheet}: {}", reason.reason()))
+                .collect(),
+        })
+    }
+
+    fn release(&mut self, query: u32) {
+        use crate::lens::HeldKind;
+        let services = &self.context.services;
+        match self.queries.release(query) {
+            Some(HeldKind::Watch) => services.lens.watches.unsubscribe(&self.context.id, query),
+            Some(HeldKind::Rule) => services.lens.decisions.remove(&self.context.id, query),
+            Some(HeldKind::Derived) => {
+                services.excel.remove(&self.context.id, query);
+                services.case.remove(&self.context.id, query);
+            }
+            Some(HeldKind::Query) | None => {}
+        }
     }
 }
 
-impl api::events::Host for State {
-    fn subscribe(&mut self, kinds: Vec<api::events::EventKind>) -> ApiResult<()> {
-        use crate::events::EventKind;
-        api(self.main_only())?;
-        let kinds: BTreeSet<EventKind> = kinds
-            .into_iter()
-            .map(|kind| match kind {
-                api::events::EventKind::ChatMessage => EventKind::ChatMessage,
-            })
-            .collect();
-        for kind in &kinds {
-            api(self.permitted(kind.permission()))?;
+impl State {
+    /// A rule at a derived decision point, handed to the adapter of its
+    /// derivation under a new handle.
+    fn decide_derived(
+        &mut self,
+        rule: &str,
+        outcome: &str,
+        value: Option<&crate::lens::Value>,
+    ) -> ApiResult<u32> {
+        let context = self.context.clone();
+        let (schema, _) = context.services.lens.schema();
+        let derived = crate::lens::derived::prepare(
+            &schema,
+            rule,
+            outcome,
+            value,
+            &|domain| context.lens_read.contains(domain),
+            &|domain| context.lens_change.contains(domain),
+        )?;
+        let handle = self.queries.derived(rule)?;
+        if let Err(error) = self.host(|_| add_derived(&context, handle, &derived)) {
+            self.queries.release(handle);
+            return Err(error.into());
         }
-        self.host(|state| {
-            let services = &state.context.services;
-            if kinds.contains(&EventKind::ChatMessage) {
-                services
-                    .game
-                    .enable_chat_messages()
-                    .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
-            }
-            services.events.subscribe(&state.context.id, kinds);
-            Ok::<_, Error>(())
+        Ok(handle)
+    }
+}
+
+/// Hands a checked rule at a derived decision point to the adapter of its
+/// derivation.
+fn add_derived(
+    context: &Context,
+    handle: u32,
+    rule: &crate::lens::derived::Rule,
+) -> crate::error::Result<()> {
+    use crate::lens::derived::{integer, text};
+    let services = &context.services;
+    let unavailable = |reason: String| Error::new(Kind::Unavailable, reason);
+    let fits = |from: &str| -> crate::error::Result<Option<u64>> {
+        integer(rule, from)
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    Error::invalid(format!(
+                        "{}: {from} {value} is never a value of it",
+                        rule.event
+                    ))
+                })
+            })
+            .transpose()
+    };
+    let narrow = |from: &str, most: u64| -> crate::error::Result<Option<u64>> {
+        match fits(from)? {
+            Some(value) if value > most => Err(Error::invalid(format!(
+                "{}: {from} {value} is never a value of it",
+                rule.event
+            ))),
+            other => Ok(other),
+        }
+    };
+    match rule.derivation.as_str() {
+        "sheet_cell" => {
+            services.game.enable_excel_text().map_err(unavailable)?;
+            let cell = crate::excel_text::CellRule {
+                sheet: text(rule, "sheet").map(|name| String::from_utf8_lossy(name).into_owned()),
+                language: narrow("language", u64::from(u8::MAX))?
+                    .and_then(|value| u8::try_from(value).ok()),
+                row: narrow("row", u64::from(u32::MAX))?
+                    .and_then(|value| u32::try_from(value).ok()),
+                subrow: narrow("subrow", u64::from(u16::MAX))?
+                    .and_then(|value| u16::try_from(value).ok()),
+                column: narrow("column", u64::from(u16::MAX))?
+                    .and_then(|value| u16::try_from(value).ok()),
+                original: text(rule, "text").map(<[u8]>::to_vec),
+                text: rule.text.clone(),
+            };
+            services.excel.add_rule(&context.id, handle, cell);
+            Ok(())
+        }
+        "case_letter" => {
+            use crate::text_case::{Direction, LOWER_ENTRY, UPPER_ENTRY};
+            let direction = match rule.at.as_str() {
+                UPPER_ENTRY => Direction::Upper,
+                LOWER_ENTRY => Direction::Lower,
+                other => {
+                    return Err(unavailable(format!(
+                        "the host converts letters only at {UPPER_ENTRY} and {LOWER_ENTRY}, not at {other}"
+                    )));
+                }
+            };
+            let single = |bytes: &[u8]| {
+                let text = std::str::from_utf8(bytes).ok()?;
+                let mut chars = text.chars();
+                let first = chars.next()?;
+                chars.next().is_none().then_some(first)
+            };
+            let (Some(letter), Some(becomes)) =
+                (text(rule, "letter").and_then(single), single(&rule.text))
+            else {
+                return Err(Error::invalid(format!(
+                    "a rule at {} gives one letter for one letter",
+                    rule.event
+                )));
+            };
+            services.game.enable_text_case().map_err(unavailable)?;
+            services
+                .case
+                .add(&context.id, handle, direction, letter, becomes)
+                .map_err(Error::invalid)
+        }
+        other => Err(unavailable(format!(
+            "this host does not derive {other} events"
+        ))),
+    }
+}
+
+impl api::messages::Host for State {
+    fn send(
+        &mut self,
+        to: String,
+        name: String,
+        payload: Vec<u8>,
+        in_reply_to: Option<u32>,
+    ) -> ApiResult<u32> {
+        api(self.main_only())?;
+        if in_reply_to.is_none() {
+            api(self.permitted(Permission::MessagesSend))?;
+        }
+        let context = self.context.clone();
+        self.host(|_| {
+            context.services.messages.send(
+                &context.id,
+                crate::messages::Outgoing {
+                    to: &to,
+                    name: &name,
+                    payload,
+                    in_reply_to,
+                },
+                &|receiver| context.message_to.contains(receiver),
+            )
         })
         .map_err(Into::into)
     }
 }
 
-/// An event as the guest's `game-event` export takes it.
-#[must_use]
-pub fn event_to_api(event: crate::events::GameEvent) -> api::events::GameEvent {
-    match event {
-        crate::events::GameEvent::ChatMessage(message) => {
-            api::events::GameEvent::ChatMessage(api::events::ChatMessage {
-                kind: message.info & 0x7F,
-                info: message.info,
-                sender: message.sender,
-                message: message.message,
-                timestamp: message.timestamp,
-            })
+impl api::websocket::Host for State {
+    fn open(
+        &mut self,
+        url: String,
+        protocols: Vec<String>,
+        authorization: Option<String>,
+    ) -> ApiResult<u32> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::HttpWebsocket))?;
+        let client = api(self
+            .context
+            .http
+            .clone()
+            .ok_or_else(|| Error::new(Kind::PermissionDenied, "the plugin lists no hosts")))?;
+        api(client.check_socket(&url))?;
+        let context = self.context.clone();
+        let dial = context.services.sockets.dial();
+        let target = url.clone();
+        self.host(|_| {
+            context.services.sockets.open(
+                &context.id,
+                &url,
+                &protocols,
+                authorization.as_deref(),
+                Box::new(move || dial(&client, &target)),
+            )
+        })
+        .map_err(Into::into)
+    }
+
+    fn send(&mut self, socket: u32, data: api::websocket::Data) -> ApiResult<()> {
+        api(self.main_only())?;
+        let message = match data {
+            api::websocket::Data::Text(text) => crate::sockets::Message::Text(text),
+            api::websocket::Data::Binary(bytes) => crate::sockets::Message::Binary(bytes),
+        };
+        let context = self.context.clone();
+        self.host(|_| context.services.sockets.send(&context.id, socket, message))
+            .map_err(Into::into)
+    }
+
+    fn close(&mut self, socket: u32) -> ApiResult<()> {
+        api(self.main_only())?;
+        let context = self.context.clone();
+        self.host(|_| context.services.sockets.close(&context.id, socket))
+            .map_err(Into::into)
+    }
+}
+
+impl api::sound::Host for State {
+    fn play(&mut self, path: String, volume: f32) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::SoundPlay))?;
+        let context = self.context.clone();
+        self.host(|_| {
+            if context.storage.size(&path)? > crate::sound::MOST_BYTES {
+                return Err(Error::new(
+                    Kind::InvalidArgument,
+                    format!(
+                        "a sound file has at most {} bytes",
+                        crate::sound::MOST_BYTES
+                    ),
+                ));
+            }
+            let wav = crate::sound::prepare(&context.storage.read(&path)?, volume)?;
+            context.services.sounds.allow(&context.id, Instant::now())?;
+            if context.services.game.play_sound(wav) {
+                Ok(())
+            } else {
+                Err(Error::new(
+                    Kind::Unavailable,
+                    "Windows did not play the sound",
+                ))
+            }
+        })
+        .map_err(Into::into)
+    }
+}
+
+impl api::notifications::Host for State {
+    fn show(&mut self, text: String, attention: bool) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::Notifications))?;
+        let context = self.context.clone();
+        self.host(|_| {
+            context
+                .services
+                .notifications
+                .show(&context.id, &text, attention, Instant::now())
+        })
+        .map_err(Into::into)
+    }
+}
+
+impl api::clipboard::Host for State {
+    fn copy(&mut self, text: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::ClipboardWrite))?;
+        if !self.player_action {
+            return Err(Error::new(
+                Kind::WrongContext,
+                "text is copied only for the player's action: in ui-event or command",
+            )
+            .into());
         }
+        let context = self.context.clone();
+        self.host(|_| context.services.clipboard.copy(&text))
+            .map_err(Into::into)
+    }
+}
+
+impl api::draw::Host for State {
+    fn set(&mut self, shapes: Vec<api::draw::Shape>) -> ApiResult<()> {
+        use crate::draw::Shape;
+        use api::draw::Shape as Api;
+        api(self.main_only())?;
+        api(self.permitted(Permission::DrawWorld))?;
+        let point = |point: api::draw::Point| [point.x, point.y, point.z];
+        let shapes = shapes
+            .into_iter()
+            .map(|shape| match shape {
+                Api::Line(line) => Shape::Line {
+                    from: point(line.start),
+                    to: point(line.end),
+                    color: line.color,
+                    thickness: line.thickness,
+                },
+                Api::Circle(circle) => Shape::Circle {
+                    center: point(circle.center),
+                    radius: circle.radius,
+                    color: circle.color,
+                    thickness: circle.thickness,
+                    filled: circle.filled,
+                },
+                Api::Text(label) => Shape::Text {
+                    at: point(label.at),
+                    text: label.text,
+                    color: label.color,
+                },
+            })
+            .collect();
+        let context = self.context.clone();
+        self.host(|_| context.services.draw.set(&context.id, shapes))
+            .map_err(Into::into)
+    }
+}
+
+impl api::events::Host for State {}
+
+/// A Lens row as the API carries it.
+#[must_use]
+pub fn row_to_api(row: crate::lens::Row) -> api::lens::Row {
+    use crate::lens::Value as V;
+    use api::lens::Value;
+    api::lens::Row {
+        indexes: row.indexes,
+        values: row
+            .values
+            .into_iter()
+            .map(|value| {
+                value.map(|value| match value {
+                    V::Boolean(value) => Value::Boolean(value),
+                    V::Signed(value) => Value::Signed(value),
+                    V::Unsigned(value) => Value::Unsigned(value),
+                    V::Float(value) => Value::Float(value),
+                    V::Text(bytes) => Value::Text(bytes),
+                    V::Row { sheet, row } => Value::Sheet(api::lens::SheetRow { sheet, row }),
+                    V::Named(name) => Value::Named(name),
+                    V::Flags { names, bits } => Value::Flags(api::lens::FlagSet { names, bits }),
+                })
+            })
+            .collect(),
+    }
+}
+
+/// A value a plugin gave, as Lens takes it.
+fn value_from_api(value: api::lens::Value) -> crate::lens::Value {
+    use crate::lens::Value as V;
+    use api::lens::Value;
+    match value {
+        Value::Boolean(value) => V::Boolean(value),
+        Value::Signed(value) => V::Signed(value),
+        Value::Unsigned(value) => V::Unsigned(value),
+        Value::Float(value) => V::Float(value),
+        Value::Text(bytes) => V::Text(bytes),
+        Value::Sheet(row) => V::Row {
+            sheet: row.sheet,
+            row: row.row,
+        },
+        Value::Named(name) => V::Named(name),
+        Value::Flags(flags) => V::Flags {
+            names: flags.names,
+            bits: flags.bits,
+        },
+    }
+}
+
+/// The game as Lens actions call it and changes write it.
+pub struct GameCaller<'a>(pub &'a dyn crate::game::Game);
+
+impl crate::lens::set::Writer for GameCaller<'_> {
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        self.0.memory()
+    }
+
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        self.0.write(address, bytes)
+    }
+
+    fn call_setter(&self, function: u64, object: u64, value: &crate::lens::set::Setting) -> bool {
+        self.0.call_setter(function, object, value)
+    }
+}
+
+impl crate::lens::act::Caller for GameCaller<'_> {
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        self.0.memory()
+    }
+
+    fn call(
+        &self,
+        address: u64,
+        args: &[u64],
+    ) -> std::result::Result<crate::lens::act::Returned, String> {
+        self.0.call(address, args)
     }
 }
 

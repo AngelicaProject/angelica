@@ -329,13 +329,13 @@ mod tests {
 
         let file = runtime::author::sign(
             &key,
-            manifest("1.2.0", "\"chat.print\" = true\n\"chat.read\" = true\n").as_bytes(),
+            manifest("1.2.0", "\"chat.print\" = true\n\"sound.play\" = true\n").as_bytes(),
             b"\0asm",
         )
         .unwrap();
         let more = review(&entry("v1.2.0", &key), &file, Some((&before, &published))).unwrap();
         assert!(!more.automatic);
-        assert_eq!(more.permissions_added, vec!["chat.read"]);
+        assert_eq!(more.permissions_added, vec!["sound.play"]);
 
         let new = review(&entry("v1.2.0", &key), &file, None).unwrap();
         assert_eq!(new.reasons, vec!["a new plugin"]);

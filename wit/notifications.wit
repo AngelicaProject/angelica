@@ -1,0 +1,16 @@
+package angelica:plugin@1.0.0;
+
+/// Notifications: one line at the top right of the screen under the
+/// plugin's name, for a few seconds, drawn by the host like Angelica's own
+/// notes. Main instance only.
+interface notifications {
+    use types.{error};
+
+    /// Shows `text`, one line of 1 to 200 characters. With `attention`, the
+    /// game's button on the taskbar also flashes while the game is in the
+    /// background, until the player returns to it. Needs `notifications`.
+    /// A plugin notifies at most once in 2 seconds, `limit-exceeded`
+    /// otherwise; at most 3 notifications of all plugins are on the screen,
+    /// the oldest leaving first.
+    show: func(text: string, attention: bool) -> result<_, error>;
+}

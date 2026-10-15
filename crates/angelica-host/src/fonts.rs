@@ -117,16 +117,18 @@ mod tests {
             "Insert Esc".into(),
         ];
         let permissions = [
-            Permission::ExcelText,
-            Permission::TextCase,
             Permission::FilesReplace,
             Permission::ChatCommands,
             Permission::ChatPrint,
             Permission::HttpGet,
-            Permission::StateSelf,
-            Permission::ChatRead,
-            Permission::GameUiHide,
-            Permission::GameUiText,
+            Permission::HttpSend,
+            Permission::DrawWorld,
+            Permission::MessagesSend,
+            Permission::ClipboardWrite,
+            Permission::Notifications,
+            Permission::SoundPlay,
+            Permission::StorageCache,
+            Permission::HttpWebsocket,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

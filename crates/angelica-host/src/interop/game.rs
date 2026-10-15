@@ -9,7 +9,7 @@ pub struct WindowsGame {
     pub case: Arc<TextCase>,
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub commands: Arc<crate::commands::Commands>,
-    pub events: Arc<crate::events::Events>,
+    pub lens: Arc<crate::lens::Lens>,
     pub version: String,
 }
 
@@ -34,9 +34,9 @@ fn hooked(what: &str, result: Result<(), String>) -> Result<(), String> {
 
 /// The game's memory, read through Windows so that an unreadable address
 /// fails instead of faulting.
-struct ProcessMemory;
+pub(super) struct ProcessMemory;
 
-impl crate::state::Memory for ProcessMemory {
+impl crate::lens::Memory for ProcessMemory {
     fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
         let Ok(address) = usize::try_from(address) else {
             return false;
@@ -88,26 +88,60 @@ impl Game for WindowsGame {
         super::chat::print(&self.catalog, self.base, message)
     }
 
-    fn enable_chat_messages(&self) -> Result<(), String> {
+    fn query(
+        &self,
+        prepared: &crate::lens::Prepared,
+    ) -> crate::error::Result<Vec<crate::lens::Row>> {
+        crate::lens::run(&ProcessMemory, prepared)
+    }
+
+    fn memory(&self) -> &dyn crate::lens::Memory {
+        &ProcessMemory
+    }
+
+    fn call(&self, address: u64, args: &[u64]) -> Result<crate::lens::act::Returned, String> {
+        super::act::call(address, args)
+    }
+
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        let control = self.catalog.present.get("camera.control.instance")?;
+        let matrix = self.catalog.present.get("camera.control.view_projection")?;
+        let (angelica_map::Value::Address(rva), angelica_map::Value::Offset(offset)) =
+            (control.value, matrix.value)
+        else {
+            return None;
+        };
+        let address = self.base + rva as usize + offset as usize;
+        let bytes = super::memory::read(address, 64).ok()?;
+        let mut values = [0f32; 16];
+        for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *value = f32::from_le_bytes(*chunk);
+        }
+        values
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(values)
+    }
+
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        super::sound::play(wav)
+    }
+
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        usize::try_from(address).is_ok_and(|address| super::memory::write(address, bytes).is_ok())
+    }
+
+    fn enable_decision(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
         hooked(
-            "chat messages",
-            super::chat::install_messages(&self.catalog, self.base, self.events.clone()),
+            "decision point",
+            super::decide::install(&self.catalog, &self.lens, point, entry, address),
         )
     }
 
-    fn with_screen(
-        &self,
-        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
-    ) -> Result<(), String> {
-        super::game_ui::with_screen(&self.catalog, self.base, work)
-    }
-
-    fn read_state(
-        &self,
-        table: &crate::state::TablePlan,
-        _names: &[String],
-        fields: &[crate::state::FieldPlan],
-    ) -> Vec<Vec<Option<crate::state::StateValue>>> {
-        crate::state::read(&ProcessMemory, table, fields)
+    fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
+        hooked(
+            "watched event",
+            super::watch::install(&self.catalog, &self.lens, point, entry, address),
+        )
     }
 }

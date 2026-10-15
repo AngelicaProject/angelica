@@ -22,7 +22,7 @@ fn fixture(root: &Path, entries: &str, code: &[u8]) -> (std::path::PathBuf, std:
     let game = root.join("игра").join("game");
     std::fs::create_dir_all(map.join("entries")).unwrap();
     std::fs::create_dir_all(&game).unwrap();
-    std::fs::write(map.join("map.toml"), "format = 1\n").unwrap();
+    std::fs::write(map.join("map.toml"), "format = 2\n").unwrap();
     std::fs::write(map.join("entries/game.toml"), entries).unwrap();
     let executable = PeBuilder::new().section(".text", CODE, code).build_file();
     std::fs::write(game.join("ffxiv_dx11.exe"), executable).unwrap();

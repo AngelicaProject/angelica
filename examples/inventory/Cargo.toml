@@ -1,0 +1,18 @@
+[package]
+name = "angelica-inventory"
+description = "An example plugin that reads the player's bags through Lens."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+angelica-sdk.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

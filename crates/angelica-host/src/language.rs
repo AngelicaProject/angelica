@@ -86,6 +86,10 @@ strings! {
     adding: "Adding…", "Добавляю…";
     source_catalog: "from the Angelica catalog", "из каталога Angelica";
     source_development: "in development, built on this computer", "в разработке, собран на этом компьютере";
+    lens_ungranted: "Wants to read {domain}, which the game map does not offer: not allowed", "Хочет читать {domain}, чего карта игры не даёт: не разрешено";
+    lens_act_ungranted: "Wants to act in {domain}, which the game map does not offer: not allowed", "Хочет действовать в {domain}, чего карта игры не даёт: не разрешено";
+    lens_change_ungranted: "Wants to change {domain}, which the game map does not offer: not allowed", "Хочет менять {domain}, чего карта игры не даёт: не разрешено";
+    acts_warning: "Acting for you in the game breaks its terms of service: the game's company can suspend your account for it.", "Действия за вас в игре нарушают её пользовательское соглашение: компания игры может за это заблокировать аккаунт.";
     source_author: "from its author", "от автора";
     source_authors: "from {authors}", "от {authors}";
     version: "version {version}", "версия {version}";
@@ -126,6 +130,12 @@ strings! {
     section_updates: "Updates", "Обновления";
     section_developers: "For developers", "Для разработчиков";
     setting_key: "Menu key", "Клавиша меню";
+    setting_stop_key: "Stop plugins acting", "Остановить действия плагинов";
+    stop_key_note: "Stops every plugin from acting in the game at once, and lets them act again. The same keys as the menu's; Esc keeps {key}.", "Сразу запрещает всем плагинам действовать в игре и снова разрешает. Те же клавиши, что для меню; Esc оставит {key}.";
+    note_acting: "{name} is acting in the game", "{name} действует в игре";
+    note_stopped: "Plugins are stopped from acting", "Плагинам запрещено действовать";
+    hint_stop: "{key} stops it", "{key} — остановить";
+    hint_resume: "{key} lets them act again", "{key} — снова разрешить";
     key_press: "Press a key…", "Нажмите клавишу…";
     key_note: "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock, or F1 to F12. Esc keeps {key}.", "Insert, Delete, Home, End, Page Up, Page Down, Pause, Scroll Lock или F1–F12. Esc оставит {key}.";
     setting_language: "Language", "Язык";
@@ -241,25 +251,62 @@ impl Language {
         self.plural(n, [s.running_one, s.running_few, s.running_many])
     }
 
+    /// The most a plugin's cache holds, as the approval shows it.
+    #[must_use]
+    pub fn up_to_gib(self, gib: u32) -> String {
+        match self {
+            Self::English => format!("up to {gib} GB"),
+            Self::Russian => format!("до {gib} ГБ"),
+        }
+    }
+
     /// What the player is told a permission allows.
     #[must_use]
     pub fn permission(self, permission: Permission) -> &'static str {
         match self {
             Self::English => permission.description(),
             Self::Russian => match permission {
-                Permission::ExcelText => "Заменяет тексты, которые игра берёт из своих таблиц",
-                Permission::TextCase => "Меняет, как игра пишет заглавные буквы",
-                Permission::FilesReplace => "Заменяет файлы игры: шрифты и текстуры",
+                Permission::FilesReplace => {
+                    "Заменяет файлы игры: шрифты, текстуры, материалы и модели"
+                }
                 Permission::ChatCommands => "Добавляет свои команды чата",
                 Permission::ChatPrint => "Пишет свои сообщения в ваш чат",
                 Permission::HttpGet => "Скачивает с этих сайтов",
-                Permission::StateSelf => {
-                    "Видит вашего персонажа: имя, класс, уровень, HP и MP, место и зону"
+                Permission::HttpSend => "Отправляет данные на эти сайты",
+                Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
+                Permission::MessagesSend => "Отправляет сообщения этим плагинам",
+                Permission::ClipboardWrite => "Копирует текст в буфер обмена, когда вы просите",
+                Permission::Notifications => {
+                    "Показывает уведомления и мигает игрой на панели задач"
                 }
-                Permission::ChatRead => "Читает сообщения в вашем чате, в том числе других игроков",
-                Permission::GameUiHide => "Скрывает части интерфейса игры",
-                Permission::GameUiText => "Вписывает свой текст в окна игры",
+                Permission::SoundPlay => "Проигрывает звуки",
+                Permission::StorageCache => "Хранит кеш файлов на вашем диске",
+                Permission::HttpWebsocket => "Держит постоянные соединения с этими сайтами",
             },
+        }
+    }
+
+    /// What the player is told a plugin may do: a host permission's own
+    /// words, or a domain's from the game map.
+    #[must_use]
+    pub fn asked(self, asked: &crate::manifest::Asked) -> String {
+        match asked {
+            crate::manifest::Asked::Permission(permission) => self.permission(*permission).into(),
+            crate::manifest::Asked::Read(domain) => match self {
+                Self::English => domain.read.en.clone(),
+                Self::Russian => domain.read.ru.clone(),
+            },
+            crate::manifest::Asked::Act(domain) | crate::manifest::Asked::Change(domain) => {
+                let words = match asked {
+                    crate::manifest::Asked::Change(_) => domain.change.as_ref(),
+                    _ => domain.act.as_ref(),
+                }
+                .unwrap_or(&domain.read);
+                match self {
+                    Self::English => words.en.clone(),
+                    Self::Russian => words.ru.clone(),
+                }
+            }
         }
     }
 
@@ -269,6 +316,7 @@ impl Language {
         match self {
             Self::English => class.title(),
             Self::Russian => match class {
+                Class::Acts => "Действует в игре за вас",
                 Class::Network => "Выходит в интернет",
                 Class::OtherPlayers => "Видит других игроков",
                 Class::WhatYouSee => "Меняет то, что вы видите",
@@ -307,6 +355,9 @@ pub struct Settings {
     /// The key the player chose for the menu; `Insert` without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<MenuKey>,
+    /// The key the player chose to stop plugins acting; `End` without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_key: Option<MenuKey>,
     /// The update channel; the one the build was released on without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<angelica_update::Channel>,
@@ -380,16 +431,18 @@ mod tests {
     #[test]
     fn every_permission_and_class_has_both_languages() {
         let permissions = [
-            Permission::ExcelText,
-            Permission::TextCase,
             Permission::FilesReplace,
             Permission::ChatCommands,
             Permission::ChatPrint,
             Permission::HttpGet,
-            Permission::StateSelf,
-            Permission::ChatRead,
-            Permission::GameUiHide,
-            Permission::GameUiText,
+            Permission::HttpSend,
+            Permission::DrawWorld,
+            Permission::MessagesSend,
+            Permission::ClipboardWrite,
+            Permission::Notifications,
+            Permission::SoundPlay,
+            Permission::StorageCache,
+            Permission::HttpWebsocket,
         ];
         for permission in permissions {
             assert_ne!(

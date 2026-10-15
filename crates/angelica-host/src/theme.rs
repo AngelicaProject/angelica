@@ -510,6 +510,7 @@ pub enum Icon {
     Expand,
     More,
     /// The classes of permissions.
+    Acts,
     Network,
     OtherPlayers,
     WhatYouSee,
@@ -518,6 +519,21 @@ pub enum Icon {
     General,
     Updates,
     Developers,
+}
+
+/// A pointer, as of a hand on the game's controls: the icon of acting.
+fn pointer(painter: &egui::Painter, at: impl Fn(f32, f32) -> Pos2, stroke: Stroke) {
+    let corners = [
+        (-5.0, -9.0),
+        (-5.0, 7.0),
+        (-1.0, 3.0),
+        (2.0, 9.0),
+        (4.5, 8.0),
+        (1.5, 2.0),
+        (7.0, 2.0),
+    ];
+    let points = corners.iter().map(|(x, y)| at(*x, *y)).collect();
+    painter.add(egui::Shape::closed_line(points, stroke));
 }
 
 /// Draws `icon` in `rect` with thin lines of `color`.
@@ -560,6 +576,7 @@ pub fn icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
                 stroke,
             ));
         }
+        Icon::Acts => pointer(painter, at, stroke),
         Icon::Network => {
             painter.circle_stroke(c, 9.0 * r, stroke);
             painter.line_segment([at(-9.0, 0.0), at(9.0, 0.0)], stroke);

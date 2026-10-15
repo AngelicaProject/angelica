@@ -42,30 +42,87 @@ pub trait Game: Send + Sync {
     /// does not exist yet.
     fn print(&self, message: &[u8]) -> Result<(), String>;
 
-    /// Makes the game's chat log report the messages added to it to
-    /// [`crate::events::Events`]. Called on every subscription; installs its
-    /// hook once.
+    /// The rows of a prepared Lens query, read from the game's memory. On
+    /// the main thread only.
     ///
     /// # Errors
-    /// Names the map entries the game build lacks.
-    fn enable_chat_messages(&self) -> Result<(), String>;
+    /// The limits of [`crate::lens::run`].
+    fn query(
+        &self,
+        prepared: &crate::lens::Prepared,
+    ) -> crate::error::Result<Vec<crate::lens::Row>>;
 
-    /// Runs `work` with the game's own windows, when the game has them
-    /// yet. On the main thread only.
+    /// The game's memory, read so that an unreadable address fails instead
+    /// of faulting; for `angelica look`.
+    fn memory(&self) -> &dyn crate::lens::Memory;
+
+    /// Makes the game call [`crate::lens::Watches::fire`] with `point` at
+    /// the code of the map entry `entry`, at `address`. Called once per
+    /// watched event; the hook stays until the process exits.
     ///
     /// # Errors
-    /// Names the map entries the game build lacks.
-    fn with_screen(
-        &self,
-        work: &mut dyn FnMut(&mut dyn crate::game_ui::Screen),
-    ) -> Result<(), String>;
+    /// Why the point cannot be hooked in this build.
+    fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String>;
 
-    /// The rows of a state table with the values of `fields` (named
-    /// `names`), read from the game's memory. On the main thread only.
-    fn read_state(
-        &self,
-        table: &crate::state::TablePlan,
-        names: &[String],
-        fields: &[crate::state::FieldPlan],
-    ) -> Vec<Vec<Option<crate::state::StateValue>>>;
+    /// Calls the game's function at `address` with `args`, each as its 64
+    /// bits, on the game's main thread, for a Lens action.
+    ///
+    /// # Errors
+    /// Why the call cannot be made.
+    fn call(&self, address: u64, args: &[u64]) -> Result<crate::lens::act::Returned, String> {
+        let _ = (address, args);
+        Err("this game cannot be acted in".into())
+    }
+
+    /// Calls the game's function at `function` that sets a value of the
+    /// object at `object` to `value`, on the main thread, for a Lens
+    /// change; text is handed over NUL-terminated. Whether it was called.
+    fn call_setter(&self, function: u64, object: u64, value: &crate::lens::set::Setting) -> bool {
+        use crate::lens::set::Setting;
+        match value {
+            Setting::Number(bits) => self.call(function, &[object, *bits]).is_ok(),
+            Setting::Text(text) => {
+                let mut terminated = text.clone();
+                terminated.push(0);
+                // The buffer outlives the call, which copies the text.
+                let pointer = terminated.as_ptr() as u64;
+                self.call(function, &[object, pointer]).is_ok()
+            }
+        }
+    }
+
+    /// Makes the game ask [`crate::lens::decide::Decisions::decide`] with
+    /// `point` at the start of the function of the map entry `entry`, at
+    /// `address`, and return at once when a rule holds. Called once per
+    /// decision point; the hook stays until the process exits.
+    ///
+    /// # Errors
+    /// Why the function cannot be hooked in this build.
+    fn enable_decision(&self, point: usize, entry: &str, address: u64) -> Result<(), String> {
+        let _ = (point, address);
+        Err(format!(
+            "map entry {entry} cannot be decided at in this game"
+        ))
+    }
+
+    /// The game camera's view-projection matrix this frame, of row vectors
+    /// as the game keeps it; `None` while the game has none or the build
+    /// lacks its map entries.
+    fn view_projection(&self) -> Option<[f32; 16]> {
+        None
+    }
+
+    /// Plays `wav`, a sound [`crate::sound::prepare`] checked, stopping the
+    /// one playing; whether Windows took it.
+    fn play_sound(&self, wav: Vec<u8>) -> bool {
+        let _ = wav;
+        false
+    }
+
+    /// Writes `bytes` at `address` of the game's data, for a Lens change;
+    /// false when the range is not writable data.
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        let _ = (address, bytes);
+        false
+    }
 }

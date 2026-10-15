@@ -1,10 +1,10 @@
 # Game structures the host changes
 
-The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v1.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can.
+The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v2.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can.
 
 ## Excel rows, version 3
 
-The game builds a row with its row parser and immediately hands it to the sheet's row resolver through `StoreRow`; no other code sees the row before that call. The adapter detours both implementations and, for rows of sheets a [text table](./text-table-v1.md) lists, replaces the row buffer before calling the original.
+The game builds a row with its row parser and immediately hands it to the sheet's row resolver through `StoreRow`; no other code sees the row before that call. The adapter detours both implementations and derives the map's `sheet_cell` events there: for rows that plugins' rules at `sheet_text` name, single rules or [text tables](./text-table-v1.md), it replaces the row buffer before calling the original.
 
 ### Entries
 
@@ -54,7 +54,7 @@ A texture is the exception to the game's disk reader: the texture load takes a t
 
 ## Letter case
 
-`Utf8String::ToUpper` and `ToLower` convert a string in place. The adapter detours both, calls the original, then applies the plugins' letters to the same string with the same rule.
+`Utf8String::ToUpper` and `ToLower` convert a string in place. The adapter detours both and derives the map's `case_letter` events there: it calls the original, then gives each letter beyond ASCII that the same rule converts the letter that plugins' rules at the event of that function (`letter_upper`, `letter_lower`) give it.
 
 | Entry | Kind | Use |
 | --- | --- | --- |
@@ -67,22 +67,24 @@ The exclusion list is an array of 16-byte records ended by one whose length is z
 
 ## Game windows
 
-The game's windows belong to a window manager the UI stage points to. A window is found by its name and one of its own elements by its id, both with the game's functions, which only read. An element's visibility is one bit of its flags; the game's function sets it and marks the element for drawing again. A text element keeps its text as a game string and copies the text it is given. The adapter installs no hook: once per frame, on the game's main thread, the host looks the elements of the active rules up and calls or reads through these entries.
+The game's windows are objects of the map's object model (`types/ui.toml`), read and changed through [Lens](../architecture/lens.md); no adapter of their own remains. The window manager the UI stage points to lists the loaded windows; a window's widget lists its elements, each a pointer to an element whose id the window's layout file gives. An element's visibility is one bit of its flags; the game's function sets it and marks the element for drawing again. A text element keeps its text as a game string and copies the text it is given.
 
 | Entry | Kind | Use |
 | --- | --- | --- |
 | `ui.stage` | `ptr` global | the stage, zero before it exists |
 | `ui.stage.unit_manager` (`ptr`) | field of the stage | the window manager |
-| `ui.unit_manager.get_unit_by_name` | function `(ptr manager, ptr name, i32 which) -> ptr` | the first window with a name, or zero |
-| `ui.unit_base.get_node_by_id` | function `(ptr window, u32 id) -> ptr` | an element of a built window, or zero |
-| `ui.unit_base.get_text_node_by_id` | function `(ptr window, u32 id) -> ptr` | the same, only when the element shows text |
+| `ui.unit_manager.units` (`struct`), `.unit_count` (`i16`) | fields of the manager | the loaded windows, by pointer |
+| `ui.unit_base.name` (`struct`) | field of a window | its name |
+| `ui.unit_base.widget` (`ptr`) | field of a window | its widget |
+| `ui.widget_info.nodes` (`ptr`), `.node_count` (`u32`) | fields of the widget | the window's elements, by pointer |
+| `ui.res_node.id` (`u32`), `.type` (`u16`) | fields of an element | its id in the layout file, and 3 for a text element |
 | `ui.res_node.flags` (`u32`) | field of an element | bit 20 is set while the element is visible |
 | `ui.res_node.set_visible` | function `(ptr element, u8 visible)` | shows or hides an element |
 | `ui.text_node.text` (`struct`) | field of a text element | its text, a game string |
 | `ui.text_node.set_text` | function `(ptr element, ptr text)` | sets a text element's text from NUL-terminated bytes |
-| `text.utf8_string.string_ptr` (`ptr`), `.used_size` (`i64`) | fields of the string | the text's bytes and their count with the terminator |
+| `text.utf8_string.string_ptr` (`ptr`) | field of the string | the text's bytes |
 
-An element is used only in the frame the game's functions returned it. A text longer than 8192 bytes is read as empty. Element ids come from the game map's [window schemas](./game-map-v1.md#window-schemas), never from a plugin. All entries of this section are needed; without one, rules for the game's windows are unavailable.
+The fields of the manager, the window, the widget, and the element are located in the code of the game's own lookups: `ui.unit_manager.get_unit_by_name`, which finds a window by its name, and `ui.unit_base.get_node_by_id` and `ui.unit_base.get_text_node_by_id`, which walk a window's elements for an id, the second only for elements of type 3. Element ids come from the game map's [window schemas](./game-map-v2.md#window-schemas), never from a plugin. Plugins change an element only through `set_visible` and `set_text`, on the game's main thread between frames, and the host applies those values again once per frame while a plugin holds them.
 
 ## Chat
 
@@ -114,6 +116,6 @@ The message is the game's encoded text: `[<plugin name>]` in color row 500, a sp
 | `warning` | 506 |
 | `bad` | 508 |
 
-The same `PrintMessage` is detoured to report the messages the log receives, once a plugin subscribes to chat messages: while any plugin is subscribed, the detour copies the log information, the sender, and the message — each a `Utf8String` read within its used size, at most 8192 bytes — into the host's event queue, then calls the original. A message the host prints for a plugin is marked on the printing thread and not reported. Without a subscriber the detour only passes messages on; it stays installed until the process exits, and a failure inside it lets the message through unchanged.
+The adapter does not detour `PrintMessage`: plugins see the messages the log receives through a Lens watch of the map's `chat_message_added` event at the same function. While the adapter prints, watches on its thread record nothing, so a plugin never hears its own message.
 
 Without one of the command entries, `commands.define` returns `unavailable`; without one of the printing entries, `chat.print` and the host's answers to commands are unavailable. The detour stays installed until the process exits.

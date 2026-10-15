@@ -39,21 +39,26 @@ pub mod bindings {
 }
 
 pub mod chat;
+pub mod clipboard;
 pub mod commands;
+pub mod draw;
 pub mod events;
 pub mod excel;
-pub mod game_ui;
 pub mod http;
 pub mod jobs;
-pub mod state;
+pub mod lens;
+pub mod messages;
+pub mod notifications;
+pub mod sound;
 pub mod storage;
 pub mod ui;
+pub mod websocket;
 
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        chat, commands, events, excel, excel_text, file_replacements, game_files, game_ui, http,
-        jobs, runtime, state, storage, text_case, types,
+        chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http, jobs,
+        lens, messages, notifications, runtime, sound, storage, types, websocket,
     };
 }
 
@@ -101,7 +106,8 @@ pub trait Plugin: Sized + 'static {
         Ok(())
     }
 
-    /// An event the plugin subscribed to (see [`events`]).
+    /// A firing of one of the plugin's watches, a message from another
+    /// plugin, or what happened on its connections (see [`events`]).
     fn game_event(&mut self, _event: events::GameEvent) {}
 
     /// Called before the plugin is disabled.

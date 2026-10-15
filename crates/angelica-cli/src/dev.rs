@@ -213,8 +213,17 @@ pub fn map_files(map: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
             );
         }
     }
-    for folder in ["sheets", "state", "windows"] {
+    for folder in ["sheets", "types", "enums", "windows"] {
         add_folder(&map.join(folder), folder, &mut files)?;
+    }
+    for file in angelica_map::ROOT_FILES {
+        let path = map.join(file);
+        if path.exists() {
+            files.insert(
+                file.to_owned(),
+                std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
+            );
+        }
     }
     Ok(files)
 }

@@ -1,0 +1,64 @@
+package angelica:plugin@1.0.0;
+
+/// Live connections to the hosts the plugin's manifest lists, for services
+/// that push data as it happens.
+///
+/// The same rules as `http` hold: a `wss://` URL on port 443 of a listed
+/// host, a public address or the proxy Windows names, and the system's TLS
+/// with the host's certificate checked. The host runs each connection on a
+/// thread of its own and answers the server's pings; what happens on it
+/// arrives in `on-game-event` in a later frame as `socket-opened`,
+/// `socket-message`, and `socket-closed`, needing no subscription. When
+/// the plugin falls behind, a connection waits instead of dropping
+/// messages. Requires `http.websocket`, with `http.get` and its hosts.
+/// Called from the main instance only; the connections close when the
+/// plugin stops.
+interface websocket {
+    use types.{error};
+
+    /// A message of a connection.
+    variant data {
+        text(string),
+        binary(list<u8>),
+    }
+
+    /// A connection's handshake succeeded.
+    record socket-opened {
+        socket: u32,
+        /// The subprotocol the server chose among those offered.
+        protocol: option<string>,
+    }
+
+    /// A message the server sent.
+    record socket-message {
+        socket: u32,
+        data: data,
+    }
+
+    /// A connection ended. Its id is not used again.
+    record socket-closed {
+        socket: u32,
+        /// The server's close code; 1006 when the connection failed or
+        /// ended without one, with what went wrong as the reason.
+        code: u16,
+        reason: string,
+    }
+
+    /// Opens a connection to `url` offering `protocols`, at most 8, and
+    /// with `authorization` as its header when given, at most 1024 bytes;
+    /// returns its id at once. The outcome arrives as `socket-opened` or
+    /// `socket-closed`. A plugin keeps at most 4 connections open,
+    /// `limit-exceeded` otherwise; an invalid URL or an unlisted host is
+    /// `invalid-argument` or `permission-denied` here, a failure to connect
+    /// is `socket-closed`.
+    open: func(url: string, protocols: list<string>, authorization: option<string>) -> result<u32, error>;
+
+    /// Queues `data`, at most 16 MiB; at most 64 messages wait to be sent
+    /// on a connection, `limit-exceeded` otherwise. A connection that is
+    /// not open is `not-found`.
+    send: func(socket: u32, data: data) -> result<_, error>;
+
+    /// Closes the connection once what was queued is sent; `socket-closed`
+    /// follows.
+    close: func(socket: u32) -> result<_, error>;
+}

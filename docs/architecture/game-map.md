@@ -1,6 +1,6 @@
 # Game map resolution and verification
 
-The game map describes where functions, globals, vtables, fields, and patch sites are in each game build. The format is [`../formats/game-map-v1.md`](../formats/game-map-v1.md); the data lives in the [`angelica-gamemap`](https://github.com/AngelicaProject/angelica-gamemap) repository.
+The game map describes where functions, globals, vtables, fields, and patch sites are in each game build, and, in its object model, what the game's objects are. The format is [`../formats/game-map-v2.md`](../formats/game-map-v2.md); the data lives in the [`angelica-gamemap`](https://github.com/AngelicaProject/angelica-gamemap) repository.
 
 ## One resolver, two places
 
@@ -23,7 +23,7 @@ Otherwise the entry is absent, with a reason. There is no partial or best-effort
 
 ## Sheet schemas
 
-Plugins read the game's Excel sheets by column name. The map's sheet schemas give those names, each for the exact layouts of the sheet it was checked against ([format](../formats/game-map-v1.md#sheet-schemas)). The layout comes from the sheet's header in the installed game's archives, not from the executable, so it is checked against the game's data:
+Plugins read the game's Excel sheets by column name. The map's sheet schemas give those names, each for the exact layouts of the sheet it was checked against ([format](../formats/game-map-v2.md#sheet-schemas)). The layout comes from the sheet's header in the installed game's archives, not from the executable, so it is checked against the game's data:
 
 - the host computes the fingerprint of each sheet's layout when a plugin first reads the sheet by name, and uses the schema's positions only for a layout the schema lists;
 - `angelica map verify` checks every schema against the game data next to the executable, reports each sheet as known or unknown with the reason, and fails when a sheet is unknown;
@@ -31,30 +31,24 @@ Plugins read the game's Excel sheets by column name. The map's sheet schemas giv
 
 A column is named when a plugin needs it, from the values it holds, never speculatively.
 
-## State tables
+## Object model
 
-Plugins read game state through the map's state tables ([format](../formats/game-map-v1.md#state-tables)). Each field is a path of verified entries from a global to a value; the host resolves the paths for the running build once, at start, and walks them when a plugin reads. A field whose entries are absent is unavailable; the rest of the table works.
+Plugins read the game's objects through [Lens](./lens.md), by paths through the map's object model ([format](../formats/game-map-v2.md#object-model)): types whose fields are verified `field` entries, roots at verified `global` entries, events at verified code, actions that call verified functions, enums, and the domains everything belongs to. The host resolves the model for the running build at start and with every map reload: a root or field whose entry is absent is unavailable, and the rest of the model works.
 
-Reading is confined:
-
-- only on the game's main thread, between frames, from a plugin's main instance — the game does not change its objects meanwhile;
-- every read of game memory goes through the operating system's checked copy, so an unreadable address makes the value absent instead of faulting the game;
-- nothing is written, and an address comes only from a resolved map entry or a pointer the game stored on a path the map describes, never from a plugin.
-
-A field is visible to plugins because a table names it. A table's fields are a contract: they keep their names and meaning across builds, and a field that would expose data that could compromise the account is never added.
+A field is visible to plugins because a type names it. Types and fields are a contract: they keep their names and meaning across builds, a field that would expose data that could compromise the account is never added or is marked forbidden, and a field's domain is one whose approved wording covers it. `angelica map verify` reports every root and field present or absent for the build; `angelica look` reads them in the running game with a development build, to confirm that a new type is what its `doc` says.
 
 ## Window schemas
 
-Plugins change the game's own windows by window and element name. The map's window schemas give the element names, each for the exact layout files of the window it was checked against ([format](../formats/game-map-v1.md#window-schemas)). The layout file is in the installed game's archives, so it is checked against the game's data, as sheets are:
+Plugins reach elements of the game's own windows by window and element name, through a field of the object model whose meaning is `element`. The map's window schemas give the element names, each for the exact layout files of the window it was checked against ([format](../formats/game-map-v2.md#window-schemas)). The layout file is in the installed game's archives, so it is checked against the game's data, as sheets are:
 
-- the host computes the fingerprint of a window's layout file when a plugin first names the window, and uses the schema's ids only for a file the schema lists;
+- the host computes the fingerprint of every schema's layout file when it resolves the object model for the build, at start and with every map reload, and uses the schema's ids only for a file the schema lists;
 - `angelica map verify` checks every schema against the game data next to the executable, reports each window as known or unknown with the file's fingerprint, and fails when a window is unknown.
 
 An element is named when a plugin needs it, after it was seen in the game to be what its `doc` says, never speculatively. A plugin cannot change an element the map does not name.
 
 ## Reloading the map
 
-While the game runs, the host looks at the signed map every second. When its file list changes, the host authenticates it, resolves it against the running executable again, and replaces the sheet schemas, state tables, and window schemas plugins use. Entries that installed hooks use keep their addresses until the next game start.
+While the game runs, the host looks at the signed map every second. When its file list changes, the host authenticates it, resolves it against the running executable again, and replaces the sheet schemas and the object model plugins use, with the window schemas' names. Entries that installed hooks use keep their addresses until the next game start.
 
 ## Build records
 

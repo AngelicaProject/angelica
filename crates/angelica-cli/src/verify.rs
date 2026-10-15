@@ -64,13 +64,22 @@ impl VerifyError {
 /// knows it.
 type SheetReport = BTreeMap<String, (Option<String>, Result<(), String>)>;
 
+/// Each root and field of the object model, by name: present in the
+/// build, or why not.
+type ObjectReport = BTreeMap<String, Result<(), String>>;
+
 /// What `verify` found: the build record, each schema's sheet, each
 /// schema's window (the layout file the game has, and whether the schema
-/// knows it), and the record's file when it was written.
+/// knows it), the object model's roots and fields, and the record's file
+/// when it was written.
 struct Verified {
     record: BuildRecord,
     sheets: SheetReport,
     windows: SheetReport,
+    roots: ObjectReport,
+    events: ObjectReport,
+    actions: ObjectReport,
+    fields: ObjectReport,
     written: Option<PathBuf>,
 }
 
@@ -163,6 +172,23 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         }
     }
 
+    let schema = runtime::lens::Schema::new(&map, 0, |name| match record.resolution.get(name) {
+        Some(Ok(value)) => Ok(*value),
+        Some(Err(absence)) => Err(absence.to_string()),
+        None => Err("not in the map".into()),
+    });
+    let (roots, events) = (present(&schema.roots), present(&schema.events));
+    let actions = actions_report(&map, &schema);
+    let mut fields = ObjectReport::new();
+    for object in map.objects().types.values() {
+        for field in object.fields.values() {
+            fields.insert(
+                format!("{}.{}", object.name, field.name),
+                schema.offset(&field.at).map(drop),
+            );
+        }
+    }
+
     let written = if args.write {
         let path = args
             .map
@@ -177,8 +203,56 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         record,
         sheets,
         windows,
+        roots,
+        events,
+        actions,
+        fields,
         written,
     })
+}
+
+/// Which places a build has, and why it lacks the others.
+fn present<T>(places: &std::collections::BTreeMap<String, Result<T, String>>) -> ObjectReport {
+    places
+        .iter()
+        .map(|(name, at)| (name.clone(), at.as_ref().map(drop).map_err(Clone::clone)))
+        .collect()
+}
+
+/// Whether each action of the map is usable in the build `schema`
+/// describes.
+fn actions_report(map: &angelica_map::Map, schema: &runtime::lens::Schema) -> ObjectReport {
+    // An action is usable when its function and globals are present and
+    // every path it reads, in its conditions and its object arguments,
+    // fits the model.
+    map.objects()
+        .actions
+        .values()
+        .map(|action| {
+            let paths = action
+                .when
+                .iter()
+                .map(|condition| condition.path.as_str())
+                .chain(action.args.iter().filter_map(|arg| match &arg.source {
+                    angelica_map::ActSource::Object(path) => Some(path.as_str()),
+                    _ => None,
+                }));
+            let mut available = schema
+                .actions
+                .get(&action.name)
+                .cloned()
+                .unwrap_or_else(|| Err("not in the schema".into()))
+                .map(drop);
+            for path in paths {
+                if available.is_ok()
+                    && let Err(error) = runtime::lens::prepare_objects(schema, path)
+                {
+                    available = Err(format!("{path}: {}", error.message));
+                }
+            }
+            (action.name.clone(), available)
+        })
+        .collect()
 }
 
 fn schemas_json(report: &SheetReport) -> JsonObject<String, Json> {
@@ -201,6 +275,17 @@ fn report_json(verified: &Verified) -> Json {
     let record = &verified.record;
     let sheets = schemas_json(&verified.sheets);
     let windows = schemas_json(&verified.windows);
+    let objects = |report: &ObjectReport| {
+        report
+            .iter()
+            .map(|(name, available)| {
+                (
+                    name.clone(),
+                    json!({"available": available.is_ok(), "reason": available.as_ref().err()}),
+                )
+            })
+            .collect::<JsonObject<_, _>>()
+    };
     let present = record
         .resolution
         .present()
@@ -220,6 +305,7 @@ fn report_json(verified: &Verified) -> Json {
         "constant_offsets": record.resolution.constant_offsets(),
         "sheets": sheets,
         "windows": windows,
+        "objects": {"roots": objects(&verified.roots), "fields": objects(&verified.fields), "events": objects(&verified.events), "actions": objects(&verified.actions)},
         "written": verified
             .written
             .as_ref()
@@ -255,6 +341,34 @@ fn report_text(verified: &Verified) -> String {
         for (name, (_, known)) in report {
             if let Err(reason) = known {
                 let _ = writeln!(text, "  unknown {name}: {reason}");
+            }
+        }
+    }
+    let reports = [
+        ("root", &verified.roots),
+        ("field", &verified.fields),
+        ("event", &verified.events),
+        ("action", &verified.actions),
+    ];
+    if reports.iter().any(|(_, report)| !report.is_empty()) {
+        let absent = |report: &ObjectReport| report.values().filter(|found| found.is_err()).count();
+        let _ = writeln!(
+            text,
+            "objects: {} roots, {} fields, {} events, and {} actions, {} absent",
+            verified.roots.len(),
+            verified.fields.len(),
+            verified.events.len(),
+            verified.actions.len(),
+            reports
+                .iter()
+                .map(|(_, report)| absent(report))
+                .sum::<usize>()
+        );
+        for (kind, report) in reports {
+            for (name, available) in report {
+                if let Err(reason) = available {
+                    let _ = writeln!(text, "  absent {kind} {name}: {reason}");
+                }
             }
         }
     }

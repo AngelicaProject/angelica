@@ -33,6 +33,8 @@ pub struct Directories {
     pub grants: PathBuf,
     pub state: PathBuf,
     pub storage: PathBuf,
+    /// The plugins' caches, each in a folder named by its id.
+    pub cache: PathBuf,
 }
 
 /// A plugin's state as the menu shows it.
@@ -76,6 +78,8 @@ pub struct Plugin {
     windows: Mutex<Vec<Window>>,
     /// When the menu was last told that the plugin held up a frame.
     slow: Mutex<Option<std::time::Instant>>,
+    /// The game map's domains, for what reading them is called.
+    lens: Arc<crate::lens::Lens>,
 }
 
 /// What a frame brings every plugin.
@@ -83,7 +87,6 @@ pub struct Plugin {
 struct Frame<'a> {
     elapsed: f64,
     commands: &'a [(String, Outcome)],
-    game_events: &'a (Vec<crate::events::GameEvent>, u32),
     events: &'a [(String, Event)],
 }
 
@@ -112,7 +115,23 @@ impl Plugin {
     /// approval, only what it does not cover.
     #[must_use]
     pub fn requests(&self) -> Vec<(crate::manifest::Class, Vec<crate::manifest::Request>)> {
-        crate::manifest::requests(&self.manifest, self.granted.as_ref())
+        crate::manifest::requests(&self.manifest, self.granted.as_ref(), &|name| {
+            self.lens.domain(name)
+        })
+    }
+
+    /// Everything the plugin asks for that can be granted: its host
+    /// permissions and the domains of the game map it reads.
+    #[must_use]
+    pub fn asked(&self) -> Vec<crate::manifest::Asked> {
+        crate::manifest::asked(&self.manifest, &|name| self.lens.domain(name))
+    }
+
+    /// The domains the plugin lists that are not granted now: the game map
+    /// does not describe them, or this host does not present their class.
+    #[must_use]
+    pub fn ungranted(&self) -> Vec<String> {
+        crate::manifest::ungranted(&self.manifest, &|name| self.lens.domain(name))
     }
 
     /// Whether the player approved an earlier version of the plugin.
@@ -150,7 +169,8 @@ pub enum Action {
     Enable(String),
     Disable(String),
     OpenFolder(String),
-    /// Removes the plugin, and with `data` also its storage folder.
+    /// Removes the plugin and its cache, and with `data` also its storage
+    /// folder.
     Remove {
         id: String,
         data: bool,
@@ -177,6 +197,8 @@ pub struct Host {
     self_update: std::sync::OnceLock<Arc<crate::self_update::SelfUpdate>>,
     /// The catalog's index; none in tests and without a release key.
     catalog: std::sync::OnceLock<crate::catalog_index::Source>,
+    /// Lens queries from `angelica look`; only in a development build.
+    look: Mutex<Option<crate::look::Look>>,
 }
 
 impl Host {
@@ -206,6 +228,7 @@ impl Host {
             plugin_installer: std::sync::OnceLock::new(),
             self_update: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
+            look: Mutex::new(None),
         }
     }
 
@@ -248,6 +271,12 @@ impl Host {
     #[must_use]
     pub fn self_update(&self) -> Option<&Arc<crate::self_update::SelfUpdate>> {
         self.self_update.get()
+    }
+
+    /// Answers `angelica look` from `folder`; a development build only.
+    pub fn serve_look(&self, folder: std::path::PathBuf) {
+        *self.look.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(crate::look::Look::new(folder));
     }
 
     pub fn set_catalog(&self, source: crate::catalog_index::Source) {
@@ -408,7 +437,10 @@ impl Host {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
             Err(e) => return Err(format!("{id}: settings: {e}")),
         };
-        let approved = grants.as_ref().is_some_and(|g| g.cover(&manifest));
+        let lens = self.services.lens.clone();
+        let approved = grants
+            .as_ref()
+            .is_some_and(|g| g.cover(&manifest, &|name| lens.domain(name)));
         let storage = Arc::new(
             Storage::new(&self.directories.storage.join(&id), DEFAULT_QUOTA)
                 .map_err(|e| format!("{id}: {e}"))?,
@@ -436,6 +468,7 @@ impl Host {
             jobs: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
             slow: Mutex::new(None),
+            lens,
         });
         Ok(plugin)
     }
@@ -463,6 +496,10 @@ impl Host {
             plugin.set_status(Status::AwaitingApproval);
             return;
         };
+        if let Err(error) = self.open_cache(plugin, &grants) {
+            plugin.set_status(Status::Faulted(error));
+            return;
+        }
         let jobs = Arc::new(Jobs::new(
             self.sandbox.clone(),
             plugin.pre.clone(),
@@ -477,6 +514,14 @@ impl Host {
                 .intersection(&grants.permissions)
                 .copied()
                 .collect(),
+            lens_read: held(plugin.manifest.lens_read(), &grants.lens_read),
+            lens_act: held(plugin.manifest.lens_act(), &grants.lens_act),
+            lens_change: held(plugin.manifest.lens_change(), &grants.lens_change),
+            message_to: if grants.permissions.contains(&Permission::MessagesSend) {
+                held(plugin.manifest.message_to(), &grants.message_to)
+            } else {
+                std::collections::BTreeSet::new()
+            },
             memory_bytes: plugin
                 .manifest
                 .plugin
@@ -517,6 +562,7 @@ impl Host {
         });
         match result {
             Ok(bindings) => {
+                self.services.messages.started(&id);
                 *plugin.jobs.lock().unwrap_or_else(PoisonError::into_inner) = Some(jobs);
                 *plugin
                     .running
@@ -582,8 +628,17 @@ impl Host {
         self.services.files.remove_plugin(id);
         self.services.commands.remove_plugin(id);
         self.services.chat.remove_plugin(id);
-        self.services.events.remove_plugin(id);
-        self.services.ui.remove_plugin(id);
+        self.services.lens.watches.remove_plugin(id);
+        self.services.lens.acting.remove_plugin(id);
+        self.services.lens.decisions.remove_plugin(id);
+        self.services.draw.remove_plugin(id);
+        self.services.notifications.remove_plugin(id);
+        self.services.sockets.remove_plugin(id);
+        self.services.messages.remove_plugin(id);
+        self.services
+            .lens
+            .changes
+            .remove_plugin(id, &crate::sandbox::GameCaller(self.services.game.as_ref()));
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -659,6 +714,15 @@ impl Host {
             Some(Err(reason)) => self.diagnostic(format!("game map not reloaded: {reason}")),
             None => {}
         }
+        let looked = self
+            .look
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .and_then(|look| look.poll(&self.services));
+        if let Some(note) = looked {
+            self.diagnostic(note);
+        }
         for package in changed {
             if let Err(reason) =
                 package.and_then(|(manifest, component)| self.replace(manifest, &component))
@@ -691,24 +755,18 @@ impl Host {
             .filter_map(|line| self.services.commands.resolve(line))
             .collect();
         commands.extend(self.services.commands.take_overflowed());
-        let game_events = self.services.events.take();
         let frame = Frame {
             elapsed,
             commands: &commands,
-            game_events: &game_events,
             events: &events,
         };
         for plugin in self.plugins() {
             self.frame_plugin(&plugin, &frame);
         }
-        let ui = &self.services.ui;
-        if !ui.idle() {
-            // Without the game's windows the rules wait; `set-hidden` and
-            // `set-texts` already told the plugin why.
-            let _ = self
-                .services
-                .game
-                .with_screen(&mut |screen| ui.apply(screen, &self.services.data));
+        // Values the game sets again itself, such as what its windows show.
+        let held = &self.services.lens.changes;
+        if held.holding() {
+            held.frame(&crate::sandbox::GameCaller(self.services.game.as_ref()));
         }
     }
 
@@ -737,6 +795,156 @@ impl Host {
         }
     }
 
+    /// The messages other plugins sent the plugin since the last frame,
+    /// delivered to `on-game-event`; the reason to fault it, if any.
+    fn deliver_messages(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use sandbox::bindings::angelica::plugin::events::{GameEvent, PluginMessage};
+        let (messages, dropped) = self.services.messages.take(id);
+        let mut calls = Vec::new();
+        if dropped > 0 {
+            calls.push(GameEvent::MessagesDropped(dropped));
+        }
+        calls.extend(messages.into_iter().map(|message| {
+            GameEvent::Message(PluginMessage {
+                id: message.id,
+                sender: message.from,
+                name: message.name,
+                payload: message.payload,
+                in_reply_to: message.in_reply_to,
+            })
+        }));
+        for event in &calls {
+            if let Err(trap) = sandbox::call(store, |store| guest.call_on_game_event(store, event))
+            {
+                return Some(format!(
+                    "on-game-event trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        None
+    }
+
+    /// What happened on the plugin's connections since the last frame,
+    /// delivered to `on-game-event`; the reason to fault it, if any.
+    fn deliver_sockets(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use crate::sockets::{Happened, Message};
+        use sandbox::bindings::angelica::plugin::{
+            events::GameEvent,
+            websocket::{Data, SocketClosed, SocketMessage, SocketOpened},
+        };
+        for happened in self.services.sockets.take(id) {
+            let event = match happened {
+                Happened::Opened { socket, protocol } => {
+                    GameEvent::SocketOpened(SocketOpened { socket, protocol })
+                }
+                Happened::Received { socket, message } => GameEvent::SocketMessage(SocketMessage {
+                    socket,
+                    data: match message {
+                        Message::Text(text) => Data::Text(text),
+                        Message::Binary(bytes) => Data::Binary(bytes),
+                    },
+                }),
+                Happened::Closed {
+                    socket,
+                    code,
+                    reason,
+                } => GameEvent::SocketClosed(SocketClosed {
+                    socket,
+                    code,
+                    reason,
+                }),
+            };
+            if let Err(trap) = sandbox::call(store, |store| guest.call_on_game_event(store, &event))
+            {
+                return Some(format!(
+                    "on-game-event trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
+        None
+    }
+
+    /// What the plugin's watches received since the last frame, delivered to
+    /// `on-game-event`; the reason to fault it, if any.
+    fn deliver_watched(
+        &self,
+        id: &str,
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        use sandbox::bindings::angelica::plugin::events::{GameEvent, WatchDropped, Watched};
+        for delivery in self.services.lens.watches.take(id) {
+            let mut calls = Vec::new();
+            if delivery.dropped > 0 {
+                calls.push(GameEvent::WatchDropped(WatchDropped {
+                    query: delivery.handle,
+                    count: delivery.dropped,
+                }));
+            }
+            calls.extend(delivery.firings.into_iter().map(|rows| {
+                GameEvent::Watched(Watched {
+                    query: delivery.handle,
+                    rows: rows.into_iter().map(sandbox::row_to_api).collect(),
+                })
+            }));
+            for event in &calls {
+                if let Err(trap) =
+                    sandbox::call(store, |store| guest.call_on_game_event(store, event))
+                {
+                    return Some(format!(
+                        "on-game-event trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// The plugin's commands of a frame; the reason to fault it, if any.
+    fn run_commands(
+        &self,
+        id: &str,
+        commands: &[(String, Outcome)],
+        guest: &sandbox::bindings::exports::angelica::plugin::guest::Guest,
+        store: &mut wasmtime::Store<State>,
+    ) -> Option<String> {
+        for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
+            let invocation = match outcome {
+                Outcome::Reply(spans) => {
+                    self.reply(store.data().context(), spans);
+                    continue;
+                }
+                Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
+            };
+            match sandbox::call_for_player(store, |store| guest.call_command(store, &invocation)) {
+                Ok(Ok(())) => {}
+                Ok(Err(reason)) => {
+                    self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
+                }
+                Err(trap) => {
+                    return Some(format!(
+                        "command trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// The plugin's calls of a frame; the reason to fault it, if any.
     fn frame_calls(
         &self,
@@ -748,7 +956,6 @@ impl Host {
         let Frame {
             elapsed,
             commands,
-            game_events,
             events,
         } = *frame;
         let guest = instance.bindings.angelica_plugin_guest();
@@ -763,56 +970,22 @@ impl Host {
                 ));
             }
         }
-        for (_, outcome) in commands.iter().filter(|(target, _)| target == id) {
-            let invocation = match outcome {
-                Outcome::Reply(spans) => {
-                    self.reply(store.data().context(), spans);
-                    continue;
-                }
-                Outcome::Run(invocation) => sandbox::invocation_to_api(invocation.clone()),
-            };
-            match sandbox::call(store, |store| guest.call_command(store, &invocation)) {
-                Ok(Ok(())) => {}
-                Ok(Err(reason)) => {
-                    self.reply(store.data().context(), &[Span::new(reason, Tone::Bad)]);
-                }
-                Err(trap) => {
-                    return Some(format!(
-                        "command trapped: {}",
-                        sandbox::describe_trap(store, &trap)
-                    ));
-                }
-            }
+        if let Some(fault) = self.run_commands(id, commands, guest, store) {
+            return Some(fault);
         }
-        let subscribed = self.services.events.subscribed(id);
-        if !subscribed.is_empty() {
-            let (delivered, dropped) = game_events;
-            let mut calls: Vec<_> = Vec::new();
-            if *dropped > 0 {
-                calls.push(
-                    sandbox::bindings::angelica::plugin::events::GameEvent::Dropped(*dropped),
-                );
-            }
-            calls.extend(
-                delivered
-                    .iter()
-                    .filter(|event| subscribed.contains(&event.kind()))
-                    .cloned()
-                    .map(sandbox::event_to_api),
-            );
-            for event in &calls {
-                if let Err(trap) =
-                    sandbox::call(store, |store| guest.call_on_game_event(store, event))
-                {
-                    return Some(format!(
-                        "on-game-event trapped: {}",
-                        sandbox::describe_trap(store, &trap)
-                    ));
-                }
-            }
+        if let Some(fault) = self.deliver_watched(id, guest, store) {
+            return Some(fault);
+        }
+        if let Some(fault) = self.deliver_messages(id, guest, store) {
+            return Some(fault);
+        }
+        if let Some(fault) = self.deliver_sockets(id, guest, store) {
+            return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {
-            if let Err(trap) = sandbox::call(store, |store| guest.call_ui_event(store, event)) {
+            if let Err(trap) =
+                sandbox::call_for_player(store, |store| guest.call_ui_event(store, event))
+            {
                 return Some(format!(
                     "ui-event trapped: {}",
                     sandbox::describe_trap(store, &trap)
@@ -901,7 +1074,8 @@ impl Host {
         let plugin = &plugin;
         match action {
             Action::Approve(_) => {
-                let grants = Grants::for_manifest(&plugin.manifest);
+                let grants =
+                    Grants::for_manifest(&plugin.manifest, &|name| self.services.lens.domain(name));
                 write_json(&self.directories.grants, id, &grants)?;
                 *plugin.grants.lock().unwrap_or_else(PoisonError::into_inner) = Some(grants);
                 self.set_enabled(plugin, true)?;
@@ -929,7 +1103,7 @@ impl Host {
 
     /// Stops `plugin`, takes it out of the list, and deletes its approval
     /// first, so a removal cut short never leaves it approved; then its
-    /// settings, its package, and with `data` its storage folder.
+    /// settings, its package, its cache, and with `data` its storage folder.
     fn remove(&self, plugin: &Plugin, data: bool) -> Result<(), String> {
         let id = plugin.manifest.id();
         if plugin.status() == Status::Running {
@@ -950,7 +1124,12 @@ impl Host {
                 failed.push(format!("{}: {error}", file.display()));
             }
         }
-        let mut folders = vec![self.directories.plugins.join(id)];
+        // The cache goes with the plugin: it holds nothing the plugin
+        // cannot fetch again.
+        let mut folders = vec![
+            self.directories.plugins.join(id),
+            self.directories.cache.join(id),
+        ];
         if data {
             folders.push(plugin.storage.root().to_path_buf());
         }
@@ -966,6 +1145,23 @@ impl Host {
         } else {
             Err(format!("removed from the list, but {}", failed.join("; ")))
         }
+    }
+
+    /// Opens the plugin's cache when it holds `storage.cache`, with the
+    /// size its manifest names; closes it otherwise.
+    fn open_cache(&self, plugin: &Plugin, grants: &Grants) -> Result<(), String> {
+        let cache = match plugin.manifest.cache_gib() {
+            Some(gib) if grants.permissions.contains(&Permission::StorageCache) => Some(Arc::new(
+                Storage::new(
+                    &self.directories.cache.join(plugin.manifest.id()),
+                    u64::from(gib) << 30,
+                )
+                .map_err(|error| format!("cache: {error}"))?,
+            )),
+            _ => None,
+        };
+        plugin.storage.set_cache(cache);
+        Ok(())
     }
 
     fn set_enabled(&self, plugin: &Plugin, enabled: bool) -> Result<(), String> {
@@ -986,4 +1182,15 @@ fn write_json(directory: &Path, id: &str, value: &impl Serialize) -> Result<(), 
         .and_then(|()| std::fs::write(&temporary, bytes))
         .and_then(|()| std::fs::rename(&temporary, &path))
         .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// What a manifest lists that the player granted.
+fn held(
+    listed: std::collections::BTreeSet<String>,
+    granted: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    listed
+        .into_iter()
+        .filter(|name| granted.contains(name))
+        .collect()
 }

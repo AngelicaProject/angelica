@@ -1,6 +1,6 @@
 # Writing a plugin
 
-A plugin is a Rust crate compiled to a WebAssembly component. It runs in the host's sandbox, reaches the game only through the [plugin API](../formats/plugin-api-v1.md), and keeps working across game patches because it names game data and state by the game map's names, never by address. This guide is the work loop from an idea to a published plugin; the [interface cards](./interfaces.md) map tasks to interfaces.
+A plugin is a Rust crate compiled to a WebAssembly component. It runs in the host's sandbox, reaches the game only through the [plugin API](../formats/plugin-api-v1.md), and keeps working across game patches because it names game data and objects by the game map's names, never by address. This guide is the work loop from an idea to a published plugin; the [interface cards](./interfaces.md) map tasks to interfaces.
 
 ## 1. Create the project
 
@@ -25,7 +25,7 @@ The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica
 
 ## 2. Find the interfaces
 
-Describe what the plugin does in terms of the game: what it reads (sheets, the player's state, chat messages), what it changes (text, files, the chat log), and how the player drives it (windows, commands). Then find each piece in the [interface cards](./interfaces.md). Each card names the permission, the instance the calls work in, and the SDK entry point.
+Describe what the plugin does in terms of the game: what it reads (sheets, the game's objects such as the player's character or bags, chat messages), what it changes (text, files, the chat log), and how the player drives it (windows, commands). Then find each piece in the [interface cards](./interfaces.md). Each card names the permission, the instance the calls work in, and the SDK entry point.
 
 Explore the game's data from the command line before writing code:
 
@@ -34,15 +34,25 @@ angelica excel sheets --game <game folder>
 angelica excel show <sheet> --game <game folder> --map <map> --row <row>
 ```
 
-`show` prints a sheet's layout, the names the game map gives its columns, and rows. A plugin reads a column only by such a name. State tables and their fields are listed in the game map's `state/` folder and returned by `state::tables()` at run time.
+`show` prints a sheet's layout, the names the game map gives its columns, and rows. A plugin reads a column only by such a name.
 
-When a piece is missing — a sheet column without a name, a state field, an event, an operation on the game — the plugin does not work around it. File an [API request](./api-requests.md) and build the rest of the plugin meanwhile.
+The game's objects are what the game map's object model describes. Find them, and check a query before it is in the plugin:
+
+```text
+angelica schema search <words> --map <map> --game <game folder>
+angelica schema show <root or type> --map <map> --game <game folder>
+angelica query "<query>" --map <map> --game <game folder> --plugin .
+```
+
+`search` lists the roots, types, fields, events, and domains with those words; `show` a type's fields or an event's arguments with what they hold and their domains; `query` checks a query as the host will, including the domains the manifest's `[lens] read` lists. With a development installation, `angelica look "<query>" --installation <folder>` runs it in the running game.
+
+When a piece is missing — a sheet column without a name, a field the object model lacks, an event, an operation on the game — the plugin does not work around it. File an [API request](./api-requests.md) and build the rest of the plugin meanwhile.
 
 ## 3. Write the plugin
 
 The host calls the plugin's main instance on the game's main thread ([calls into the plugin](../formats/plugin-api-v1.md#calls-into-the-plugin)):
 
-- `start` once; define commands, subscribe to events, load settings, activate text tables here.
+- `start` once; define commands, start watches, load settings, add rules and rule files here.
 - `tick` every frame; poll jobs here.
 - `command`, `game_event`, `ui_event` as the player and the game act, then `ui` for the windows of this frame.
 - `stop` before the plugin is disabled.
@@ -72,11 +82,15 @@ Rules that keep a plugin within its limits:
 | the game to restart | `let test = test.restart()?`: the same folders and packages; grants, settings, and storage carry over |
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
 | a sheet in the installed game | `game_files::FakeGame::new(version).with_text(sheet, &TextSheet::new(columns, &[text columns]).row(id, &[(column, text)]))` written to `test.game_folder()`, then `test.name_columns(sheet, &[(name, column)])`; `FakeSheet` with `ColumnKind` and `Language` for other column kinds |
-| state rows | `test.define_state_table(...)` and rows in `test.game.state` |
+| the game's objects | `test.use_map(&files, &absent)` with the object model of a map (entries with constant offsets, types, enums, domains, roots), before the plugin is approved; then `test.game.set("<path>", &[("field", value.into())])` and `test.game.clear("<root>")` |
+| what the plugin's rules decide | a decision point (an event with outcomes) in the map given to `test.use_map`; then `test.decide("<event>", &[("<argument>", Fire::…)])` returns the value the rules make the function return, or `None` when it runs |
+| what the plugin changed | a changeable field in the map given to `test.use_map`; read it back with `runtime::lens::prepare` and `test.game.query`, and stop the plugin to see the original put back |
+| what the plugin did in the game | an action in the map given to `test.use_map`, with its function and globals; then `test.game.acted` lists each call's function entry and arguments, `test.game.act_returns` sets what the game answers (`1` by default), and `test.host.services().lens.acting.set_stopped(true)` plays the player's stop key |
+| the game reaching an event | an event in the map given to `test.use_map`; then `test.fire("<event>", &[("<argument>", Fire::Value(…))])`, or `Fire::Object("<path>")` for a reference, and `test.frames(1)` to deliver it |
 | what the plugin printed | `test.game.printed_text()`; `test.game.clear_printed()` forgets it |
 | what the plugin shows | `test.texts(id)`: the headings and texts of its windows; `test.host.plugin(id).unwrap().windows()` for every widget (types in `angelica_fake_game::ui`) |
 
-The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job.
+The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job. [`crates/angelica-fake-game/tests/inventory.rs`](../../crates/angelica-fake-game/tests/inventory.rs) tests a plugin that reads the bags through Lens.
 
 Run the lints the SDK is held to, for the plugin and for its tests:
 

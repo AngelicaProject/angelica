@@ -1,12 +1,14 @@
 //! A plugin's private folder (the `storage` interface). Paths never leave
-//! the folder, and the folder's total size is bounded.
+//! the folder, and the folder's total size is bounded. Paths under `cache/`
+//! lead to the plugin's cache, a folder of its own with the quota the
+//! player approved for `storage.cache`.
 #![forbid(unsafe_code)]
 use crate::error::{Error, Kind, Result};
 use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 pub const MAX_READ: u64 = 64 * 1024 * 1024;
@@ -16,6 +18,8 @@ pub const MAX_DEPTH: usize = 16;
 /// The default size limit of one plugin's folder.
 pub const DEFAULT_QUOTA: u64 = 4 * 1024 * 1024 * 1024;
 const TEMPORARY: &str = ".angelica-tmp";
+/// The top folder whose paths lead to the plugin's cache.
+pub const CACHE: &str = "cache";
 
 pub struct Entry {
     pub name: String,
@@ -28,6 +32,8 @@ pub struct Storage {
     quota: u64,
     /// Bytes in use, measured on first write.
     used: Mutex<Option<u64>>,
+    /// The plugin's cache while it holds `storage.cache`.
+    cache: Mutex<Option<Arc<Storage>>>,
 }
 
 fn io(path: &str, error: &std::io::Error) -> Error {
@@ -88,7 +94,40 @@ impl Storage {
             root: root.to_path_buf(),
             quota,
             used: Mutex::new(None),
+            cache: Mutex::new(None),
         })
+    }
+
+    /// Makes paths under `cache/` lead to `cache`, or refuses them without
+    /// one.
+    pub fn set_cache(&self, cache: Option<Arc<Storage>>) {
+        *self.cache.lock().unwrap_or_else(PoisonError::into_inner) = cache;
+    }
+
+    /// The cache and the path inside it when `path` leads there.
+    ///
+    /// # Errors
+    /// A path under `cache/` without a cache.
+    fn route<'a>(&self, path: &'a str) -> Result<Option<(Arc<Storage>, &'a str)>> {
+        let rest = if path == CACHE {
+            ""
+        } else if let Some(rest) = path.strip_prefix("cache/") {
+            rest
+        } else {
+            return Ok(None);
+        };
+        let cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                Error::new(
+                    Kind::PermissionDenied,
+                    "cache/ is the plugin's cache, which needs storage.cache",
+                )
+            })?;
+        Ok(Some((cache, rest)))
     }
 
     #[must_use]
@@ -135,6 +174,9 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths, missing files, and files over 64 MiB.
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.read(rest);
+        }
         let location = self.resolve(path)?;
         if Self::file_size(path, &location)? > MAX_READ {
             return Err(Error::new(
@@ -151,6 +193,9 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths and missing files.
     pub fn read_unbounded(&self, path: &str) -> Result<Vec<u8>> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.read_unbounded(rest);
+        }
         let location = self.resolve(path)?;
         Self::file_size(path, &location)?;
         fs::read(&location).map_err(|e| io(path, &e))
@@ -160,6 +205,9 @@ impl Storage {
     /// Fails for invalid paths, missing files, ranges past the end, and
     /// ranges over 16 MiB.
     pub fn read_range(&self, path: &str, offset: u64, length: u32) -> Result<Vec<u8>> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.read_range(rest, offset, length);
+        }
         if length > MAX_RANGE {
             return Err(Error::new(Kind::LimitExceeded, "a range is at most 16 MiB"));
         }
@@ -181,9 +229,26 @@ impl Storage {
         Ok(bytes)
     }
 
+    /// The file opened for reading, and its size.
+    ///
+    /// # Errors
+    /// Fails for invalid paths and missing files.
+    pub fn open(&self, path: &str) -> Result<(fs::File, u64)> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.open(rest);
+        }
+        let location = self.resolve(path)?;
+        let size = Self::file_size(path, &location)?;
+        let file = fs::File::open(&location).map_err(|e| io(path, &e))?;
+        Ok((file, size))
+    }
+
     /// # Errors
     /// Fails for invalid paths and missing files.
     pub fn size(&self, path: &str) -> Result<u64> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.size(rest);
+        }
         let location = self.resolve(path)?;
         Self::file_size(path, &location)
     }
@@ -191,8 +256,24 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths and missing directories.
     pub fn list(&self, path: &str) -> Result<Vec<Entry>> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.list(rest);
+        }
         let location = self.directory(path)?;
         let mut entries = Vec::new();
+        if path.is_empty()
+            && self
+                .cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some()
+        {
+            entries.push(Entry {
+                name: CACHE.to_owned(),
+                directory: true,
+                size: 0,
+            });
+        }
         for item in fs::read_dir(&location).map_err(|e| io(path, &e))? {
             let item = item.map_err(|e| io(path, &e))?;
             let Ok(name) = item.file_name().into_string() else {
@@ -201,7 +282,10 @@ impl Storage {
             let Ok(metadata) = item.metadata() else {
                 continue;
             };
-            if name.ends_with(TEMPORARY) || metadata.file_type().is_symlink() {
+            if name.ends_with(TEMPORARY)
+                || metadata.file_type().is_symlink()
+                || (path.is_empty() && name == CACHE)
+            {
                 continue;
             }
             entries.push(Entry {
@@ -248,6 +332,9 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths, a full quota, and file system errors.
     pub fn write(&self, path: &str, contents: &[u8]) -> Result<()> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.write(rest, contents);
+        }
         let location = self.resolve(path)?;
         self.charge(contents.len() as u64, Self::existing_size(&location))?;
         Self::parent(path, &location)?;
@@ -271,6 +358,9 @@ impl Storage {
     /// # Errors
     /// Fails for paths `write` refuses.
     pub fn check(&self, path: &str) -> Result<()> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.check(rest);
+        }
         self.resolve(path).map(drop)
     }
 
@@ -287,6 +377,9 @@ impl Storage {
         path: &str,
         fill: impl FnOnce(&mut fs::File, u64) -> Result<T>,
     ) -> Result<(T, u64)> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.write_with(rest, fill);
+        }
         let location = self.resolve(path)?;
         let existing = Self::existing_size(&location);
         let room = {
@@ -320,6 +413,9 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths, a full quota, and file system errors.
     pub fn append(&self, path: &str, contents: &[u8]) -> Result<()> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.append(rest, contents);
+        }
         let location = self.resolve(path)?;
         self.charge(contents.len() as u64, 0)?;
         Self::parent(path, &location)?;
@@ -337,6 +433,15 @@ impl Storage {
     /// # Errors
     /// Fails for invalid paths, a missing source, and file system errors.
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
+        match (self.route(from)?, self.route(to)?) {
+            (Some((cache, from)), Some((_, to))) => return cache.rename(from, to),
+            (None, None) => {}
+            _ => {
+                return Err(Error::invalid(
+                    "files move inside the cache or outside it, not between them",
+                ));
+            }
+        }
         let source = self.resolve(from)?;
         let destination = self.resolve(to)?;
         Self::file_size(from, &source)?;
@@ -350,6 +455,9 @@ impl Storage {
     /// Fails for invalid paths, non-empty directories, and file system
     /// errors.
     pub fn remove(&self, path: &str) -> Result<()> {
+        if let Some((cache, rest)) = self.route(path)? {
+            return cache.remove(rest);
+        }
         let location = self.resolve(path)?;
         let metadata = match fs::symlink_metadata(&location) {
             Ok(metadata) => metadata,
@@ -411,6 +519,61 @@ mod tests {
         ] {
             assert!(!valid_path(path), "{path}");
         }
+    }
+
+    #[test]
+    fn the_cache_is_a_folder_of_its_own_with_its_quota() {
+        let folder = tempfile::tempdir().unwrap();
+        let storage = Storage::new(&folder.path().join("storage"), 4).unwrap();
+        assert_eq!(
+            storage.write("cache/a", b"1").unwrap_err().kind,
+            Kind::PermissionDenied
+        );
+        let cache = Storage::new(&folder.path().join("cache"), 8).unwrap();
+        storage.set_cache(Some(Arc::new(cache)));
+        storage.write("cache/a/b", b"12345678").unwrap();
+        assert_eq!(
+            storage.write("c", b"12345").unwrap_err().kind,
+            Kind::LimitExceeded,
+            "the folder keeps its own quota"
+        );
+        assert_eq!(
+            fs::read(folder.path().join("cache/a/b")).unwrap(),
+            b"12345678"
+        );
+        assert_eq!(storage.read_range("cache/a/b", 2, 2).unwrap(), b"34");
+        let names: Vec<_> = storage
+            .list("")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["cache"]);
+        let names: Vec<_> = storage
+            .list("cache")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["a"]);
+        assert_eq!(
+            storage.write("cache/x", b"1").unwrap_err().kind,
+            Kind::LimitExceeded
+        );
+        storage.write("d", b"1").unwrap();
+        assert_eq!(
+            storage.rename("d", "cache/d").unwrap_err().kind,
+            Kind::InvalidArgument
+        );
+        storage.rename("cache/a/b", "cache/e").unwrap();
+        storage.remove("cache/e").unwrap();
+        storage.write("cache/x", b"1").unwrap();
+        assert!(storage.read("cache").is_err());
+        storage.set_cache(None);
+        assert_eq!(
+            storage.read("cache/x").unwrap_err().kind,
+            Kind::PermissionDenied
+        );
     }
 
     #[test]

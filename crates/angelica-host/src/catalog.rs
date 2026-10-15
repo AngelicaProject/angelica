@@ -131,12 +131,63 @@ impl Catalog {
         let entries = files
             .iter()
             .filter(|(name, _)| {
-                ["entries/", "sheets/", "state/", "windows/"]
+                ["entries/", "sheets/", "types/", "enums/", "windows/"]
                     .iter()
                     .any(|folder| name.starts_with(folder))
+                    || angelica_map::ROOT_FILES.contains(&name.as_str())
             })
             .map(|(name, bytes)| Ok((name.clone(), text(bytes)?)))
             .collect::<Result<Vec<_>, String>>()?;
         Map::from_sources(&root, &entries).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_signed_map_keeps_every_file_of_its_object_model() {
+        let files: BTreeMap<String, Vec<u8>> = [
+            ("map.toml", "format = 2\n"),
+            (
+                "entries/act.toml",
+                r#"
+[function."act.go"]
+locator = { signature = "C3" }
+abi = { args = ["u32"], ret = "void" }
+thread = "main"
+"#,
+            ),
+            (
+                "domains.toml",
+                r#"
+[domains.moves]
+doc = "Moves."
+class = "acts"
+read = { en = "Sees", ru = "Видит" }
+act = { en = "Moves you", ru = "Двигает вас" }
+"#,
+            ),
+            (
+                "actions.toml",
+                r#"
+[actions.go]
+doc = "Goes."
+call = "act.go"
+domain = "moves"
+
+[actions.go.args.where]
+arg = 0
+doc = "Where."
+"#,
+            ),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_owned(), text.as_bytes().to_vec()))
+        .collect();
+        let map = Catalog::map_from_files(&files).unwrap();
+        assert!(map.objects().actions.contains_key("go"));
+        assert!(map.objects().domains.contains_key("moves"));
     }
 }

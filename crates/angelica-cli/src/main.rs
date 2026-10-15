@@ -6,6 +6,7 @@ mod compile;
 mod dev;
 mod excel;
 mod exe;
+mod lens;
 mod new;
 mod release;
 mod verify;
@@ -29,6 +30,13 @@ enum Command {
     /// Plugin tools.
     #[command(subcommand)]
     Plugin(PluginCommand),
+    /// What the game map's object model holds, for Lens queries.
+    #[command(subcommand)]
+    Schema(lens::SchemaCommand),
+    /// Check a Lens query against the game map without the game.
+    Query(lens::QueryArgs),
+    /// Run a Lens query in the running game: a development build only.
+    Look(lens::LookArgs),
     /// The installed game's Excel sheets.
     #[command(subcommand)]
     Excel(excel::ExcelCommand),
@@ -87,6 +95,9 @@ fn main() -> ExitCode {
         Command::Plugin(PluginCommand::Install(args)) => author::install(&args),
         Command::Plugin(PluginCommand::Update(args)) => author::update(&args),
         Command::Dev(command) => dev::run(&command),
+        Command::Schema(command) => lens::run_schema(&command),
+        Command::Query(args) => lens::run_query(&args),
+        Command::Look(args) => lens::run_look(&args),
         Command::Release(command) => release::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),

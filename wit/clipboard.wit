@@ -1,0 +1,15 @@
+package angelica:plugin@1.0.0;
+
+/// The player's clipboard. A plugin puts text there only for an action of
+/// the player: a click or key in one of its windows, or one of its
+/// commands. It never reads the clipboard; the player pastes into its
+/// windows as anywhere else.
+interface clipboard {
+    use types.{error};
+
+    /// Puts `text`, at most 64 KiB without NUL characters, on the clipboard
+    /// at the end of the frame, replacing what was there. Needs
+    /// `clipboard.write`; from the main instance in `ui-event` or `command`
+    /// only, `wrong-context` elsewhere. The last text of a frame wins.
+    copy: func(text: string) -> result<_, error>;
+}

@@ -1,0 +1,21 @@
+package angelica:plugin@1.0.0;
+
+/// Messages between plugins: bytes under a name, delivered to the receiving
+/// plugin in the next frame as a `message` game event. A plugin sends to the
+/// plugins its manifest lists in `[messages] to`, which the player
+/// approves; it answers any message it received, from any plugin, by naming
+/// it in `in-reply-to`. No plugin runs another's code. Main instance only.
+interface messages {
+    use types.{error};
+
+    /// Sends `payload`, at most 1 MiB, under `name`, 1 to 64 ASCII letters,
+    /// digits, dots, underscores, and hyphens, to the plugin `to`, and
+    /// returns the message's id. A receiver not listed returns
+    /// `permission-denied` unless the message answers one `to` sent; one
+    /// that does not run, `unavailable`; a reply to a message the plugin did
+    /// not receive from `to`, `invalid-argument`. The receiver keeps at
+    /// most 256 messages between two frames; more are counted as
+    /// `messages-dropped`. Sending needs `messages.send`; answering does
+    /// not.
+    send: func(to: string, name: string, payload: list<u8>, in-reply-to: option<u32>) -> result<u32, error>;
+}

@@ -71,6 +71,13 @@ impl SqPackIndex {
         })
     }
 
+    /// Every entry, in no order; an entry several paths share comes once
+    /// per path.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn entries(&self) -> impl Iterator<Item = IndexEntry> + '_ {
+        self.entries.values().copied()
+    }
+
     /// Looks up a path by its folder-and-file hash, or by its whole-path
     /// hash in an `.index2` file.
     pub(crate) fn get(

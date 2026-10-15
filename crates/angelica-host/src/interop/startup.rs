@@ -73,6 +73,14 @@ extern "system" fn angelica_start_v1() -> i32 {
     status
 }
 
+/// `angelica look` reads the game for work on the game map: a development
+/// build answers it, a release build never does.
+fn serve_look(host: &Host, root: &Path) {
+    if crate::self_update::build_channel().is_none() {
+        host.serve_look(root.join("look"));
+    }
+}
+
 /// Angelica's own updates: checked on a thread of their own when this is a
 /// release build with a release key; a development build only says so.
 fn self_update(config: &Config, root: &Path) -> Arc<crate::self_update::SelfUpdate> {
@@ -229,6 +237,7 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
     ));
     host.set_plugin_installer(installer.clone());
+    serve_look(&host, root);
     if diagnostics.updates {
         host.set_self_update(self_update(&config, root));
         if let Some(source) = catalog_source() {
@@ -247,8 +256,8 @@ fn initialize() -> Result<(), String> {
         directory: config.map_directory.clone(),
         seen: None,
         sheets: host.services().sheets.clone(),
-        state: host.services().state.clone(),
-        ui: host.services().ui.clone(),
+        lens: host.services().lens.clone(),
+        data: host.services().data.clone(),
     };
     if diagnostics.plugins {
         host.watch(Box::new(FolderPackages::new(
@@ -305,8 +314,12 @@ fn services(
             .join("files"),
     ));
     let commands = Arc::new(crate::commands::Commands::default());
-    let events = Arc::new(crate::events::Events::default());
     let executable = module_path(base)?;
+    // The executable is in `game/`; the archives are in `game/sqpack`.
+    let data = Arc::new(crate::game_data::GameData::new(
+        executable.parent().and_then(Path::parent),
+    ));
+    let (sheets, lens) = map_services(map, catalog, base, &data);
     let game = Arc::new(WindowsGame {
         catalog: catalog.clone(),
         base,
@@ -314,47 +327,57 @@ fn services(
         case: case.clone(),
         files: files.clone(),
         commands: commands.clone(),
-        events: events.clone(),
+        lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
     });
-    let (sheets, state, ui) = map_services(map, catalog, base);
     Ok(Arc::new(Services {
-        // The executable is in `game/`; the archives are in `game/sqpack`.
-        data: Arc::new(crate::game_data::GameData::new(
-            executable.parent().and_then(Path::parent),
-        )),
+        data,
         files,
         excel,
         case,
         commands,
         chat: Arc::new(crate::chat::Chat::default()),
         sheets,
-        state,
-        events,
-        ui,
+        lens,
+        draw: Arc::new(crate::draw::Drawings::default()),
+        messages: Arc::new(crate::messages::Messages::default()),
+        clipboard: Arc::new(crate::clipboard::Clipboard::default()),
+        notifications: Arc::new(crate::notifications::Notifications::default()),
+        sounds: Arc::new(crate::sound::Sounds::default()),
+        sockets: Arc::new(crate::sockets::Sockets::default()),
         game,
         starting: AtomicBool::new(false),
         russian: AtomicBool::new(false),
     }))
 }
 
-/// The sheet schemas, state tables, and window schemas of the map, resolved
-/// for the game loaded at `base`; none without a map.
+/// The sheet schemas and the object model of the map, resolved for the
+/// game loaded at `base` and its window layouts in `data`; none without a
+/// map.
 fn map_services(
     map: Option<&angelica_map::Map>,
     catalog: &Catalog,
     base: usize,
-) -> (
-    Arc<crate::sheets::Sheets>,
-    Arc<crate::state::StateTables>,
-    Arc<crate::game_ui::GameUi>,
-) {
+    data: &crate::game_data::GameData,
+) -> (Arc<crate::sheets::Sheets>, Arc<crate::lens::Lens>) {
     let sheets = crate::sheets::Sheets::new(map.iter().flat_map(|map| map.sheets().cloned()));
-    let state = map.map_or_else(Default::default, |map| {
-        crate::state::StateTables::from_map(map, catalog, base as u64)
+    let lens = map.map_or_else(Default::default, |map| {
+        crate::lens::Lens::new(schema(map, catalog, base, data))
     });
-    let ui = crate::game_ui::GameUi::new(map.iter().flat_map(|map| map.windows().cloned()));
-    (Arc::new(sheets), Arc::new(state), Arc::new(ui))
+    (Arc::new(sheets), Arc::new(lens))
+}
+
+/// The object model of `map` for the game loaded at `base`, with the
+/// element names of the windows whose layouts `data` holds.
+fn schema(
+    map: &angelica_map::Map,
+    catalog: &Catalog,
+    base: usize,
+    data: &crate::game_data::GameData,
+) -> crate::lens::Schema {
+    let mut schema = crate::lens::Schema::from_catalog(map, catalog, base as u64);
+    schema.resolve_windows(map, &|path| data.read(path).map_err(|error| error.message));
+    schema
 }
 
 /// The signed map resolved for this executable, the map, and the lines the
@@ -503,14 +526,14 @@ struct FolderPackages {
     map: MapData,
 }
 
-/// The game map's data the host uses without hooks: sheet schemas, state
-/// tables, and window schemas, which a reloaded map replaces.
+/// The game map's data the host uses without hooks: sheet schemas, the
+/// object model, and window schemas, which a reloaded map replaces.
 struct MapData {
     directory: std::path::PathBuf,
     seen: Option<Vec<u8>>,
     sheets: Arc<crate::sheets::Sheets>,
-    state: Arc<crate::state::StateTables>,
-    ui: Arc<crate::game_ui::GameUi>,
+    lens: Arc<crate::lens::Lens>,
+    data: Arc<crate::game_data::GameData>,
 }
 
 impl MapData {
@@ -529,16 +552,11 @@ impl MapData {
             FileSet::load(&self.directory, RELEASE_KEY.as_ref()).map_err(|e| e.to_string())?;
         let (map, catalog) = Catalog::from_signed_files(&files, &snapshot, base as u64, hash)?;
         self.sheets.set(map.sheets().cloned());
-        self.state.replace_with(crate::state::StateTables::from_map(
-            &map,
-            &catalog,
-            base as u64,
-        ));
-        self.ui.set(map.windows().cloned());
+        self.lens.replace(schema(&map, &catalog, base, &self.data));
         Ok(format!(
-            "game map reloaded: {} sheet schemas, {} state tables, and {} window schemas; entries that hooks use change at the next game start",
+            "game map reloaded: {} sheet schemas, {} object types, and {} window schemas; entries that hooks use change at the next game start",
             map.sheets().count(),
-            map.state_tables().count(),
+            map.objects().types.len(),
             map.windows().count()
         ))
     }
@@ -636,6 +654,11 @@ fn directories(config: &Config, root: &Path) -> crate::host::Directories {
             .clone()
             .unwrap_or_else(|| root.join("state")),
         storage: config.storage_directory.clone(),
+        cache: config
+            .cache_directory
+            .clone()
+            .unwrap_or_else(|| root.join("cache"))
+            .join("plugins"),
     }
 }
 

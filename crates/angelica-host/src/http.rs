@@ -6,12 +6,13 @@
 //! proxy Windows uses for their URL when one is set ([`set_proxy_finder`]),
 //! as the browser's do. TLS is the operating system's (`native-tls`:
 //! `SChannel` and the system's certificate store on Windows), with the
-//! certificate checked for the requested host.
+//! certificate checked for the requested host. [`Client::connect`] opens a
+//! TLS connection under the same rules for a plugin's WebSocket.
 #![forbid(unsafe_code)]
 use crate::error::{Error, Kind, Result};
 use std::{
-    io::{Read, Write},
-    net::{IpAddr, Ipv4Addr},
+    io::{BufRead, Read, Write},
+    net::{IpAddr, Ipv4Addr, TcpStream, ToSocketAddrs},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -44,6 +45,12 @@ pub const REQUEST_HEADERS: [&str; 5] = [
     "if-modified-since",
     "range",
 ];
+/// The headers a plugin may set too when it sends data.
+pub const SEND_HEADERS: [&str; 2] = ["authorization", "content-type"];
+/// Bytes of a body a plugin sends.
+pub const MAX_SENT: usize = 16 * 1024 * 1024;
+/// The largest file an upload sends.
+pub const MAX_UPLOAD: u64 = 1024 * 1024 * 1024;
 pub const GET_TIME: Duration = Duration::from_secs(60);
 pub const DOWNLOAD_TIME: Duration = Duration::from_mins(15);
 const CONNECT_TIME: Duration = Duration::from_secs(15);
@@ -436,6 +443,15 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
 }
 
+/// How a plugin sends data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Head {
     pub status: u16,
@@ -448,6 +464,7 @@ pub struct Client {
     agent: ureq::Agent,
     hosts: Arc<Vec<String>>,
     any_host: bool,
+    addresses: Addresses,
 }
 
 impl Client {
@@ -523,11 +540,13 @@ impl Client {
             agent,
             hosts,
             any_host,
+            addresses,
         }
     }
 
-    /// Checks a request before anything is sent.
-    fn check(&self, request: &Request) -> Result<()> {
+    /// Checks a request before anything is sent; `sending` allows the
+    /// headers of data sent too.
+    fn check(&self, request: &Request, sending: bool) -> Result<()> {
         if request.url.len() > MAX_URL {
             return Err(Error::invalid(format!("a URL has at most {MAX_URL} bytes")));
         }
@@ -567,10 +586,16 @@ impl Client {
         }
         let mut seen = Vec::new();
         for (name, value) in &request.headers {
-            if !REQUEST_HEADERS.contains(&name.as_str()) {
+            let allowed = REQUEST_HEADERS.contains(&name.as_str())
+                || (sending && SEND_HEADERS.contains(&name.as_str()));
+            if !allowed {
+                let mut names = REQUEST_HEADERS.to_vec();
+                if sending {
+                    names.extend(SEND_HEADERS);
+                }
                 return Err(Error::invalid(format!(
                     "the header {name:?} is not one a plugin sets: {}",
-                    REQUEST_HEADERS.join(", ")
+                    names.join(", ")
                 )));
             }
             if seen.contains(name) {
@@ -612,7 +637,7 @@ impl Client {
         cancelled: impl Fn() -> bool + Send + 'static,
         proxy: Option<ureq::Proxy>,
     ) -> Result<(Head, BodyReader)> {
-        self.check(request)?;
+        self.check(request, false)?;
         if cancelled() {
             return Err(cancelled_error());
         }
@@ -627,25 +652,199 @@ impl Client {
             .build()
             .call()
             .map_err(failure)?;
-        let (parts, body) = response.into_parts();
-        let head = Head {
-            status: parts.status.as_u16(),
-            headers: parts
-                .headers
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        name.as_str().to_owned(),
-                        String::from_utf8_lossy(value.as_bytes()).into_owned(),
-                    )
-                })
-                .collect(),
+        Ok(received(response, limit, cancelled))
+    }
+
+    /// Sends `body` with `method` and reads the whole response's body, at
+    /// most [`MAX_BODY`]. A `DELETE` sends no body.
+    ///
+    /// # Errors
+    /// See [`Client::send`]; a body over [`MAX_SENT`] or a larger response
+    /// is `limit-exceeded`.
+    pub fn send_data(
+        &self,
+        method: Method,
+        request: &Request,
+        body: &[u8],
+        cancelled: impl Fn() -> bool + Send + 'static,
+    ) -> Result<(Head, Vec<u8>)> {
+        self.check(request, true)?;
+        if body.len() > MAX_SENT {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("a request sends at most {MAX_SENT} bytes"),
+            ));
+        }
+        if cancelled() {
+            return Err(cancelled_error());
+        }
+        let proxy = proxy_for(&request.url);
+        let url = request.url.as_str();
+        let response = if method == Method::Delete {
+            let mut builder = self.agent.delete(url);
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            builder
+                .config()
+                .timeout_global(Some(GET_TIME))
+                .proxy(proxy)
+                .build()
+                .call()
+        } else {
+            let mut builder = match method {
+                Method::Post => self.agent.post(url),
+                Method::Put => self.agent.put(url),
+                _ => self.agent.patch(url),
+            };
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            builder
+                .config()
+                .timeout_global(Some(GET_TIME))
+                .proxy(proxy)
+                .build()
+                .send(body)
+        }
+        .map_err(failure)?;
+        let (head, mut reader) = received(response, MAX_BODY, cancelled);
+        let mut received = Vec::new();
+        reader.read_to_end(&mut received).map_err(read_failure)?;
+        Ok((head, received))
+    }
+
+    /// Sends `size` bytes of `file` with `method`, which is not `DELETE`,
+    /// with their length, within [`DOWNLOAD_TIME`], and reads the whole
+    /// response's body, at most [`MAX_BODY`].
+    ///
+    /// # Errors
+    /// See [`Client::send_data`]; a file over [`MAX_UPLOAD`] is
+    /// `limit-exceeded`.
+    pub fn upload(
+        &self,
+        method: Method,
+        request: &Request,
+        file: std::fs::File,
+        size: u64,
+        cancelled: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Result<(Head, Vec<u8>)> {
+        self.check(request, true)?;
+        if size > MAX_UPLOAD {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("an upload sends at most {MAX_UPLOAD} bytes"),
+            ));
+        }
+        let url = request.url.as_str();
+        let mut builder = match method {
+            Method::Post => self.agent.post(url),
+            Method::Put => self.agent.put(url),
+            Method::Patch => self.agent.patch(url),
+            Method::Delete => return Err(Error::invalid("DELETE sends no file")),
         };
-        let reader = BodyReader {
-            inner: body.into_with_config().limit(limit).reader(),
-            cancelled: Box::new(cancelled),
+        if cancelled() {
+            return Err(cancelled_error());
+        }
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let cancelled = std::sync::Arc::new(cancelled);
+        let sending = cancelled.clone();
+        let body = Sent {
+            inner: std::io::Read::take(file, size),
+            cancelled: Box::new(move || sending()),
         };
-        Ok((head, reader))
+        let response = builder
+            .header("content-length", size.to_string())
+            .config()
+            .timeout_global(Some(DOWNLOAD_TIME))
+            .proxy(proxy_for(url))
+            .build()
+            .send(ureq::SendBody::from_owned_reader(body))
+            .map_err(failure)?;
+        let (head, mut reader) = received(response, MAX_BODY, move || cancelled());
+        let mut received = Vec::new();
+        reader.read_to_end(&mut received).map_err(read_failure)?;
+        Ok((head, received))
+    }
+
+    /// Checks the `wss://` URL `url` as [`Client::connect`] does, before
+    /// anything is sent.
+    ///
+    /// # Errors
+    /// An invalid URL and an unlisted host.
+    pub fn check_socket(&self, url: &str) -> Result<()> {
+        let https = url
+            .strip_prefix("wss://")
+            .map(|rest| format!("https://{rest}"))
+            .ok_or_else(|| Error::invalid(format!("{url} is not a wss URL")))?;
+        self.check(
+            &Request {
+                url: https,
+                headers: Vec::new(),
+            },
+            false,
+        )
+    }
+
+    /// A TLS connection for the `wss://` URL `url`, under the rules of
+    /// requests: a listed host on port 443, reached directly at an address
+    /// the client may reach or through the proxy Windows names for it, with
+    /// its certificate checked.
+    ///
+    /// # Errors
+    /// An invalid URL, an unlisted host or private address, and a
+    /// connection or TLS failure (`network`).
+    pub fn connect(&self, url: &str) -> Result<native_tls::TlsStream<TcpStream>> {
+        self.check_socket(url)?;
+        let request = Request {
+            url: url.replacen("wss://", "https://", 1),
+            headers: Vec::new(),
+        };
+        let uri: Uri = request
+            .url
+            .parse()
+            .map_err(|e| Error::invalid(format!("{url}: {e}")))?;
+        let host = uri.host().unwrap_or_default().to_owned();
+        let network = |what: &str, error: &dyn std::fmt::Display| {
+            Error::new(Kind::Network, format!("{what}: {error}"))
+        };
+        let tcp = if let Some(proxy) = PROXY.get().and_then(|finder| finder(&request.url)) {
+            // The proxy comes from Windows' settings and is reached as it
+            // resolves; the host is resolved by the proxy.
+            let addresses: Vec<_> = proxy
+                .to_socket_addrs()
+                .map_err(|e| network("the proxy", &e))?
+                .collect();
+            let tcp = connect_any(&addresses).map_err(|e| network("the proxy", &e))?;
+            tunnel(&tcp, &host).map_err(|e| network("the proxy", &e))?;
+            tcp
+        } else {
+            let addresses: Vec<_> = (host.as_str(), 443)
+                .to_socket_addrs()
+                .map_err(|e| network(&host, &e))?
+                .filter(|address| self.addresses.allow(address.ip()))
+                .collect();
+            if addresses.is_empty() {
+                return Err(Error::new(
+                    Kind::PermissionDenied,
+                    format!("{host} resolves only to local or private addresses"),
+                ));
+            }
+            connect_any(&addresses).map_err(|e| network(&host, &e))?
+        };
+        tcp.set_read_timeout(Some(RESPONSE_TIME))
+            .and_then(|()| tcp.set_write_timeout(Some(RESPONSE_TIME)))
+            .map_err(|e| network(&host, &e))?;
+        let connector = native_tls::TlsConnector::builder()
+            .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
+            .build()
+            .map_err(|e| network("TLS", &e))?;
+        connector.connect(&host, tcp).map_err(|e| match e {
+            native_tls::HandshakeError::Failure(e) => network("TLS", &e),
+            native_tls::HandshakeError::WouldBlock(_) => network("TLS", &"the handshake stalled"),
+        })
     }
 
     /// Sends the request and reads the whole body, at most [`MAX_BODY`].
@@ -661,6 +860,91 @@ impl Client {
         let mut body = Vec::new();
         reader.read_to_end(&mut body).map_err(read_failure)?;
         Ok((head, body))
+    }
+}
+
+/// The head of a response and a reader of at most `limit` bytes of its
+/// body, which stops when `cancelled` turns true.
+fn received(
+    response: ureq::http::Response<ureq::Body>,
+    limit: u64,
+    cancelled: impl Fn() -> bool + Send + 'static,
+) -> (Head, BodyReader) {
+    let (parts, body) = response.into_parts();
+    let head = Head {
+        status: parts.status.as_u16(),
+        headers: parts
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect(),
+    };
+    let reader = BodyReader {
+        inner: body.into_with_config().limit(limit).reader(),
+        cancelled: Box::new(cancelled),
+    };
+    (head, reader)
+}
+
+/// A connection to the first of `addresses` that answers within
+/// [`CONNECT_TIME`].
+fn connect_any(addresses: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    for address in addresses {
+        match TcpStream::connect_timeout(address, CONNECT_TIME) {
+            Ok(tcp) => return Ok(tcp),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
+}
+
+/// Asks the proxy on `tcp` for a tunnel to `host` on port 443.
+fn tunnel(tcp: &TcpStream, host: &str) -> std::io::Result<()> {
+    tcp.set_read_timeout(Some(RESPONSE_TIME))?;
+    let mut writer = tcp;
+    write!(
+        writer,
+        "CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n"
+    )?;
+    let mut reader = std::io::BufReader::new(tcp);
+    let mut status = String::new();
+    reader.read_line(&mut status)?;
+    if status.split(' ').nth(1) != Some("200") {
+        return Err(std::io::Error::other(format!(
+            "no tunnel: {}",
+            status.trim()
+        )));
+    }
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? <= 2 {
+            break;
+        }
+    }
+    // The proxy answers before the tunnel carries anything, so nothing of
+    // the host's is left in the reader.
+    Ok(())
+}
+
+/// A file being sent, which stops when its job is cancelled.
+struct Sent {
+    inner: std::io::Take<std::fs::File>,
+    cancelled: Box<dyn Fn() -> bool + Send>,
+}
+
+impl Read for Sent {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if (self.cancelled)() {
+            return Err(std::io::Error::other(Cancelled));
+        }
+        self.inner.read(buffer)
     }
 }
 
@@ -945,18 +1229,18 @@ mod tests {
     fn requests_are_checked_before_anything_is_sent() {
         let client = client();
         let refused = |request: Request, kind: Kind, problem: &str| {
-            let error = client.check(&request).unwrap_err();
+            let error = client.check(&request, false).unwrap_err();
             assert_eq!(error.kind, kind, "{}", error.message);
             assert!(error.message.contains(problem), "{}", error.message);
         };
         assert!(
             client
-                .check(&request("https://example.com/feed.json"))
+                .check(&request("https://example.com/feed.json"), false)
                 .is_ok()
         );
         assert!(
             client
-                .check(&request("https://a.cdn.example.org:443/x"))
+                .check(&request("https://a.cdn.example.org:443/x"), false)
                 .is_ok()
         );
         refused(
@@ -993,7 +1277,22 @@ mod tests {
             url: "https://example.com/".into(),
             headers: vec![(name.into(), value.into())],
         };
-        assert!(client.check(&with("if-none-match", "\"abc\"")).is_ok());
+        assert!(
+            client
+                .check(&with("if-none-match", "\"abc\""), false)
+                .is_ok()
+        );
+        assert!(
+            client
+                .check(&with("authorization", "Bearer x"), true)
+                .is_ok(),
+            "data sent may carry the plugin's own authorization"
+        );
+        assert!(
+            client
+                .check(&with("authorization", "Bearer x"), false)
+                .is_err()
+        );
         refused(
             with("cookie", "a=b"),
             Kind::InvalidArgument,
@@ -1068,7 +1367,33 @@ mod tests {
                 .unwrap();
             assert_eq!(error.kind, kind, "{url}: {}", error.message);
         }
-        assert!(client.check(&request("https://any.example.org/")).is_ok());
+        assert!(
+            client
+                .check(&request("https://any.example.org/"), false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn uploads_are_checked_before_anything_is_sent() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("pack.bin");
+        std::fs::write(&path, b"data").unwrap();
+        let open = || std::fs::File::open(&path).unwrap();
+        let client = client();
+        let upload = |method, url: &str, size, cancelled: bool| {
+            client
+                .upload(method, &request(url), open(), size, move || cancelled)
+                .unwrap_err()
+        };
+        let error = upload(Method::Delete, "https://example.com/", 4, false);
+        assert_eq!(error.kind, Kind::InvalidArgument);
+        let error = upload(Method::Put, "https://example.net/", 4, false);
+        assert_eq!(error.kind, Kind::PermissionDenied);
+        let error = upload(Method::Put, "https://example.com/", MAX_UPLOAD + 1, false);
+        assert_eq!(error.kind, Kind::LimitExceeded);
+        let error = upload(Method::Post, "https://example.com/", 4, true);
+        assert_eq!(error.message, "the job was cancelled");
     }
 
     #[test]
@@ -1091,6 +1416,30 @@ mod tests {
         assert_eq!(head.status, 200);
         assert!(String::from_utf8_lossy(&body).contains("Example Domain"));
         assert!(head.headers.iter().any(|(name, _)| name == "content-type"));
+    }
+
+    /// Needs the internet: an echo service reports the body and its
+    /// length.
+    #[test]
+    #[ignore = "needs the internet"]
+    fn uploads_a_file_with_its_length_over_the_internet() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("pack.bin");
+        std::fs::write(&path, b"angelica upload").unwrap();
+        let client = Client::new(vec!["httpbin.org".into()], "p", "1.0.0");
+        let (head, body) = client
+            .upload(
+                Method::Put,
+                &request("https://httpbin.org/put"),
+                std::fs::File::open(&path).unwrap(),
+                15,
+                || false,
+            )
+            .unwrap();
+        assert_eq!(head.status, 200);
+        let echo: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(echo["data"], "angelica upload");
+        assert_eq!(echo["headers"]["Content-Length"], "15");
     }
 
     /// Needs the internet.

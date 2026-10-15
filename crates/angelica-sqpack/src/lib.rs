@@ -150,6 +150,35 @@ impl GameData {
         Ok(self.find(path)?.is_some())
     }
 
+    /// Visits every file of the category `category` (such as `chara`) in
+    /// the repository `repository` (`ffxiv`, `ex1`, ...) once, for checks
+    /// over a whole installation; a file the reader cannot read comes as
+    /// its error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown category or an unreadable index.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn each_file(
+        &self,
+        repository: &str,
+        category: &str,
+        mut visit: impl FnMut(Result<Vec<u8>, SqPackError>),
+    ) -> Result<(), SqPackError> {
+        let id = category_id(category)
+            .ok_or_else(|| SqPackError::invalid(format!("{category} is not a category")))?;
+        let chunks = self.chunks(repository, id)?;
+        let mut seen = std::collections::HashSet::new();
+        for chunk in chunks.iter() {
+            for entry in chunk.index.entries() {
+                if seen.insert((chunk.prefix.clone(), entry.data_file, entry.offset)) {
+                    visit(self.read_entry(repository, chunk, entry));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn find(&self, path: &str) -> Result<Option<Found>, SqPackError> {
         let path = path.trim().to_lowercase();
         if path.is_empty() || path.ends_with('/') || path.len() >= 260 {

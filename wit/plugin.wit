@@ -11,9 +11,9 @@ interface guest {
     /// shown in the Angelica menu.
     start: func() -> result<_, string>;
 
-    /// Called once before the plugin is disabled, also at game exit. Tables,
-    /// letters, and rules for the game's windows the plugin activated are
-    /// removed afterwards in any case.
+    /// Called once before the plugin is disabled, also at game exit. Rules,
+    /// watches, and changes the plugin made are removed afterwards in any
+    /// case.
     stop: func();
 
     /// Called every frame with the seconds since the previous call.
@@ -30,7 +30,9 @@ interface guest {
     /// is printed in the chat log as the plugin's message.
     command: func(invocation: invocation) -> result<_, string>;
 
-    /// An event the plugin subscribed to; see the `events` interface.
+    /// A firing of one of the plugin's watches, a message from another
+    /// plugin, or what happened on its connections; see the `events`
+    /// interface.
     /// Called after the plugin's commands of the frame.
     on-game-event: func(event: game-event);
 
@@ -44,14 +46,17 @@ world plugin {
     import jobs;
     import game-files;
     import excel;
-    import excel-text;
     import file-replacements;
-    import text-case;
     import commands;
     import chat;
     import http;
-    import state;
+    import lens;
     import events;
-    import game-ui;
+    import draw;
+    import messages;
+    import clipboard;
+    import notifications;
+    import sound;
+    import websocket;
     export guest;
 }

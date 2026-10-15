@@ -28,7 +28,7 @@ Map releases and plugin packages contain `files.json` and `files.json.sig`. The 
 {"format":1,"files":{"angelica.toml":"<lowercase SHA-256>","plugin.wasm":"<lowercase SHA-256>","plugin.cwasm":"<lowercase SHA-256>"}}
 ```
 
-Each listed file is read and its SHA-256 checked; only these bytes reach the map reader or the component loader. A plugin package holds `angelica.toml`, `plugin.wasm`, and `plugin.cwasm`, in a folder named by the plugin id. `angelica dev install` also adds a `development` file, whose contents do not matter: the host lists such a plugin as in development, with a striped tile and a `dev` token after its name. Release packages never hold one. A map package holds `map.toml`, its `entries/*.toml`, and optionally `builds/*.toml`.
+Each listed file is read and its SHA-256 checked; only these bytes reach the map reader or the component loader. A plugin package holds `angelica.toml`, `plugin.wasm`, and `plugin.cwasm`, in a folder named by the plugin id. `angelica dev install` also adds a `development` file, whose contents do not matter: the host lists such a plugin as in development, with a striped tile and a `dev` token after its name. Release packages never hold one. A map package holds `map.toml`, its `entries/*.toml`, and optionally `domains.toml`, `roots.toml`, `types/*.toml`, `enums/*.toml`, `sheets/**/*.toml`, `windows/*.toml`, and `builds/*.toml`.
 
 `plugin.cwasm` is the component compiled by `angelica plugin compile` from the packaged `plugin.wasm`. It is native code: the signer must compile it from the source itself and never sign an artifact a plugin author supplied. The compiler version, engine settings, architecture, operating system, and CPU features must match the runtime; otherwise the package is refused, and the game never compiles a component.
 
@@ -45,10 +45,22 @@ The installation key keeps packages from being swapped or damaged; it does not p
 `grants/<plugin-id>.json` records the player's approval:
 
 ```json
-{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "http.get", "text.case"], "http_hosts": ["harmonia.example.org"]}
+{"format": 1, "plugin_id": "harmonia", "permissions": ["files.replace", "http.get"], "http_hosts": ["harmonia.example.org"], "lens_read": ["inventory"], "lens_act": ["actions"], "lens_change": ["camera"]}
 ```
 
-`http_hosts` lists the approved hosts of `http.get` and is left out when there are none. A plugin runs only when its grant covers every permission and every `http.hosts` entry its manifest declares. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+`http_hosts` lists the approved hosts of `http.get`, `message_to` the approved receivers of `messages.send`, `cache_gib` the approved size of the cache of `storage.cache`, `lens_read` the domains of the game map approved for reading, `lens_act` those approved for acting in, and `lens_change` those approved for changing; each is left out when empty. A plugin runs only when its grant covers every permission, every `http.hosts` entry, and every `messages.to` entry its manifest declares, a cache no larger than the approved one, every domain of its `[lens] read` that the running game map describes in a class the host presents, every domain of its `[lens] act` that the map describes with words for acting, and every domain of its `[lens] change` that the map describes with words for changing. Without the file the plugin is not approved. The Angelica menu writes the grant when the player approves the plugin, through a temporary file and a rename.
+
+## Lens requests
+
+A development build of the runtime answers `angelica look` through the `look` folder of the installation: the command writes `look/request.json`, `{"format": 1, "id": "<random>", "query": "<query>"}`, and the host, between two frames, removes it, runs the [query](./plugin-api-v1.md#lens) with every domain readable, and writes `look/response.json` with the same `id` and either `columns` (each with `name`, `field`, `doc`, `domain`) and `rows` (each with `indexes` and `values` as JSON: numbers, booleans, plain text, `{"sheet", "row"}`, names, `{"names", "bits"}`, or `null`), or `error` with `kind` and `message`. Fields no plugin reads stay unread. A release build has no `look` folder and never reads one.
+
+A request may also have `mode`, `rows` by default:
+
+- `watch`: `query` is a [watch](./plugin-api-v1.md#lens) and `seconds` (1 to 60) how long it lasts; the response has `columns`, `firings` (the rows of each firing), and `dropped`.
+- `dump`: `query` is a path to objects and `bytes` (1 to 4096) how much of each object to read; the response has `objects`, each with `indexes`, `address`, and `bytes` as lowercase hexadecimal, or `null` where the memory cannot be read.
+- `trace`: `entries` lists up to 64 `function` and `location` entries and `seconds` (1 to 60) how long to count; the response has `calls`, the count of each entry.
+
+The host answers a `watch` or a `trace` when its seconds are over.
 
 ## Plugin settings
 
@@ -56,7 +68,7 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 ## Angelica settings
 
-`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
+`state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9", "stop_key": "End"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), `stop_key` the key that stops plugins acting, one of the same keys and not the menu key, and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
 
 ## Storage
 
@@ -65,6 +77,8 @@ The installation key keeps packages from being swapped or damaged; it does not p
 ## Cache
 
 `cache/files/` holds the replacement game files plugins activated, named by the first 16 bytes of their SHA-256 in hex and their extension. The game reads them from there with its own disk reader, which takes paths of at most 259 characters; a cache path that would be longer refuses replacements. Files there are never trusted as input: each one is checked again when a plugin activates it.
+
+`cache/plugins/<plugin-id>/` is the plugin's [cache](./plugin-api-v1.md#storage), with the size its grant approves; it is removed with the plugin.
 
 ## Development installations
 

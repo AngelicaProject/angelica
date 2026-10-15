@@ -1,20 +1,23 @@
 //! Windows calls and game-memory access are confined to this module.
+mod act;
 mod chat;
 mod clipboard;
 mod component;
 mod crash;
+mod decide;
 mod entries;
 mod excel_rows;
 mod file_reads;
 mod game;
-mod game_ui;
 mod input;
 pub mod memory;
 mod overlay;
 mod painter;
 pub mod proxy;
+mod sound;
 mod startup;
 mod text_case;
+mod watch;
 
 pub(super) fn guard<T>(fallback: T, work: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {

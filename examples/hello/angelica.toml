@@ -9,16 +9,28 @@ description = "An example that uses every interface of the plugin API."
 authors = ["AngelicaProject contributors"]
 
 [permissions]
-"excel.text" = true
-"text.case" = true
 "files.replace" = true
 "chat.commands" = true
 "chat.print" = true
 "http.get" = true
-"state.self" = true
-"chat.read" = true
-"gameui.hide" = true
-"gameui.text" = true
+"http.websocket" = true
+"draw.world" = true
+"messages.send" = true
+"clipboard.write" = true
+"notifications" = true
+"sound.play" = true
+"storage.cache" = true
 
 [http]
 hosts = ["example.com"]
+
+[storage]
+cache = 1
+
+[messages]
+to = ["hello"]
+
+[lens]
+read = ["actions", "character", "chat", "location", "statuses", "windows"]
+act = ["actions", "teleport", "windows"]
+change = ["camera", "chat", "text", "windows"]

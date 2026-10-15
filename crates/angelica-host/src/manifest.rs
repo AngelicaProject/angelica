@@ -1,5 +1,10 @@
 //! Plugin manifests (`docs/formats/plugin-manifest-v1.md`) and the player's
 //! grants (`docs/formats/host-installation-v1.md`).
+//!
+//! A plugin asks for two kinds of permission: the host's own, such as
+//! `http.get`, and reading domains of the game map through Lens, whose
+//! wording comes from the map. A domain the map does not describe, or of a
+//! class this host does not present, is never granted.
 #![forbid(unsafe_code)]
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,16 +15,12 @@ pub const API_VERSIONS: &[&str] = &["1.0"];
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 /// Hosts a manifest lists for `http.get`.
 pub const MAX_HOSTS: usize = 32;
+/// Domains a manifest lists in `[lens] read`.
+pub const MAX_DOMAINS: usize = 64;
 
 /// What a plugin may do beyond its own windows, storage, and jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Permission {
-    /// Replace text of the game's Excel sheets with text tables.
-    #[serde(rename = "excel.text")]
-    ExcelText,
-    /// Add letters to the game's letter case conversion.
-    #[serde(rename = "text.case")]
-    TextCase,
     /// Serve replacement game files.
     #[serde(rename = "files.replace")]
     FilesReplace,
@@ -32,34 +33,48 @@ pub enum Permission {
     /// Send HTTPS GET requests to the hosts the manifest lists.
     #[serde(rename = "http.get")]
     HttpGet,
-    /// Read the state of the player's character.
-    #[serde(rename = "state.self")]
-    StateSelf,
-    /// Receive the messages added to the chat log.
-    #[serde(rename = "chat.read")]
-    ChatRead,
-    /// Keep elements of the game's own windows hidden.
-    #[serde(rename = "gameui.hide")]
-    GameUiHide,
-    /// Put text in text elements of the game's own windows.
-    #[serde(rename = "gameui.text")]
-    GameUiText,
+    /// Send data to the hosts the manifest lists: POST, PUT, PATCH, DELETE.
+    #[serde(rename = "http.send")]
+    HttpSend,
+    /// Draw marks, lines, and text over the game world.
+    #[serde(rename = "draw.world")]
+    DrawWorld,
+    /// Send messages to the plugins the manifest lists.
+    #[serde(rename = "messages.send")]
+    MessagesSend,
+    /// Put text on the player's clipboard for the player's action.
+    #[serde(rename = "clipboard.write")]
+    ClipboardWrite,
+    /// Show notifications at the top right of the screen.
+    #[serde(rename = "notifications")]
+    Notifications,
+    /// Play sounds from the plugin's storage.
+    #[serde(rename = "sound.play")]
+    SoundPlay,
+    /// Keep a cache of files of the size `[storage] cache` names.
+    #[serde(rename = "storage.cache")]
+    StorageCache,
+    /// Keep WebSocket connections to the hosts the manifest lists.
+    #[serde(rename = "http.websocket")]
+    HttpWebsocket,
 }
 
 impl Permission {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::ExcelText => "excel.text",
-            Self::TextCase => "text.case",
             Self::FilesReplace => "files.replace",
             Self::ChatCommands => "chat.commands",
             Self::ChatPrint => "chat.print",
             Self::HttpGet => "http.get",
-            Self::StateSelf => "state.self",
-            Self::ChatRead => "chat.read",
-            Self::GameUiHide => "gameui.hide",
-            Self::GameUiText => "gameui.text",
+            Self::HttpSend => "http.send",
+            Self::DrawWorld => "draw.world",
+            Self::MessagesSend => "messages.send",
+            Self::ClipboardWrite => "clipboard.write",
+            Self::Notifications => "notifications",
+            Self::SoundPlay => "sound.play",
+            Self::StorageCache => "storage.cache",
+            Self::HttpWebsocket => "http.websocket",
         }
     }
 
@@ -67,18 +82,18 @@ impl Permission {
     #[must_use]
     pub fn description(self) -> &'static str {
         match self {
-            Self::ExcelText => "Replaces text the game shows from its data sheets",
-            Self::TextCase => "Changes how the game capitalizes letters",
-            Self::FilesReplace => "Replaces game files: fonts and textures",
+            Self::FilesReplace => "Replaces game files: fonts, textures, materials, and models",
             Self::ChatCommands => "Adds its own chat commands",
             Self::ChatPrint => "Prints its messages in your chat log",
             Self::HttpGet => "Downloads from these internet hosts",
-            Self::StateSelf => {
-                "Reads your character: name, class, level, HP and MP, position, and zone"
-            }
-            Self::ChatRead => "Reads the messages in your chat log, including other players'",
-            Self::GameUiHide => "Hides parts of the game's interface",
-            Self::GameUiText => "Puts its own text in the game's windows",
+            Self::HttpSend => "Sends data to these internet hosts",
+            Self::DrawWorld => "Draws marks, lines, and text over the game world",
+            Self::MessagesSend => "Sends messages to these plugins",
+            Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
+            Self::Notifications => "Shows notifications and flashes the game on the taskbar",
+            Self::SoundPlay => "Plays sounds",
+            Self::StorageCache => "Keeps a cache of files on your disk",
+            Self::HttpWebsocket => "Keeps live connections to these internet hosts",
         }
     }
 
@@ -86,14 +101,15 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
-            Self::HttpGet => Class::Network,
-            Self::ChatRead => Class::OtherPlayers,
-            Self::ExcelText
-            | Self::TextCase
-            | Self::FilesReplace
-            | Self::GameUiHide
-            | Self::GameUiText => Class::WhatYouSee,
-            Self::ChatCommands | Self::ChatPrint | Self::StateSelf => Class::YoursOnly,
+            Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
+            Self::FilesReplace | Self::DrawWorld => Class::WhatYouSee,
+            Self::ChatCommands
+            | Self::ChatPrint
+            | Self::MessagesSend
+            | Self::ClipboardWrite
+            | Self::Notifications
+            | Self::SoundPlay
+            | Self::StorageCache => Class::YoursOnly,
         }
     }
 }
@@ -102,6 +118,8 @@ impl Permission {
 /// class first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Class {
+    /// Acts in the game for the player.
+    Acts,
     /// Reaches the internet.
     Network,
     /// Sees what other players say or do.
@@ -117,6 +135,7 @@ impl Class {
     pub fn title(self) -> &'static str {
         match self {
             Self::Network => "Uses the internet",
+            Self::Acts => "Acts in the game for you",
             Self::OtherPlayers => "Sees other players",
             Self::WhatYouSee => "Changes what you see",
             Self::YoursOnly => "Only for you",
@@ -124,40 +143,231 @@ impl Class {
     }
 }
 
-/// A permission the player is asked to approve, with the hosts of
-/// `http.get`.
+/// The class the player sees reading a domain in; `None` for a class this
+/// host does not present, whose domains it never grants.
+#[must_use]
+pub fn domain_class(class: angelica_map::DomainClass) -> Option<Class> {
+    use angelica_map::DomainClass;
+    match class {
+        DomainClass::You => Some(Class::YoursOnly),
+        DomainClass::Display => Some(Class::WhatYouSee),
+        DomainClass::Others => Some(Class::OtherPlayers),
+        DomainClass::Acts | DomainClass::ActsOnOthers => None,
+    }
+}
+
+/// The domains of the game map, by name, as the host knows them now.
+pub type Domains<'a> = &'a dyn Fn(&str) -> Option<angelica_map::Domain>;
+
+/// Something a plugin holds or asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    /// A permission of the host.
+    Permission(Permission),
+    /// Reading a domain of the game map through Lens.
+    Read(angelica_map::Domain),
+    /// Acting in a domain of the game map through Lens.
+    Act(angelica_map::Domain),
+    /// Changing values of a domain of the game map through Lens.
+    Change(angelica_map::Domain),
+}
+
+impl Asked {
+    #[must_use]
+    pub fn class(&self) -> Class {
+        match self {
+            Self::Permission(permission) => permission.class(),
+            Self::Read(domain) => domain_class(domain.class).unwrap_or(Class::YoursOnly),
+            Self::Act(_) => Class::Acts,
+            Self::Change(_) => Class::WhatYouSee,
+        }
+    }
+
+    /// How the menu's details name it: `http.get`, `inventory.read`.
+    #[must_use]
+    pub fn name(&self) -> String {
+        match self {
+            Self::Permission(permission) => permission.name().to_owned(),
+            Self::Read(domain) => format!("{}.read", domain.name),
+            Self::Act(domain) => format!("{}.act", domain.name),
+            Self::Change(domain) => format!("{}.change", domain.name),
+        }
+    }
+}
+
+/// Something the player is asked to approve, with the hosts of `http.get`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
-    pub permission: Permission,
+    pub asked: Asked,
     pub hosts: Vec<String>,
 }
 
-/// What the player is asked to approve, by class, the most serious first:
-/// everything the manifest declares, or with an earlier approval of the
-/// plugin only what it does not cover.
+/// The domains of `[lens] read` that can be granted: those the map
+/// describes, in a class this host presents.
+fn grantable(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Domain> {
+    manifest
+        .lens_read()
+        .iter()
+        .filter_map(|name| domains(name))
+        .filter(|domain| domain_class(domain.class).is_some())
+        .collect()
+}
+
+/// The domains of `[lens] act` that can be granted: those the map
+/// describes with words for acting in them.
+fn grantable_act(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Domain> {
+    manifest
+        .lens_act()
+        .iter()
+        .filter_map(|name| domains(name))
+        .filter(|domain| domain.act.is_some())
+        .collect()
+}
+
+/// The domains of `[lens] change` that can be granted: those the map
+/// describes with words for changing them.
+fn grantable_change(manifest: &Manifest, domains: Domains<'_>) -> Vec<angelica_map::Domain> {
+    manifest
+        .lens_change()
+        .iter()
+        .filter_map(|name| domains(name))
+        .filter(|domain| domain.change.is_some())
+        .collect()
+}
+
+/// The domains of `[lens] read`, `act`, and `change` that are not granted now:
+/// the map does not describe them, this host does not present their class,
+/// or the map has no words for acting in them or changing them. Acting is
+/// named `<domain>.act`, changing `<domain>.change`.
 #[must_use]
-pub fn requests(manifest: &Manifest, granted: Option<&Grants>) -> Vec<(Class, Vec<Request>)> {
+pub fn ungranted(manifest: &Manifest, domains: Domains<'_>) -> Vec<String> {
+    let grantable: BTreeSet<String> = grantable(manifest, domains)
+        .into_iter()
+        .map(|domain| domain.name)
+        .collect();
+    let acting: BTreeSet<String> = grantable_act(manifest, domains)
+        .into_iter()
+        .map(|domain| domain.name)
+        .collect();
+    let changing: BTreeSet<String> = grantable_change(manifest, domains)
+        .into_iter()
+        .map(|domain| domain.name)
+        .collect();
+    manifest
+        .lens_read()
+        .into_iter()
+        .filter(|name| !grantable.contains(name))
+        .chain(
+            manifest
+                .lens_act()
+                .into_iter()
+                .filter(|name| !acting.contains(name))
+                .map(|name| format!("{name}.act")),
+        )
+        .chain(
+            manifest
+                .lens_change()
+                .into_iter()
+                .filter(|name| !changing.contains(name))
+                .map(|name| format!("{name}.change")),
+        )
+        .collect()
+}
+
+/// Everything the manifest asks for that can be granted.
+#[must_use]
+pub fn asked(manifest: &Manifest, domains: Domains<'_>) -> Vec<Asked> {
+    manifest
+        .permissions()
+        .iter()
+        .map(|permission| Asked::Permission(*permission))
+        .chain(grantable(manifest, domains).into_iter().map(Asked::Read))
+        .chain(grantable_act(manifest, domains).into_iter().map(Asked::Act))
+        .chain(
+            grantable_change(manifest, domains)
+                .into_iter()
+                .map(Asked::Change),
+        )
+        .collect()
+}
+
+/// What the player is asked to approve, by class, the most serious first:
+/// everything the manifest declares that can be granted, or with an earlier
+/// approval of the plugin only what it does not cover.
+#[must_use]
+pub fn requests(
+    manifest: &Manifest,
+    granted: Option<&Grants>,
+    domains: Domains<'_>,
+) -> Vec<(Class, Vec<Request>)> {
     let granted = granted.filter(|grants| grants.format == 1 && grants.plugin_id == manifest.id());
     let mut classes: BTreeMap<Class, Vec<Request>> = BTreeMap::new();
-    for &permission in manifest.permissions() {
-        let hosts: Vec<String> = if permission == Permission::HttpGet {
-            manifest
-                .http_hosts()
-                .into_iter()
-                .filter(|host| granted.is_none_or(|grants| !grants.http_hosts.contains(host)))
-                .collect()
-        } else {
-            Vec::new()
+    for asked in asked(manifest, domains) {
+        let (covered, hosts) = match &asked {
+            Asked::Permission(permission) => {
+                let hosts: Vec<String> = if *permission == Permission::HttpGet {
+                    // The hosts are listed once, with http.get.
+                    manifest
+                        .http_hosts()
+                        .into_iter()
+                        .filter(|host| {
+                            granted.is_none_or(|grants| !grants.http_hosts.contains(host))
+                        })
+                        .collect()
+                } else if *permission == Permission::MessagesSend {
+                    manifest
+                        .message_to()
+                        .into_iter()
+                        .filter(|to| granted.is_none_or(|grants| !grants.message_to.contains(to)))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let size_covered = *permission != Permission::StorageCache
+                    || manifest.cache_gib().is_none_or(|gib| {
+                        granted.is_some_and(|grants| {
+                            grants.cache_gib.is_some_and(|granted| gib <= granted)
+                        })
+                    });
+                (
+                    size_covered
+                        && granted.is_some_and(|grants| grants.permissions.contains(permission)),
+                    hosts,
+                )
+            }
+            Asked::Read(domain) => (
+                granted.is_some_and(|grants| grants.lens_read.contains(&domain.name)),
+                Vec::new(),
+            ),
+            Asked::Act(domain) => (
+                granted.is_some_and(|grants| grants.lens_act.contains(&domain.name)),
+                Vec::new(),
+            ),
+            Asked::Change(domain) => (
+                granted.is_some_and(|grants| grants.lens_change.contains(&domain.name)),
+                Vec::new(),
+            ),
         };
-        let covered = granted.is_some_and(|grants| grants.permissions.contains(&permission));
         if !covered || !hosts.is_empty() {
             classes
-                .entry(permission.class())
+                .entry(asked.class())
                 .or_default()
-                .push(Request { permission, hosts });
+                .push(Request { asked, hosts });
         }
     }
     classes.into_iter().collect()
+}
+
+/// The domains a plugin reads and acts in through Lens.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lens {
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub act: Vec<String>,
+    #[serde(default)]
+    pub change: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +392,24 @@ pub struct Http {
     pub hosts: Vec<String>,
 }
 
+/// The most gibibytes a plugin's cache holds.
+pub const MOST_CACHE_GIB: u32 = 1024;
+
+/// The size of the plugin's cache.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageSection {
+    /// In gibibytes.
+    pub cache: u32,
+}
+
+/// The plugins `messages.send` reaches.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessagesTo {
+    pub to: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -191,6 +419,12 @@ pub struct Manifest {
     permissions: toml::Table,
     #[serde(default)]
     http: Option<Http>,
+    #[serde(default)]
+    messages: Option<MessagesTo>,
+    #[serde(default)]
+    storage: Option<StorageSection>,
+    #[serde(default)]
+    lens: Option<Lens>,
     #[serde(skip)]
     pub declared: BTreeSet<Permission>,
     /// Where the package came from; the loader sets it, the file has none.
@@ -281,12 +515,56 @@ impl Manifest {
                 _ => return fail(format!("permission {name} is true or false")),
             }
         }
-        let hosts = manifest
-            .http
-            .as_ref()
-            .map_or(&[][..], |http| &http.hosts[..]);
+        manifest.check_sections(&declared)?;
+        if let Some(lens) = &manifest.lens {
+            check_domains("lens.read", &lens.read)?;
+            check_domains("lens.act", &lens.act)?;
+            check_domains("lens.change", &lens.change)?;
+        }
+        manifest.declared = declared;
+        Ok(manifest)
+    }
+
+    /// Checks the tables that come with permissions: `[http]`,
+    /// `[messages]`, and `[storage]`.
+    fn check_sections(&self, declared: &BTreeSet<Permission>) -> Result<(), ManifestError> {
+        let fail = |message: String| Err(ManifestError(message));
+        let hosts = self.http.as_ref().map_or(&[][..], |http| &http.hosts[..]);
         if declared.contains(&Permission::HttpGet) == hosts.is_empty() {
             return fail("http.get and a non-empty http.hosts come together".into());
+        }
+        if declared.contains(&Permission::HttpSend) && !declared.contains(&Permission::HttpGet) {
+            return fail("http.send comes with http.get and its http.hosts".into());
+        }
+        if declared.contains(&Permission::HttpWebsocket) && !declared.contains(&Permission::HttpGet)
+        {
+            return fail("http.websocket comes with http.get and its http.hosts".into());
+        }
+        let receivers = self
+            .messages
+            .as_ref()
+            .map_or(&[][..], |messages| &messages.to[..]);
+        if declared.contains(&Permission::MessagesSend) == receivers.is_empty() {
+            return fail("messages.send and a non-empty messages.to come together".into());
+        }
+        if receivers.len() > MAX_HOSTS {
+            return fail(format!("messages.to lists at most {MAX_HOSTS} plugins"));
+        }
+        let mut listed = BTreeSet::new();
+        for receiver in receivers {
+            if !valid_id(receiver) {
+                return fail(format!("messages.to: {receiver:?} is not a plugin id"));
+            }
+            if !listed.insert(receiver) {
+                return fail(format!("messages.to lists {receiver} twice"));
+            }
+        }
+        let cache = self.storage.as_ref().map(|storage| storage.cache);
+        if declared.contains(&Permission::StorageCache) != cache.is_some() {
+            return fail("storage.cache and storage.cache's size come together".into());
+        }
+        if cache.is_some_and(|gib| !(1..=MOST_CACHE_GIB).contains(&gib)) {
+            return fail(format!("storage.cache is 1 to {MOST_CACHE_GIB} GiB"));
         }
         if hosts.len() > MAX_HOSTS {
             return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
@@ -299,8 +577,7 @@ impl Manifest {
                 return fail(format!("http.hosts lists {host} twice"));
             }
         }
-        manifest.declared = declared;
-        Ok(manifest)
+        Ok(())
     }
 
     /// The hosts `http.get` reaches, as the manifest lists them.
@@ -312,10 +589,52 @@ impl Manifest {
             .collect()
     }
 
+    /// The size of the cache `storage.cache` keeps, in gibibytes.
+    #[must_use]
+    pub fn cache_gib(&self) -> Option<u32> {
+        self.storage.as_ref().map(|storage| storage.cache)
+    }
+
+    /// The plugins `messages.send` reaches, as the manifest lists them.
+    #[must_use]
+    pub fn message_to(&self) -> BTreeSet<String> {
+        self.messages
+            .iter()
+            .flat_map(|messages| messages.to.iter().cloned())
+            .collect()
+    }
+
     /// The permissions the manifest declares.
     #[must_use]
     pub fn permissions(&self) -> &BTreeSet<Permission> {
         &self.declared
+    }
+
+    /// The domains the manifest's `[lens] read` lists.
+    #[must_use]
+    pub fn lens_read(&self) -> BTreeSet<String> {
+        self.lens
+            .iter()
+            .flat_map(|lens| lens.read.iter().cloned())
+            .collect()
+    }
+
+    /// The domains the manifest's `[lens] act` lists.
+    #[must_use]
+    pub fn lens_act(&self) -> BTreeSet<String> {
+        self.lens
+            .iter()
+            .flat_map(|lens| lens.act.iter().cloned())
+            .collect()
+    }
+
+    /// The domains the manifest's `[lens] change` lists.
+    #[must_use]
+    pub fn lens_change(&self) -> BTreeSet<String> {
+        self.lens
+            .iter()
+            .flat_map(|lens| lens.change.iter().cloned())
+            .collect()
     }
 
     #[must_use]
@@ -324,36 +643,122 @@ impl Manifest {
     }
 }
 
+/// Checks a list of domain names of `[lens]`, called `what`.
+fn check_domains(what: &str, listed: &[String]) -> Result<(), ManifestError> {
+    if listed.len() > MAX_DOMAINS {
+        return Err(ManifestError(format!(
+            "{what} lists at most {MAX_DOMAINS} domains"
+        )));
+    }
+    let mut domains = BTreeSet::new();
+    for domain in listed {
+        let word = domain.len() <= 64
+            && domain.starts_with(|c: char| c.is_ascii_lowercase())
+            && domain
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !word {
+            return Err(ManifestError(format!(
+                "{what}: {domain:?} is not a domain name: lowercase letters, digits, and underscores"
+            )));
+        }
+        if !domains.insert(domain) {
+            return Err(ManifestError(format!("{what} lists {domain} twice")));
+        }
+    }
+    Ok(())
+}
+
 /// The player's approval of a plugin: `grants/<id>.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grants {
     pub format: u32,
     pub plugin_id: String,
+    /// A permission this Angelica no longer has, such as one an update
+    /// replaced with a domain of the game map, is left out: the plugin asks
+    /// for what its manifest needs now.
+    #[serde(deserialize_with = "known_permissions")]
     pub permissions: BTreeSet<Permission>,
     /// The hosts approved for `http.get`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub http_hosts: BTreeSet<String>,
+    /// The plugins approved for `messages.send`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub message_to: BTreeSet<String>,
+    /// The size approved for `storage.cache`, in gibibytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_gib: Option<u32>,
+    /// The domains of the game map approved for reading through Lens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub lens_read: BTreeSet<String>,
+    /// The domains of the game map approved for acting in through Lens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub lens_act: BTreeSet<String>,
+    /// The domains of the game map approved for changing through Lens.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub lens_change: BTreeSet<String>,
+}
+
+/// The permissions of a grant this Angelica knows, by name.
+fn known_permissions<'de, D>(deserializer: D) -> Result<BTreeSet<Permission>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let names = Vec::<String>::deserialize(deserializer)?;
+    Ok(names
+        .into_iter()
+        .filter_map(|name| serde_json::from_value(serde_json::Value::String(name)).ok())
+        .collect())
 }
 
 impl Grants {
+    /// Everything the manifest asks for that can be granted.
     #[must_use]
-    pub fn for_manifest(manifest: &Manifest) -> Self {
+    pub fn for_manifest(manifest: &Manifest, domains: Domains<'_>) -> Self {
         Self {
             format: 1,
             plugin_id: manifest.id().into(),
             permissions: manifest.permissions().clone(),
             http_hosts: manifest.http_hosts(),
+            message_to: manifest.message_to(),
+            cache_gib: manifest.cache_gib(),
+            lens_read: grantable(manifest, domains)
+                .into_iter()
+                .map(|domain| domain.name)
+                .collect(),
+            lens_act: grantable_act(manifest, domains)
+                .into_iter()
+                .map(|domain| domain.name)
+                .collect(),
+            lens_change: grantable_change(manifest, domains)
+                .into_iter()
+                .map(|domain| domain.name)
+                .collect(),
         }
     }
 
-    /// Whether these grants cover everything the manifest declares.
+    /// Whether these grants cover everything the manifest asks for that
+    /// can be granted.
     #[must_use]
-    pub fn cover(&self, manifest: &Manifest) -> bool {
+    pub fn cover(&self, manifest: &Manifest, domains: Domains<'_>) -> bool {
         self.format == 1
             && self.plugin_id == manifest.id()
             && manifest.permissions().is_subset(&self.permissions)
             && manifest.http_hosts().is_subset(&self.http_hosts)
+            && manifest.message_to().is_subset(&self.message_to)
+            && manifest
+                .cache_gib()
+                .is_none_or(|gib| self.cache_gib.is_some_and(|granted| gib <= granted))
+            && grantable(manifest, domains)
+                .iter()
+                .all(|domain| self.lens_read.contains(&domain.name))
+            && grantable_act(manifest, domains)
+                .iter()
+                .all(|domain| self.lens_act.contains(&domain.name))
+            && grantable_change(manifest, domains)
+                .iter()
+                .all(|domain| self.lens_change.contains(&domain.name))
     }
 }
 
@@ -370,9 +775,103 @@ version = "0.2.0"
 api = "1.0"
 description = "Community translations."
 [permissions]
-"excel.text" = true
-"text.case" = true
+"files.replace" = true
+"draw.world" = true
 "#;
+
+    fn none(_: &str) -> Option<angelica_map::Domain> {
+        None
+    }
+
+    /// The map describes `inventory`, for the player only, and `party`, of
+    /// a class this host does not present.
+    fn described(name: &str) -> Option<angelica_map::Domain> {
+        let wording = |en: &str| angelica_map::Wording {
+            en: en.into(),
+            ru: en.into(),
+        };
+        let class = match name {
+            "inventory" => angelica_map::DomainClass::You,
+            "party" => angelica_map::DomainClass::ActsOnOthers,
+            _ => return None,
+        };
+        Some(angelica_map::Domain {
+            name: name.into(),
+            doc: "A domain.".into(),
+            class,
+            read: wording("Sees the items you carry"),
+            change: None,
+            act: None,
+        })
+    }
+
+    #[test]
+    fn domains_the_map_describes_are_asked_for_and_granted() {
+        let manifest = Manifest::parse(&format!(
+            "{VALID}[lens]\nread = [\"inventory\", \"party\", \"retainers\"]\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            manifest.lens_read().into_iter().collect::<Vec<_>>(),
+            ["inventory", "party", "retainers"]
+        );
+        let all = requests(&manifest, None, &described);
+        assert_eq!(all.last().unwrap().0, Class::YoursOnly);
+        assert_eq!(
+            all.last().unwrap().1,
+            [Request {
+                asked: Asked::Read(described("inventory").unwrap()),
+                hosts: Vec::new(),
+            }]
+        );
+        assert_eq!(ungranted(&manifest, &described), ["party", "retainers"]);
+        let grants = Grants::for_manifest(&manifest, &described);
+        assert_eq!(
+            grants
+                .lens_read
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["inventory"]
+        );
+        assert!(grants.cover(&manifest, &described));
+        assert!(requests(&manifest, Some(&grants), &described).is_empty());
+        let json = serde_json::to_string(&grants).unwrap();
+        assert!(json.contains("\"lens_read\":[\"inventory\"]"), "{json}");
+        // An approval from before the map described the domain does not
+        // cover it.
+        let earlier = Grants::for_manifest(&manifest, &none);
+        assert!(!earlier.cover(&manifest, &described));
+        assert_eq!(requests(&manifest, Some(&earlier), &described).len(), 1);
+
+        for read in [
+            "[\"Inventory\"]",
+            "[\"inventory\", \"inventory\"]",
+            "[\"inventory.read\"]",
+            "[\"\"]",
+        ] {
+            assert!(
+                Manifest::parse(&format!("{VALID}[lens]\nread = {read}\n")).is_err(),
+                "{read}"
+            );
+        }
+        assert!(Manifest::parse(&format!("{VALID}[lens]\nwrite = []\n")).is_err());
+    }
+
+    #[test]
+    fn a_grant_of_a_removed_permission_keeps_the_rest_and_asks_again() {
+        let old = r#"{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "files.replace"]}"#;
+        let grants: Grants = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            grants.permissions.iter().copied().collect::<Vec<_>>(),
+            [Permission::FilesReplace]
+        );
+        let manifest = Manifest::parse(VALID).unwrap();
+        assert!(
+            !grants.cover(&manifest, &none),
+            "draw.world was never granted"
+        );
+    }
 
     #[test]
     fn parses_a_valid_manifest() {
@@ -380,13 +879,13 @@ description = "Community translations."
         assert_eq!(manifest.id(), "harmonia");
         assert_eq!(
             manifest.permissions().iter().copied().collect::<Vec<_>>(),
-            [Permission::ExcelText, Permission::TextCase]
+            [Permission::FilesReplace, Permission::DrawWorld]
         );
-        let grants = Grants::for_manifest(&manifest);
-        assert!(grants.cover(&manifest));
+        let grants = Grants::for_manifest(&manifest, &none);
+        assert!(grants.cover(&manifest, &none));
         let mut fewer = grants.clone();
-        fewer.permissions.remove(&Permission::TextCase);
-        assert!(!fewer.cover(&manifest));
+        fewer.permissions.remove(&Permission::DrawWorld);
+        assert!(!fewer.cover(&manifest, &none));
     }
 
     #[test]
@@ -405,8 +904,8 @@ hosts = [{hosts}]
             manifest.http_hosts().into_iter().collect::<Vec<_>>(),
             ["*.cdn.example.org", "example.com"]
         );
-        let grants = Grants::for_manifest(&manifest);
-        assert!(grants.cover(&manifest));
+        let grants = Grants::for_manifest(&manifest, &none);
+        assert!(grants.cover(&manifest, &none));
         let json = serde_json::to_string(&grants).unwrap();
         assert!(
             json.contains("\"http_hosts\":[\"*.cdn.example.org\",\"example.com\"]"),
@@ -414,8 +913,11 @@ hosts = [{hosts}]
         );
 
         let more = Manifest::parse(&with("\"example.com\", \"example.net\"")).unwrap();
-        assert!(!grants.cover(&more), "a new host needs approval again");
-        let without = Grants::for_manifest(&Manifest::parse(VALID).unwrap());
+        assert!(
+            !grants.cover(&more, &none),
+            "a new host needs approval again"
+        );
+        let without = Grants::for_manifest(&Manifest::parse(VALID).unwrap(), &none);
         assert!(
             !serde_json::to_string(&without)
                 .unwrap()
@@ -451,40 +953,47 @@ hosts = [\"example.com\"]
             "{VALID}\"http.get\" = true\n[http]\nhosts = [\"a.example.org\", \"b.example.org\"]\n"
         ))
         .unwrap();
-        let all = requests(&manifest, None);
+        let all = requests(&manifest, None, &none);
         let classes: Vec<Class> = all.iter().map(|(class, _)| *class).collect();
         assert_eq!(classes, [Class::Network, Class::WhatYouSee]);
         assert_eq!(all[0].1[0].hosts.len(), 2);
 
-        // An earlier approval without one host and without letter case.
-        let mut granted = Grants::for_manifest(&manifest);
-        granted.permissions.remove(&Permission::TextCase);
+        // An earlier approval without one host and without drawing.
+        let mut granted = Grants::for_manifest(&manifest, &none);
+        granted.permissions.remove(&Permission::DrawWorld);
         let first = granted.http_hosts.iter().next().unwrap().clone();
         granted.http_hosts.remove(&first);
-        let new = requests(&manifest, Some(&granted));
+        let new = requests(&manifest, Some(&granted), &none);
         assert_eq!(
             new,
             [
                 (
                     Class::Network,
                     vec![Request {
-                        permission: Permission::HttpGet,
+                        asked: Asked::Permission(Permission::HttpGet),
                         hosts: vec![first],
                     }]
                 ),
                 (
                     Class::WhatYouSee,
                     vec![Request {
-                        permission: Permission::TextCase,
+                        asked: Asked::Permission(Permission::DrawWorld),
                         hosts: Vec::new(),
                     }]
                 ),
             ]
         );
-        assert!(requests(&manifest, Some(&Grants::for_manifest(&manifest))).is_empty());
+        assert!(
+            requests(
+                &manifest,
+                Some(&Grants::for_manifest(&manifest, &none)),
+                &none
+            )
+            .is_empty()
+        );
         // Another plugin's approval counts for nothing.
         granted.plugin_id = "other".into();
-        assert_eq!(requests(&manifest, Some(&granted)), all);
+        assert_eq!(requests(&manifest, Some(&granted), &none), all);
     }
 
     #[test]
@@ -494,8 +1003,8 @@ hosts = [\"example.com\"]
             ("id = \"harmonia\"", "id = \"Harmonia\""),
             ("api = \"1.0\"", "api = \"1.5\""),
             ("version = \"0.2.0\"", "version = \"two\""),
-            ("\"text.case\" = true", "\"game.memory\" = true"),
-            ("\"text.case\" = true", "\"text.case\" = [\"x\"]"),
+            ("\"draw.world\" = true", "\"game.memory\" = true"),
+            ("\"draw.world\" = true", "\"text.case\" = [\"x\"]"),
             (
                 "description = \"Community translations.\"",
                 "description = \" \"",
@@ -507,11 +1016,63 @@ hosts = [\"example.com\"]
     }
 
     #[test]
+    fn a_cache_names_its_size_and_a_larger_one_asks_again() {
+        let with = |gib: &str| {
+            VALID.replace(
+                "\"draw.world\" = true
+",
+                &format!(
+                    "\"draw.world\" = true
+\"storage.cache\" = true
+[storage]
+cache = {gib}
+"
+                ),
+            )
+        };
+        let manifest = Manifest::parse(&with("64")).unwrap();
+        assert_eq!(manifest.cache_gib(), Some(64));
+        let grants = Grants::for_manifest(&manifest, &none);
+        assert_eq!(grants.cache_gib, Some(64));
+        assert!(grants.cover(&Manifest::parse(&with("32")).unwrap(), &none));
+        let larger = Manifest::parse(&with("128")).unwrap();
+        assert!(!grants.cover(&larger, &none));
+        let asked = requests(&larger, Some(&grants), &none);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(
+            asked[0].1[0].asked,
+            Asked::Permission(Permission::StorageCache)
+        );
+        for gib in ["0", "1025"] {
+            assert!(Manifest::parse(&with(gib)).is_err(), "{gib}");
+        }
+        assert!(
+            Manifest::parse(&VALID.replace(
+                "[permissions]",
+                "[storage]
+cache = 1
+[permissions]"
+            ))
+            .is_err()
+        );
+        assert!(
+            Manifest::parse(&VALID.replace(
+                "\"draw.world\" = true
+",
+                "\"draw.world\" = true
+\"storage.cache\" = true
+"
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn damaged_manifests_are_refused_without_panicking() {
         let mut mutator = crate::mutations::Mutator::new(13);
         for _ in 0..20_000 {
             if let Ok(manifest) = Manifest::parse(&mutator.mutate_text(VALID)) {
-                let _ = Grants::for_manifest(&manifest).cover(&manifest);
+                let _ = Grants::for_manifest(&manifest, &none).cover(&manifest, &none);
                 let _ = manifest.http_hosts();
             }
         }
