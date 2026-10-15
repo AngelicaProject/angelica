@@ -242,6 +242,13 @@ impl Hello {
                     Err(error) => self.say(format!("cannot sprint: {}", error.message)),
                 }
             }
+            "teleport" => {
+                // Aetheryte 8 is Limsa Lominsa Lower Decks.
+                match lens::act("teleport", &[("aetheryte", 8u32.into())]) {
+                    Ok(()) => self.say("teleporting to Limsa Lominsa"),
+                    Err(error) => self.say(format!("cannot teleport: {}", error.message)),
+                }
+            }
             "statuses" => match statuses() {
                 Ok(text) => self.say(text),
                 Err(error) => self.say(format!("cannot read the statuses: {error}")),
@@ -688,6 +695,7 @@ impl Plugin for Hello {
                                 .button("heard", "Last chat message")
                                 .button("used", "Last action used")
                                 .button("sprint", "Sprint")
+                                .button("teleport", "Teleport to Limsa Lominsa")
                                 .button("zoom", "Zoom out further")
                                 .button("yes", "Say yes")
                                 .button("mark", "Mark where I am")

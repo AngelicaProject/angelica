@@ -1076,6 +1076,12 @@ class = "you"
 read = { en = "Sees the actions you use", ru = "Видит действия, которые вы используете" }
 act = { en = "Uses actions for you", ru = "Использует действия за вас" }
 
+[domains.teleport]
+doc = "Teleports."
+class = "you"
+read = { en = "Sees where you teleport", ru = "Видит, куда вы телепортируетесь" }
+act = { en = "Teleports you to aetherytes", ru = "Телепортирует вас к эфиритам" }
+
 [domains.windows]
 doc = "The game's windows."
 class = "others"
@@ -1790,7 +1796,10 @@ fn sprint_is_taken_through_the_map_under_its_domain() {
     );
 
     let test = with_character(
-        &MANIFEST.replace("act = [\"actions\", \"windows\"]", "act = [\"windows\"]"),
+        &MANIFEST.replace(
+            "act = [\"actions\", \"teleport\", \"windows\"]",
+            "act = [\"teleport\", \"windows\"]",
+        ),
         &[],
     );
     test.game.set("player", &[("data.level", 90.into())]);
@@ -1959,6 +1968,7 @@ fn approval_names_the_domains_in_the_maps_words() {
             "statuses",
             "windows",
             "actions.act",
+            "teleport.act",
             "windows.act",
             "camera.change",
             "chat.change",

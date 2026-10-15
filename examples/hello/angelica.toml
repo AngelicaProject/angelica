@@ -32,5 +32,5 @@ to = ["hello"]
 
 [lens]
 read = ["actions", "character", "chat", "location", "statuses", "windows"]
-act = ["actions", "windows"]
+act = ["actions", "teleport", "windows"]
 change = ["camera", "chat", "text", "windows"]
