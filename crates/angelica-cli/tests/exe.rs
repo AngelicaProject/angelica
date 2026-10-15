@@ -85,3 +85,38 @@ fn proposes_unique_signatures_that_survive_moved_code() {
     );
     assert_eq!(field["within"], 0x1010);
 }
+
+#[test]
+fn a_leaf_functions_field_is_found_from_its_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let game = directory.path().join("игра").join("game");
+    std::fs::create_dir_all(&game).unwrap();
+    // A leaf function at 0x1000, which the exception directory does not
+    // record: mov [rcx+124h], eax; ret.
+    let code = [0x89, 0x81, 0x24, 0x01, 0x00, 0x00, 0xC3];
+    let executable = PeBuilder::new().section(".text", CODE, &code).build_file();
+    std::fs::write(game.join("ffxiv_dx11.exe"), executable).unwrap();
+
+    let field = run(
+        &game,
+        &[
+            "signature",
+            "--rva",
+            "0x1000",
+            "--within",
+            "--function",
+            "0x1000",
+        ],
+    );
+    assert_eq!(field["signature"], "89 81 ?? ?? ?? ??");
+    assert_eq!(field["within"], 0x1000);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_angelica"))
+        .args(["exe", "signature", "--game"])
+        .arg(&game)
+        .args(["--rva", "0x1000", "--within"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--function"));
+}
