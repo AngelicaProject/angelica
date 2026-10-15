@@ -83,6 +83,7 @@ doc = "Stores a parsed Excel row in a page whose rows are kept in a hash table."
 | a locator | it resolves to the same value as the entry |
 | `{ equals = "<entry>" }` | that entry is present with the same value |
 | `{ vtable_slot = n, code_slots = k }` | the entry's address is slot `n` of at least one 8-byte aligned table outside code whose first `k` slots (`k > n`) all point into code |
+| `{ contains = "<signature>" }`, optionally with `in = "<function entry>"` | the code of the entry's function, or of the `in` function, matches the signature exactly once. The function's code is every range of it in the exception directory, chained chunks included; a function without an entry there is searched as an `in` locator searches a leaf function. It confirms a fact of the game's code that an adapter relies on, such as a structure's size or a constant the game compares with |
 
 ## Resolution
 

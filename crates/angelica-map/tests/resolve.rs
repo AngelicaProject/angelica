@@ -300,3 +300,88 @@ fn writes_a_deterministic_build_record() {
         Some(0x1040)
     );
 }
+
+const FACTS: &str = r#"
+[function."game.facts.primary"]
+locator = { signature = "48 89 5C 24 08" }
+abi = { args = [], ret = "void" }
+thread = "any"
+checks = [{ contains = "11 22 ?? 44" }]
+
+[function."game.facts.in_chunk"]
+locator = { signature = "48 89 5C 24 08" }
+abi = { args = [], ret = "void" }
+thread = "any"
+checks = [{ contains = "55 66 77 88" }]
+
+[function."game.facts.outside"]
+locator = { signature = "48 89 5C 24 08" }
+abi = { args = [], ret = "void" }
+thread = "any"
+checks = [{ contains = "99 99 99 99" }]
+
+[function."game.facts.twice"]
+locator = { signature = "48 89 5C 24 08" }
+abi = { args = [], ret = "void" }
+thread = "any"
+checks = [{ contains = "AA BB CC DD" }]
+
+[function."game.facts.other"]
+locator = { signature = "40 53 48 83 EC 30" }
+abi = { args = [], ret = "void" }
+thread = "any"
+checks = [{ contains = "55 66 77 88", in = "game.facts.primary" }]
+"#;
+
+#[test]
+fn a_contains_check_searches_the_whole_function() {
+    let mut code = vec![0xCC; 0x60];
+    // 0x1000: the function's primary range.
+    code[0x00..0x0D].copy_from_slice(&[
+        0x48, 0x89, 0x5C, 0x24, 0x08, 0x11, 0x22, 0x33, 0x44, 0xAA, 0xBB, 0xCC, 0xDD,
+    ]);
+    // 0x1020: a chunk chained to it.
+    code[0x20..0x28].copy_from_slice(&[0x55, 0x66, 0x77, 0x88, 0xAA, 0xBB, 0xCC, 0xDD]);
+    // 0x1040: another function.
+    code[0x40..0x4A].copy_from_slice(&[0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x99, 0x99, 0x99, 0x99]);
+    let file = PeBuilder::new()
+        .section(".text", CODE, &code)
+        .functions(&[(0x1000, 0x1010), (0x1020, 0x1030), (0x1040, 0x1050)])
+        .chained(0x1020, 0x1000)
+        .build_file();
+    let image = Image::parse(&file, Layout::File).unwrap();
+    let map = Map::from_sources(
+        "format = 2\n",
+        &[("entries/game.toml".to_owned(), FACTS.to_owned())],
+    )
+    .unwrap();
+    let resolution = map.resolve(&image, BASE);
+    let failed = |reason| {
+        Some(Err(Absence::CheckFailed {
+            index: 0,
+            reason: Box::new(reason),
+        }))
+    };
+    assert_eq!(
+        resolution.get("game.facts.primary").cloned(),
+        Some(Ok(Value::Address(0x1000)))
+    );
+    assert_eq!(
+        resolution.get("game.facts.in_chunk").cloned(),
+        Some(Ok(Value::Address(0x1000))),
+        "a fact in a chained chunk is part of the function"
+    );
+    assert_eq!(
+        resolution.get("game.facts.outside").cloned(),
+        failed(Absence::NoMatch),
+        "bytes of another function are not this one's"
+    );
+    assert_eq!(
+        resolution.get("game.facts.twice").cloned(),
+        failed(Absence::Ambiguous(2))
+    );
+    assert_eq!(
+        resolution.get("game.facts.other").cloned(),
+        Some(Ok(Value::Address(0x1040)))
+    );
+}

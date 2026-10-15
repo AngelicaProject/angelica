@@ -84,8 +84,10 @@ pub struct Image<'a> {
     entry: u32,
     mapped_size: u32,
     sections: Vec<Section>,
-    /// Begin and end RVAs of the exception directory's entries, by begin.
-    functions: Vec<(u32, u32)>,
+    /// Begin and end RVAs of the exception directory's entries, by begin,
+    /// and the begin of the function each belongs to: its own, or for a
+    /// chunk the compiler split off, its chained primary entry's.
+    functions: Vec<(u32, u32, u32)>,
 }
 
 impl<'a> Image<'a> {
@@ -159,14 +161,25 @@ impl<'a> Image<'a> {
             let table = image
                 .bytes_at(rva, size as usize)
                 .ok_or(ImageError::Truncated("exception directory"))?;
-            image.functions = table
+            let entries: Vec<(u32, u32, u32)> = table
                 .as_chunks::<RUNTIME_FUNCTION_LEN>()
                 .0
                 .iter()
-                .map(|entry| (u32_at(entry, 0), u32_at(entry, 4)))
-                .filter(|&(begin, end)| begin < end)
+                .map(|entry| (u32_at(entry, 0), u32_at(entry, 4), u32_at(entry, 8)))
+                .filter(|&(begin, end, _)| begin < end)
                 .collect();
-            image.functions.sort_unstable();
+            let unwinds: std::collections::HashMap<u32, u32> = entries
+                .iter()
+                .map(|&(begin, _, unwind)| (begin, unwind))
+                .collect();
+            let mut functions: Vec<(u32, u32, u32)> = entries
+                .iter()
+                .map(|&(begin, end, unwind)| {
+                    (begin, end, image.chain_root(begin, unwind, &unwinds))
+                })
+                .collect();
+            functions.sort_unstable();
+            image.functions = functions;
         }
         Ok(image)
     }
@@ -249,16 +262,76 @@ impl<'a> Image<'a> {
     /// the RVA: for a function start, the function's primary range.
     #[must_use]
     pub fn function_at(&self, rva: u32) -> Option<std::ops::Range<u32>> {
-        let index = self.functions.partition_point(|&(begin, _)| begin <= rva);
-        let &(begin, end) = self.functions.get(index.checked_sub(1)?)?;
+        let index = self
+            .functions
+            .partition_point(|&(begin, _, _)| begin <= rva);
+        let &(begin, end, _) = self.functions.get(index.checked_sub(1)?)?;
         (rva < end).then_some(begin..end)
+    }
+
+    /// Every range of code of the function that starts at `start`: its
+    /// primary exception directory entry and the chunks chained to it, by
+    /// begin. Empty when no entry starts there.
+    #[must_use]
+    pub fn function_chunks(&self, start: u32) -> Vec<std::ops::Range<u32>> {
+        if self
+            .function_at(start)
+            .is_none_or(|range| range.start != start)
+        {
+            return Vec::new();
+        }
+        self.functions
+            .iter()
+            .filter(|&&(_, _, root)| root == start)
+            .map(|&(begin, end, _)| begin..end)
+            .collect()
+    }
+
+    /// The begin of the function an exception directory entry belongs to:
+    /// its own, or, while its unwind information chains to a parent entry,
+    /// that entry's, at most 32 links deep. A parent's own unwind
+    /// information is taken from the directory, `unwinds` by begin.
+    fn chain_root(
+        &self,
+        begin: u32,
+        unwind: u32,
+        unwinds: &std::collections::HashMap<u32, u32>,
+    ) -> u32 {
+        const CHAIN_INFO: u8 = 0x4;
+        let (mut root, mut unwind) = (begin, unwind);
+        for _ in 0..32 {
+            let Some(header) = (unwind != 0).then(|| self.bytes_at(unwind, 4)).flatten() else {
+                break;
+            };
+            if (header[0] >> 3) & CHAIN_INFO == 0 {
+                break;
+            }
+            // The chained entry follows the unwind codes, which are padded
+            // to an even count.
+            let codes = (usize::from(header[2]) + 1) & !1;
+            let Some(parent) = u32::try_from(4 + 2 * codes)
+                .ok()
+                .and_then(|offset| unwind.checked_add(offset))
+                .and_then(|at| self.bytes_at(at, RUNTIME_FUNCTION_LEN))
+            else {
+                break;
+            };
+            root = u32_at(parent, 0);
+            unwind = unwinds
+                .get(&root)
+                .copied()
+                .unwrap_or_else(|| u32_at(parent, 8));
+        }
+        root
     }
 
     /// The begin RVA of the first exception directory entry after the RVA.
     #[must_use]
     pub fn next_function_after(&self, rva: u32) -> Option<u32> {
-        let index = self.functions.partition_point(|&(begin, _)| begin <= rva);
-        self.functions.get(index).map(|&(begin, _)| begin)
+        let index = self
+            .functions
+            .partition_point(|&(begin, _, _)| begin <= rva);
+        self.functions.get(index).map(|&(begin, _, _)| begin)
     }
 
     /// The target of a 32-bit relative operand at `rva`, as a call, a jump,

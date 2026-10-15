@@ -247,9 +247,10 @@ impl ExcelRows {
             return Ok(());
         }
         let version = read_u16(sheet + layout.sheet_version);
-        // The game parses rows of version 3 and later with the version 3
-        // parser; the buffer layout is checked for every row.
-        if version < 3 {
+        // Only version 3 is the layout below: the game parses later
+        // versions with the same parser today, but a new version may bring
+        // a new layout. The buffer layout is checked for every row.
+        if version != 3 {
             if OTHER_VERSIONS.fetch_add(1, Ordering::Relaxed) < 4 {
                 note(&format!("a sheet of version {version} is left untouched"));
             }

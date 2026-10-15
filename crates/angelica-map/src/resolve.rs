@@ -277,6 +277,34 @@ impl Resolver<'_, '_> {
                     })?
             }
             Check::Equals(name) => self.value_of(name),
+            Check::Contains {
+                function,
+                signature,
+            } => {
+                let start = function
+                    .as_deref()
+                    .map_or(value, |name| self.value_of(name))
+                    .get();
+                let chunks = self.whole_function(start);
+                let failed = |reason| Absence::CheckFailed {
+                    index,
+                    reason: Box::new(reason),
+                };
+                if chunks.is_empty() {
+                    return Err(failed(Absence::NoFunctionRange(
+                        function.clone().unwrap_or_else(|| "the entry".to_owned()),
+                    )));
+                }
+                let found: usize = chunks
+                    .iter()
+                    .map(|chunk| signature.find_in(chunk).len())
+                    .sum();
+                return match found {
+                    0 => Err(failed(Absence::NoMatch)),
+                    1 => Ok(()),
+                    _ => Err(failed(Absence::Ambiguous(found))),
+                };
+            }
             Check::InVtable { slot, code_slots } => {
                 return if self.in_vtable(value.get(), *slot, *code_slots) {
                     Ok(())
@@ -331,6 +359,23 @@ impl Resolver<'_, '_> {
             length += instruction.len();
         }
         (length > 0).then(|| &bytes[..length])
+    }
+
+    /// All the code of the function that starts at `start`: every range in
+    /// the exception directory that belongs to it, chained chunks included;
+    /// for a leaf function, its code as `function_code` finds it.
+    fn whole_function(&self, start: u32) -> Vec<&[u8]> {
+        let chunks = self.image.function_chunks(start);
+        if chunks.is_empty() {
+            return self.function_code(start).into_iter().collect();
+        }
+        chunks
+            .into_iter()
+            .filter_map(|range| {
+                self.image
+                    .bytes_at(range.start, (range.end - range.start) as usize)
+            })
+            .collect()
     }
 
     /// The value of an entry already resolved as present.

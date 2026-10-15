@@ -18,9 +18,10 @@ const EXECUTE: &str = "shell.command_module.execute_command_inner";
 const MAX_LINE: i64 = 4096;
 /// The chat log's Echo channel.
 const ECHO: u16 = 56;
-/// Memory the adapter gives one game string; the game's constructor uses
-/// its first 0x62 bytes.
-const STRING: usize = 0x80;
+/// Memory the adapter gives one game string: the game's constructor uses
+/// its first 0x62 bytes, which the map's checks confirm, and the rest is a
+/// margin.
+const STRING: usize = 0x100;
 
 struct Lines {
     commands: Arc<Commands>,

@@ -19,6 +19,8 @@ pub struct PeBuilder {
     entry_point: u32,
     sections: Vec<(String, u32, Vec<u8>)>,
     functions: Vec<(u32, u32)>,
+    /// Chunks chained to a primary function, by their begins.
+    chains: Vec<(u32, u32)>,
 }
 
 impl Default for PeBuilder {
@@ -28,6 +30,7 @@ impl Default for PeBuilder {
             entry_point: SECTION_ALIGNMENT,
             sections: Vec::new(),
             functions: Vec::new(),
+            chains: Vec::new(),
         }
     }
 }
@@ -67,6 +70,31 @@ impl PeBuilder {
         self
     }
 
+    /// Makes the function range that begins at `chunk` a chunk chained to the
+    /// one that begins at `parent`, through its unwind information.
+    #[must_use]
+    pub fn chained(mut self, chunk: u32, parent: u32) -> Self {
+        self.chains.push((chunk, parent));
+        self
+    }
+
+    /// The RVA of the `.pdata` section, after the other sections.
+    fn pdata_rva(&self) -> u32 {
+        SECTION_ALIGNMENT
+            + self
+                .sections
+                .iter()
+                .map(|(_, _, data)| {
+                    align(
+                        u32::try_from(data.len())
+                            .expect("test sections are small")
+                            .max(1),
+                        SECTION_ALIGNMENT,
+                    )
+                })
+                .sum::<u32>()
+    }
+
     /// The RVA the section at `index` will have.
     #[must_use]
     pub fn section_rva(&self, index: usize) -> u32 {
@@ -100,12 +128,35 @@ impl PeBuilder {
     fn all_sections(&self) -> Vec<(String, u32, Vec<u8>)> {
         let mut sections = self.sections.clone();
         if !self.functions.is_empty() {
-            let data = self
-                .functions
-                .iter()
-                .flat_map(|&(begin, end)| [begin, end, 0].map(u32::to_le_bytes))
-                .flatten()
-                .collect();
+            // The table, then the unwind information of chained chunks:
+            // version 1 with the chain flag, no codes, and the parent entry.
+            let table_len = 12 * u32::try_from(self.functions.len()).expect("few functions");
+            let mut unwind = Vec::new();
+            let mut data = Vec::new();
+            for &(begin, end) in &self.functions {
+                let info = match self.chains.iter().find(|&&(chunk, _)| chunk == begin) {
+                    Some(&(_, parent)) => {
+                        let &(parent_begin, parent_end) = self
+                            .functions
+                            .iter()
+                            .find(|&&(start, _)| start == parent)
+                            .expect("the parent is a function");
+                        let at = self.pdata_rva()
+                            + table_len
+                            + u32::try_from(unwind.len()).expect("small");
+                        unwind.extend([0x21, 0, 0, 0]);
+                        for word in [parent_begin, parent_end, 0] {
+                            unwind.extend(word.to_le_bytes());
+                        }
+                        at
+                    }
+                    None => 0,
+                };
+                for word in [begin, end, info] {
+                    data.extend(word.to_le_bytes());
+                }
+            }
+            data.extend(unwind);
             sections.push((".pdata".to_owned(), RDATA, data));
         }
         sections

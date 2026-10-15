@@ -104,6 +104,14 @@ pub enum Check {
     /// The address is slot `slot` of a table outside code whose first
     /// `code_slots` slots all point into code.
     InVtable { slot: u32, code_slots: u32 },
+    /// The code of a function, the entry's own or the `function` entry's,
+    /// matches `signature` exactly once: a fact of the game's code that an
+    /// adapter relies on, such as a structure's size or a constant the game
+    /// compares with, still holds.
+    Contains {
+        function: Option<String>,
+        signature: Signature,
+    },
 }
 
 /// Where an entry came from, when it started from external data.
@@ -187,6 +195,7 @@ impl Entry {
                 Check::Locator(locator) => references.extend(locator_reference(locator)),
                 Check::Equals(name) => references.push(name),
                 Check::InVtable { .. } => {}
+                Check::Contains { function, .. } => references.extend(function.as_deref()),
             }
         }
         references.extend(self.depends.iter().map(String::as_str));
@@ -293,6 +302,7 @@ struct RawCheck {
     equals: Option<String>,
     vtable_slot: Option<u32>,
     code_slots: Option<u32>,
+    contains: Option<String>,
 }
 
 impl RawEntry {
@@ -494,6 +504,24 @@ fn convert_bytes(text: &str, field: &str) -> Result<Vec<u8>, String> {
 }
 
 fn convert_check(raw: RawCheck) -> Result<Check, String> {
+    if let Some(contains) = raw.contains {
+        let others = raw.signature.is_some()
+            || raw.at.is_some()
+            || raw.follow.is_some()
+            || raw.vtable.is_some()
+            || raw.slot.is_some()
+            || raw.operand.is_some()
+            || raw.equals.is_some()
+            || raw.vtable_slot.is_some()
+            || raw.code_slots.is_some();
+        if others {
+            return Err("`contains` takes only `in`".to_owned());
+        }
+        return Ok(Check::Contains {
+            function: raw.function,
+            signature: Signature::parse(&contains).map_err(|error| format!("contains: {error}"))?,
+        });
+    }
     let locator_fields = raw.signature.is_some()
         || raw.at.is_some()
         || raw.follow.is_some()
@@ -520,7 +548,10 @@ fn convert_check(raw: RawCheck) -> Result<Check, String> {
             operand: raw.operand,
         })
         .map(Check::Locator),
-        _ => Err("a check is a locator, `equals`, or `vtable_slot` with `code_slots`".to_owned()),
+        _ => Err(
+            "a check is a locator, `equals`, `vtable_slot` with `code_slots`, or `contains`"
+                .to_owned(),
+        ),
     }
 }
 

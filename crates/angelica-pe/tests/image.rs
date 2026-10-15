@@ -152,6 +152,32 @@ fn reads_function_ranges_from_the_exception_directory() {
 }
 
 #[test]
+fn a_function_has_the_chunks_chained_to_it() {
+    let builder = sample()
+        .functions(&[
+            (0x1000, 0x1008),
+            (0x1008, 0x1010),
+            (0x1020, 0x1030),
+            (0x1010, 0x1018),
+        ])
+        .chained(0x1008, 0x1000)
+        .chained(0x1010, 0x1008);
+    both_layouts(&builder, |image| {
+        assert_eq!(
+            image.function_chunks(0x1000),
+            [0x1000..0x1008, 0x1008..0x1010, 0x1010..0x1018],
+            "a chunk chained through another belongs to the same function"
+        );
+        assert_eq!(image.function_chunks(0x1020), vec![0x1020_u32..0x1030]);
+        assert!(
+            image.function_chunks(0x1004).is_empty(),
+            "not a function's start"
+        );
+        assert_eq!(image.function_at(0x1009), Some(0x1008..0x1010));
+    });
+}
+
+#[test]
 fn reads_little_endian_words() {
     both_layouts(&sample(), |image| {
         assert_eq!(image.read_u32(0x2000), Some(0x9905_8B48));
