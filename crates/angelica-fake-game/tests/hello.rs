@@ -2430,6 +2430,7 @@ fn look_finds_the_instructions_that_write_a_field() {
     test.frames(2);
     let response = answer();
     assert_eq!(response.watched, Some(watched));
+    assert_eq!(response.image_base, Some(0x1_4000_0000));
     assert_eq!(
         response.writes.unwrap(),
         [

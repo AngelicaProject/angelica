@@ -90,6 +90,12 @@ pub trait Game: Send + Sync {
         (Vec::new(), 0)
     }
 
+    /// The image base the game's executable asks for in its headers, where
+    /// a disassembler places it; none when it cannot be read.
+    fn preferred_image_base(&self) -> Option<u64> {
+        None
+    }
+
     /// Calls the game's function at `address` with `args`, each as its 64
     /// bits, on the game's main thread, for a Lens action.
     ///

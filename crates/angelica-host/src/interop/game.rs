@@ -161,6 +161,30 @@ impl Game for WindowsGame {
         }
         (written, missed)
     }
+
+    fn preferred_image_base(&self) -> Option<u64> {
+        preferred_image_base(self.base)
+    }
+}
+
+/// `ImageBase` of the PE32+ module at `base`, from its headers in memory.
+fn preferred_image_base(base: usize) -> Option<u64> {
+    let read = |at: usize, size: usize| super::memory::read(at, size).ok();
+    let offset = u32::from_le_bytes(read(base.checked_add(0x3C)?, 4)?.try_into().ok()?);
+    // The optional header follows the 4-byte signature and the 20-byte file
+    // header; a PE32+ header has the magic 0x20B and `ImageBase` at 24.
+    let optional = base
+        .checked_add(usize::try_from(offset).ok()?)?
+        .checked_add(4 + 20)?;
+    let magic = u16::from_le_bytes(read(optional, 2)?.try_into().ok()?);
+    (magic == 0x20B)
+        .then(|| {
+            read(optional.checked_add(24)?, 8)?
+                .try_into()
+                .ok()
+                .map(u64::from_le_bytes)
+        })
+        .flatten()
 }
 
 /// `SizeOfImage` of the module at `base`, from its PE headers in memory.
@@ -175,4 +199,19 @@ fn image_size(base: usize) -> Option<usize> {
     // The optional header follows the 4-byte signature and the 20-byte
     // file header; `SizeOfImage` is at offset 56 in it.
     usize::try_from(read_u32(headers.checked_add(4 + 20 + 56)?)?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_image_base_comes_from_the_module_headers() {
+        // SAFETY: a null name asks for the module of this process.
+        let base = unsafe {
+            windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null())
+        } as usize;
+        let preferred = super::preferred_image_base(base).unwrap();
+        assert_ne!(preferred, 0);
+        assert_eq!(preferred % 0x1_0000, 0, "an image base is 64 KiB aligned");
+        assert!(super::image_size(base).is_some_and(|size| size > 0));
+    }
 }

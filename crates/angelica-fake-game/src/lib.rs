@@ -242,6 +242,10 @@ impl Game for ScriptedGame {
         Ok(())
     }
 
+    fn preferred_image_base(&self) -> Option<u64> {
+        Some(0x1_4000_0000)
+    }
+
     fn take_writes(&self) -> (Vec<runtime::game::Written>, u64) {
         let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
         writes.0 = None;

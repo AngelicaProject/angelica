@@ -971,9 +971,19 @@ fn response_text(mode: runtime::look::Mode, response: &runtime::look::Response) 
             );
             for place in response.writes.clone().unwrap_or_default() {
                 match place.offset {
-                    Some(offset) => {
-                        let _ = writeln!(text, "{:>8}  executable +{offset:#x}", place.count);
-                    }
+                    Some(offset) => match response.image_base {
+                        Some(base) => {
+                            let _ = writeln!(
+                                text,
+                                "{:>8}  executable +{offset:#x}, {:#x} in a disassembler",
+                                place.count,
+                                base.saturating_add(offset)
+                            );
+                        }
+                        None => {
+                            let _ = writeln!(text, "{:>8}  executable +{offset:#x}", place.count);
+                        }
+                    },
                     None => {
                         let _ = writeln!(
                             text,
