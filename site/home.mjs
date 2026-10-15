@@ -1,14 +1,27 @@
 // The home page with motion: the hero's lily is drawn from the prompt, and
 // every section below answers to scrolling.
-// Usage: node home.mjs <art folder> <output file>
+// Usage: node home.mjs <art folder> <output file> <status JSON from status.mjs>
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, map, making, sheets, mapPoints, mapEdges } from "./plates.mjs";
 
-const [art, out] = process.argv.slice(2);
+const [art, out, feeds] = process.argv.slice(2);
 const uri = (name) => `url(data:image/png;base64,${readFileSync(join(art, `${name}.png`)).toString("base64")})`;
 const f = (n) => n.toFixed(1);
 const ideas = ["shows where to gather any material I search for", "tells me when someone says my name in chat", "shows the recipe for any item I type", "reminds me an hour before the weekly reset"];
+
+// The status under the buttons, from the feeds the build read (status.mjs). Dates are UTC and
+// absolute: the page is built once and read until the next build.
+const status = JSON.parse(feeds);
+const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const day = (iso) => { const d = new Date(iso); return `${d.getUTCDate()} ${months[d.getUTCMonth()]}`; };
+const state = `As of ${day(status.checked)}, ${status.checked.slice(11, 16)} UTC`;
+const [release, nightly] = status.angelica.version.split("-nightly.");
+const facts = [
+  ["Angelica", release, nightly ? `nightly ${nightly}` : "stable"],
+  ["Map of the game", day(status.map.published), status.map.version],
+  status.game ? ["For the game update", day(`${status.game.date}T00:00:00Z`), status.game.date.replaceAll("-", ".")] : ["For the game update", "None yet", "no build record"],
+];
 
 // A filter that turns an order map into ink: what has been reached becomes solid colour.
 const ink = (id, [r, g, b]) => `<filter id="${id}" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="linear" slope="0" intercept="${r}"/><feFuncG type="linear" slope="0" intercept="${g}"/><feFuncB type="linear" slope="0" intercept="${b}"/><feFuncA type="linear" slope="18" intercept="-18"/></feComponentTransfer></filter>`;
@@ -153,12 +166,8 @@ h2.in .w > span { transform: none; }
 .lead { font-family: var(--soft); font-size: 30px; line-height: 1.15; margin: 22px 0 0; max-width: 20ch; }
 .sub { margin: 12px 0 0; color: var(--ink-2); max-width: 42ch; }
 .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
-/* Under the buttons: whether it works right now, then the three versions behind that answer, each named in plain words. */
+/* Under the buttons: when the release feeds were read, then the three versions they gave, each named in plain words. The feeds do not say which game version is live, so nothing here claims Angelica is up to date with it. */
 .state { display: flex; align-items: baseline; gap: 9px; margin: 22px 0 0; font-size: 15.5px; font-weight: 600; }
-/* On the day of a game patch the build sets the class "behind": the mark turns amber and the sentence changes to the one in data-behind. That sentence carries the date of the game update, never a word like today: the page is built once and read for days. */
-.state.behind i { background: var(--wait); }
-.state.behind span { display: none; }
-.state.behind::after { content: attr(data-behind); }
 .state i { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--on); transform: translateY(-1px); animation: pulse 2.6s ease-in-out infinite; }
 .facts { display: flex; margin: 12px 0 0; border-top: 1px solid var(--rule); max-width: 440px; }
 .facts div { flex: 1; padding: 9px 14px 0 0; }
@@ -377,8 +386,8 @@ footer .big span:hover { color: var(--red); }
     <p class="lead">An engine for every idea you bring to Eorzea.</p>
     <p class="sub">A plugin platform for FINAL FANTASY XIV. Plugins run in a sandbox and can do only what you allowed.</p>
     <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a><a class="b two" href="#docs">Documentation</a></div>
-    <div class="status"><p class="state" data-behind="The game updated on 14 October. Catching up."><i></i><span>Up to date with the game</span></p>
-      <div class="facts"><div><span>Angelica</span><b>0.1.0</b><small>nightly 15</small></div><div><span>Map of the game</span><b>2 October</b><small>2026.10.1</small></div><div><span>Game update</span><b>15 September</b><small>2026.09.15</small></div></div></div>
+    <div class="status"><p class="state"><i></i><span>${state}</span></p>
+      <div class="facts">${facts.map(([label, value, detail]) => `<div><span>${label}</span><b>${value}</b><small>${detail}</small></div>`).join("")}</div></div>
   </div>
 </header>
 
