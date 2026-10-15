@@ -675,6 +675,10 @@ fn check_domains(what: &str, listed: &[String]) -> Result<(), ManifestError> {
 pub struct Grants {
     pub format: u32,
     pub plugin_id: String,
+    /// A permission this Angelica no longer has, such as one an update
+    /// replaced with a domain of the game map, is left out: the plugin asks
+    /// for what its manifest needs now.
+    #[serde(deserialize_with = "known_permissions")]
     pub permissions: BTreeSet<Permission>,
     /// The hosts approved for `http.get`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -694,6 +698,18 @@ pub struct Grants {
     /// The domains of the game map approved for changing through Lens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub lens_change: BTreeSet<String>,
+}
+
+/// The permissions of a grant this Angelica knows, by name.
+fn known_permissions<'de, D>(deserializer: D) -> Result<BTreeSet<Permission>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let names = Vec::<String>::deserialize(deserializer)?;
+    Ok(names
+        .into_iter()
+        .filter_map(|name| serde_json::from_value(serde_json::Value::String(name)).ok())
+        .collect())
 }
 
 impl Grants {
@@ -840,6 +856,21 @@ description = "Community translations."
             );
         }
         assert!(Manifest::parse(&format!("{VALID}[lens]\nwrite = []\n")).is_err());
+    }
+
+    #[test]
+    fn a_grant_of_a_removed_permission_keeps_the_rest_and_asks_again() {
+        let old = r#"{"format": 1, "plugin_id": "harmonia", "permissions": ["excel.text", "files.replace"]}"#;
+        let grants: Grants = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            grants.permissions.iter().copied().collect::<Vec<_>>(),
+            [Permission::FilesReplace]
+        );
+        let manifest = Manifest::parse(VALID).unwrap();
+        assert!(
+            !grants.cover(&manifest, &none),
+            "draw.world was never granted"
+        );
     }
 
     #[test]
