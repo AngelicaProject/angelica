@@ -126,7 +126,22 @@ fn load(source: &Source) -> Result<Loaded, String> {
     let executable = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let image =
         Image::parse(&executable, Layout::File).map_err(|e| format!("{}: {e}", path.display()))?;
-    let resolution = map.resolve(&image, image.image_base());
+    let game_version = std::fs::read_to_string(game.join("ffxivgame.ver"))
+        .ok()
+        .map(|text| text.trim().to_owned());
+    // The constant offsets the build's record confirms, as `verify` keeps
+    // them.
+    let confirmed = match &game_version {
+        Some(version) => crate::verify::confirmed_offsets(
+            &map,
+            &source.map.join("builds").join(format!("{version}.toml")),
+            &crate::verify::sha256_hex(&executable),
+            &[],
+        )
+        .map_err(|error| error.to_string())?,
+        None => std::collections::BTreeSet::new(),
+    };
+    let resolution = map.resolve_confirming(&image, image.image_base(), &confirmed);
     let mut schema = Schema::new(&map, 0, |name| match resolution.get(name) {
         Some(Ok(value)) => Ok(*value),
         Some(Err(absence)) => Err(absence.to_string()),
@@ -135,9 +150,6 @@ fn load(source: &Source) -> Result<Loaded, String> {
     // The archives are in `game/sqpack`, beside the executable.
     let data = runtime::game_data::GameData::new(game.parent());
     schema.resolve_windows(&map, &|path| data.read(path).map_err(|error| error.message));
-    let game_version = std::fs::read_to_string(game.join("ffxivgame.ver"))
-        .ok()
-        .map(|text| text.trim().to_owned());
     Ok(Loaded {
         map,
         schema: Some(schema),

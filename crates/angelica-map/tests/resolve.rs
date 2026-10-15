@@ -1,6 +1,7 @@
 use angelica_map::{Absence, BuildRecord, Map, Value};
 use angelica_pe::testing::{CODE, PeBuilder, RDATA};
 use angelica_pe::{Image, Layout};
+use std::collections::BTreeSet;
 
 const BASE: u64 = 0x1_4000_0000;
 const VTABLE: u32 = 0x2000;
@@ -165,7 +166,7 @@ fn expected() -> Vec<(&'static str, Result<Value, Absence>)> {
         ("game.thing.leaf", Ok(Value::Address(0x1060))),
         ("game.thing.leaf_size", Ok(Value::Offset(0x18))),
         ("game.thing.missing", Err(Absence::NoMatch)),
-        ("game.thing.name", Ok(Value::Offset(0x8))),
+        ("game.thing.name", Err(Absence::Unconfirmed)),
         (
             "game.thing.not_slot",
             Err(Absence::CheckFailed {
@@ -245,13 +246,17 @@ fn a_wrong_load_base_makes_slot_locators_absent() {
 }
 
 #[test]
-fn lists_constant_offsets() {
+fn a_constant_offset_is_present_only_when_confirmed() {
     let file = builder(BASE).build_file();
     let image = Image::parse(&file, Layout::File).unwrap();
+    assert!(map().resolve(&image, BASE).constant_offsets().is_empty());
+    let confirmed = BTreeSet::from(["game.thing.name".to_owned()]);
+    let resolution = map().resolve_confirming(&image, BASE, &confirmed);
     assert_eq!(
-        map().resolve(&image, BASE).constant_offsets(),
-        ["game.thing.name"]
+        resolution.get("game.thing.name"),
+        Some(&Ok(Value::Offset(0x8)))
     );
+    assert_eq!(resolution.constant_offsets(), ["game.thing.name"]);
 }
 
 #[test]
@@ -263,9 +268,23 @@ fn writes_a_deterministic_build_record() {
         game_version: "2026.09.15.0000.0000".to_owned(),
         exe_sha256: "ab".repeat(32),
         entries_sha256: map.entries_sha256().to_owned(),
-        resolution: map.resolve(&image, BASE),
+        resolution: map.resolve_confirming(
+            &image,
+            BASE,
+            &BTreeSet::from(["game.thing.name".to_owned()]),
+        ),
     };
     let text = record.to_toml();
+    assert_eq!(
+        BuildRecord::confirmed_offsets(&text, &record.exe_sha256).unwrap(),
+        [("game.thing.name".to_owned(), 0x8)].into()
+    );
+    assert!(
+        BuildRecord::confirmed_offsets(&text, &"cd".repeat(32))
+            .unwrap()
+            .is_empty(),
+        "a record confirms offsets only for its own executable"
+    );
     let parsed = BuildRecord::from_toml(&text, &map, &image).unwrap();
     assert_eq!(
         parsed.resolution.present().collect::<Vec<_>>(),

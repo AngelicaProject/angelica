@@ -190,4 +190,58 @@ doc = "Where."
         assert!(map.objects().actions.contains_key("go"));
         assert!(map.objects().domains.contains_key("moves"));
     }
+
+    #[test]
+    fn a_constant_offset_is_used_only_in_a_build_its_record_confirms() {
+        use angelica_pe::testing::{CODE, PeBuilder};
+        let mut files: BTreeMap<String, Vec<u8>> = [
+            (
+                "map.toml",
+                "format = 2
+",
+            ),
+            (
+                "entries/game.toml",
+                "[field.\"game.thing.name\"]
+of = \"game.thing\"
+type = \"ptr\"
+offset = 0x8
+",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_owned(), text.as_bytes().to_vec()))
+        .collect();
+        let builder = PeBuilder::new().section(".text", CODE, &[0xC3]);
+        let mapped = builder.build_mapped();
+        let base = 0x1_4000_0000;
+        let hash = "ab".repeat(32);
+
+        let (map, catalog) =
+            Catalog::from_signed_files(&files, &mapped, base, hash.clone()).unwrap();
+        assert!(!catalog.verified);
+        assert!(
+            catalog.absent.contains_key("game.thing.name"),
+            "a build without a record does not use a constant offset"
+        );
+
+        let image = Image::parse(&mapped, Layout::Mapped).unwrap();
+        let record = angelica_map::BuildRecord {
+            game_version: "2026.09.15.0000.0000".to_owned(),
+            exe_sha256: hash.clone(),
+            entries_sha256: map.entries_sha256().to_owned(),
+            resolution: map.resolve_confirming(
+                &image,
+                base,
+                &["game.thing.name".to_owned()].into(),
+            ),
+        };
+        files.insert(
+            "builds/2026.09.15.0000.0000.toml".to_owned(),
+            record.to_toml().into_bytes(),
+        );
+        let (_, catalog) = Catalog::from_signed_files(&files, &mapped, base, hash).unwrap();
+        assert!(catalog.verified);
+        assert_eq!(catalog.present["game.thing.name"].value, Value::Offset(0x8));
+    }
 }

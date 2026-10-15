@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use angelica_pe::{Image, Signature};
@@ -38,14 +38,29 @@ pub enum Absence {
     OutsideImage,
     NotCode,
     Dependency(String),
-    SlotNotInImage { vtable: String, slot: u32 },
+    SlotNotInImage {
+        vtable: String,
+        slot: u32,
+    },
     SlotNotCode(u32),
     NoFunctionRange(String),
     NoOperand,
     PatchMismatch,
-    NotInVtable { slot: u32, code_slots: u32 },
-    CheckFailed { index: usize, reason: Box<Absence> },
-    CheckDiffers { index: usize, found: u32 },
+    NotInVtable {
+        slot: u32,
+        code_slots: u32,
+    },
+    CheckFailed {
+        index: usize,
+        reason: Box<Absence>,
+    },
+    CheckDiffers {
+        index: usize,
+        found: u32,
+    },
+    /// A field whose offset is a constant of the map, which no build record
+    /// confirms for this executable.
+    Unconfirmed,
 }
 
 impl fmt::Display for Absence {
@@ -74,6 +89,10 @@ impl fmt::Display for Absence {
             Self::PatchMismatch => {
                 write!(formatter, "bytes at the patch site differ from `original`")
             }
+            Self::Unconfirmed => write!(
+                formatter,
+                "a constant offset that no build record confirms for this executable"
+            ),
             Self::NotInVtable { slot, code_slots } => write!(
                 formatter,
                 "address is not slot {slot} of a table whose first {code_slots} slots point into code"
@@ -126,7 +145,7 @@ impl Resolution {
     }
 
     /// Present fields whose offset is a constant of the map rather than
-    /// derived from code, by name.
+    /// derived from code, by name: the ones confirmed for this build.
     #[must_use]
     pub fn constant_offsets(&self) -> &[String] {
         &self.constant_offsets
@@ -136,11 +155,26 @@ impl Resolution {
 impl Map {
     /// Resolves every entry against an image loaded at `load_base`: the
     /// image's preferred base for a file, the module address in the game.
+    /// A field whose offset is a constant of the map is absent: only a build
+    /// record confirms it.
     #[must_use]
     pub fn resolve(&self, image: &Image<'_>, load_base: u64) -> Resolution {
+        self.resolve_confirming(image, load_base, &BTreeSet::new())
+    }
+
+    /// Resolves like [`Map::resolve`], with the fields whose constant
+    /// offsets were checked in this build, by name, present.
+    #[must_use]
+    pub fn resolve_confirming(
+        &self,
+        image: &Image<'_>,
+        load_base: u64,
+        confirmed: &BTreeSet<String>,
+    ) -> Resolution {
         let mut resolver = Resolver {
             image,
             load_base,
+            confirmed,
             results: BTreeMap::new(),
         };
         let mut constant_offsets = Vec::new();
@@ -173,6 +207,7 @@ impl Map {
 struct Resolver<'a, 'b> {
     image: &'a Image<'b>,
     load_base: u64,
+    confirmed: &'a BTreeSet<String>,
     results: BTreeMap<String, Result<Value, Absence>>,
 }
 
@@ -191,7 +226,12 @@ impl Resolver<'_, '_> {
                     ..
                 },
                 _,
-            ) => Value::Offset(*offset),
+            ) => {
+                if !self.confirmed.contains(&entry.name) {
+                    return Err(Absence::Unconfirmed);
+                }
+                Value::Offset(*offset)
+            }
             (_, Some(locator)) => self.locate(locator)?,
             (_, None) => unreachable!("entries without a locator are constant fields"),
         };

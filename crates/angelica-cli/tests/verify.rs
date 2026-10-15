@@ -63,7 +63,19 @@ fn reports_and_writes_the_build_record() {
         &[0x48, 0x89, 0x5C, 0x24, 0x08, 0xC3],
     );
 
-    let output = verify(&map, &game, &["--json", "--write"]);
+    let output = verify(&map, &game, &["--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        json(&output)["absent"]["game.thing.name"],
+        "a constant offset that no build record confirms for this executable",
+        "a constant offset is absent until it is confirmed"
+    );
+
+    let output = verify(
+        &map,
+        &game,
+        &["--json", "--write", "--confirm", "game.thing.name"],
+    );
     assert_eq!(output.status.code(), Some(0));
     let report = json(&output);
     assert_eq!(report["game_version"], "2026.09.15.0000.0000");
@@ -87,9 +99,33 @@ fn reports_and_writes_the_build_record() {
             .exists()
     );
 
-    // Verifying again gives the same record.
+    // Verifying again keeps the record's confirmation and gives the same
+    // record.
     assert_eq!(verify(&map, &game, &["--write"]).status.code(), Some(0));
     assert_eq!(std::fs::read_to_string(&record_path).unwrap(), record);
+
+    // A changed offset is confirmed again.
+    std::fs::write(
+        map.join("entries/game.toml"),
+        ENTRIES.replace("offset = 0", "offset = 8"),
+    )
+    .unwrap();
+    let output = verify(&map, &game, &["--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(json(&output)["absent"]["game.thing.name"].is_string());
+}
+
+#[test]
+fn only_a_constant_offset_is_confirmed() {
+    let directory = tempfile::tempdir().unwrap();
+    let (map, game) = fixture(
+        directory.path(),
+        ENTRIES,
+        &[0x48, 0x89, 0x5C, 0x24, 0x08, 0xC3],
+    );
+    let output = verify(&map, &game, &["--json", "--confirm", "game.thing.update"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(json(&output)["error"]["code"], "not-constant");
 }
 
 #[test]
@@ -97,7 +133,7 @@ fn an_absent_entry_is_a_reported_failure() {
     let directory = tempfile::tempdir().unwrap();
     let (map, game) = fixture(directory.path(), ENTRIES, &[0xC3]);
 
-    let output = verify(&map, &game, &["--json"]);
+    let output = verify(&map, &game, &["--json", "--confirm", "game.thing.name"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         json(&output)["absent"]["game.thing.update"],
@@ -105,10 +141,11 @@ fn an_absent_entry_is_a_reported_failure() {
     );
     assert!(!map.join("builds").exists());
 
-    let text = String::from_utf8(verify(&map, &game, &[]).stdout).unwrap();
+    let text =
+        String::from_utf8(verify(&map, &game, &["--confirm", "game.thing.name"]).stdout).unwrap();
     assert_eq!(
         text,
-        "game 2026.09.15.0000.0000: 1 present, 1 absent\n  absent game.thing.update: signature has no match\n  constant offset game.thing.name\n"
+        "game 2026.09.15.0000.0000: 1 present, 1 absent\n  absent game.thing.update: signature has no match\n  confirmed constant offset game.thing.name\n"
     );
 }
 
@@ -196,7 +233,7 @@ fn sheet_schemas_are_checked_against_the_game_data() {
     )
     .unwrap();
 
-    let output = verify(&map, &game, &["--json"]);
+    let output = verify(&map, &game, &["--json", "--confirm", "game.thing.name"]);
     assert_eq!(output.status.code(), Some(1), "an unknown layout fails");
     let report = json(&output);
     let item = &report["sheets"]["Item"];
@@ -210,7 +247,7 @@ fn sheet_schemas_are_checked_against_the_game_data() {
     let layout = item["layout"].as_str().unwrap().to_owned();
 
     std::fs::write(map.join("sheets/Item.toml"), item_schema(&layout)).unwrap();
-    let output = verify(&map, &game, &["--json"]);
+    let output = verify(&map, &game, &["--json", "--confirm", "game.thing.name"]);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(json(&output)["sheets"]["Item"]["known"], true);
 

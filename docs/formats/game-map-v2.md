@@ -41,7 +41,7 @@ Each entry is a table keyed by its name under its kind.
 | `field` | a field of a structure | `of`, `locator` or `offset`, `type` |
 | `patch` | bytes to replace | `locator`, `original`, `replacement` |
 
-A field has either a `locator`, which must be an `in` locator, or a constant `offset`. `type` is a value kind other than `void` (see below), or `struct` for a structure embedded at the global's address or the field's offset, which is never read as a value. `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
+A field has either a `locator`, which must be an `in` locator, or a constant `offset`. A constant `offset` is present only in a build whose [build record](#build-records) confirms it. `type` is a value kind other than `void` (see below), or `struct` for a structure embedded at the global's address or the field's offset, which is never read as a value. `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
 
 Common optional fields: `doc` (one sentence: what it is, not how it was found), `checks`, `depends` (names of entries that must be present), and `origin`.
 
@@ -388,6 +388,6 @@ names = ["text.utf8_string.string_ptr"]
 - `entries_sha256` identifies the map the record was produced from: the SHA-256 over `map.toml` and then every file of `entries/` in path order, each as its path relative to the map directory with `/` separators, a NUL byte, its length as a little-endian 64-bit integer, and its bytes.
 - `present` holds the value of every present entry: an RVA (relative to the image base) for every kind except fields, the offset for a field.
 - `absent` holds the reason for every absent entry.
-- `constant_offsets` lists the present fields whose offset is a constant of the map rather than derived from code.
+- `constant_offsets` lists the fields whose offset is a constant of the map rather than derived from code and that were confirmed for this executable; they are present with that offset. A field with a constant offset that is not listed is absent, as it is in every build without a record.
 
 The same map and executable always produce the same text.
