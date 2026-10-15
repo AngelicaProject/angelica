@@ -118,6 +118,20 @@ pub fn open(file: &[u8]) -> Result<([u8; 32], Manifest), String> {
     ))
 }
 
+/// Reads the plugin file of a version published before: its author key and
+/// manifest, without the permissions this Angelica removed.
+///
+/// # Errors
+/// A file whose signature or manifest does not verify.
+pub fn open_earlier(file: &[u8]) -> Result<([u8; 32], Manifest), String> {
+    let file = runtime::author::open(file)?;
+    let manifest = std::str::from_utf8(&file.manifest).map_err(|e| e.to_string())?;
+    Ok((
+        file.author,
+        Manifest::parse_earlier(manifest).map_err(|e| e.to_string())?,
+    ))
+}
+
 /// Reviews `entry` against the catalog's `previous` entry and the manifest
 /// of its published version, with the author's plugin file from the release
 /// of the entry's tag.

@@ -219,7 +219,10 @@ fn bound_plugins(keys: &Path) -> Vec<String> {
 fn installed_version(folder: &Path) -> Result<semver::Version, String> {
     let file = std::fs::read(folder.join("plugin.angelica"))
         .map_err(|e| format!("{}: {e}", folder.display()))?;
-    let manifest = parse(&author::open(&file)?.manifest)?;
+    // An earlier version may declare permissions this Angelica removed.
+    let manifest = std::str::from_utf8(&author::open(&file)?.manifest)
+        .map_err(|e| format!("angelica.toml: {e}"))
+        .and_then(|text| Manifest::parse_earlier(text).map_err(|e| e.to_string()))?;
     semver::Version::parse(&manifest.plugin.version).map_err(|e| e.to_string())
 }
 
