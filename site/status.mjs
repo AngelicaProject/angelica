@@ -22,11 +22,11 @@ function feed(json, product, url) {
   return json;
 }
 
-// The game versions of the build records in a map pack (docs/formats/update-feed-v1.md#map-pack).
-export function recordVersions(pack) {
+// The files of a map pack, by path (docs/formats/update-feed-v1.md#map-pack).
+export function unpack(pack) {
   const start = "angelica-pack 1\n";
   if (pack.subarray(0, 16).toString("latin1") !== start) throw new Error("map.pack: not a pack of format 1");
-  const versions = [];
+  const files = new Map();
   for (let at = 16; at < pack.length; ) {
     if (at + 4 > pack.length) throw new Error("map.pack: truncated");
     const length = pack.readUInt32LE(at);
@@ -36,14 +36,22 @@ export function recordVersions(pack) {
     const size = Number(pack.readBigUInt64LE(at));
     at += 8;
     if (at + size > pack.length) throw new Error("map.pack: truncated");
+    files.set(path, pack.subarray(at, at + size));
+    at += size;
+  }
+  return files;
+}
+
+// The game versions of the build records in a map pack.
+export function recordVersions(pack) {
+  const versions = [];
+  for (const [path, bytes] of unpack(pack)) {
     const record = /^builds\/(.+)\.toml$/.exec(path);
     if (record) {
-      const text = pack.subarray(at, at + size).toString("utf8");
-      const version = /^game_version = "([0-9.]+)"$/m.exec(text)?.[1];
+      const version = /^game_version = "([0-9.]+)"$/m.exec(bytes.toString("utf8"))?.[1];
       if (version !== record[1]) throw new Error(`map.pack: ${path} is not the record of game version ${record[1]}`);
       versions.push(version);
     }
-    at += size;
   }
   const order = (v) => v.split(".").map(Number);
   return versions.sort((a, b) => {
@@ -71,5 +79,7 @@ export async function status() {
     angelica: { version: nightly.version },
     map: { version: map.version, published: map.published },
     game: game && { version: game, date: versionDate(game) },
+    // The released map's files, for the Game data reference; not part of the home page's facts.
+    files: unpack(pack),
   };
 }

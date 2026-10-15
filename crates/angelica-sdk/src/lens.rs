@@ -590,6 +590,7 @@ impl Value {
         }
     }
 
+    /// A floating-point value.
     #[must_use]
     pub fn float(&self) -> Option<f64> {
         match self {
@@ -598,6 +599,7 @@ impl Value {
         }
     }
 
+    /// A `bool` value.
     #[must_use]
     pub fn boolean(&self) -> Option<bool> {
         match self {

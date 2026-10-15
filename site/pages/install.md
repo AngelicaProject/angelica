@@ -2,7 +2,7 @@
 order: 1
 section: Play
 kicker: Get started
-meta: About 2 minutes · Windows · No game changes
+meta: About 2 minutes · Windows
 prev: 
 next: Turn on a plugin
 ---

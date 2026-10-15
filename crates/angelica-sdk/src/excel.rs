@@ -25,9 +25,13 @@ pub fn sheet(name: &str) -> Result<SheetInfo, crate::Error> {
     api::sheet(name)
 }
 
+/// The game language Japanese, as sheets and rows name it.
 pub const JAPANESE: u8 = 1;
+/// The game language English.
 pub const ENGLISH: u8 = 2;
+/// The game language German.
 pub const GERMAN: u8 = 3;
+/// The game language French.
 pub const FRENCH: u8 = 4;
 
 fn names(columns: &[&str]) -> Vec<String> {
@@ -150,6 +154,7 @@ impl Value {
         }
     }
 
+    /// A `bool` value.
     #[must_use]
     pub fn boolean(&self) -> Option<bool> {
         match *self {
@@ -158,6 +163,7 @@ impl Value {
         }
     }
 
+    /// A floating-point value.
     #[must_use]
     pub fn float(&self) -> Option<f32> {
         match *self {

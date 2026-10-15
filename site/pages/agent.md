@@ -2,35 +2,36 @@
 order: 1
 section: Build
 kicker: Get started
-meta: For people and coding agents · Windows · GitHub
+meta: Windows · A GitHub account
 prev: 
 next: Run your plugin in the game
 ---
 
 # Build a plugin with an agent
 
-You design the plugin: what it does in the game, what it may touch, and how the player uses it. A coding agent implements the design and tests it.
+Tell a coding agent what you want a plugin to do. It sets up the project, writes and tests the plugin, and asks you whenever the decision is yours.
 
 ## What you need
 
-- A GitHub account. The agent asks you to install the GitHub command `gh` and sign in.
+- A GitHub account. The agent asks you to install the GitHub command `gh` and to sign in.
 - To try the plugin in the game: the game and [Angelica](install.md).
 
 ## Start
 
-Give your agent this:
+Send your agent this, followed by what the plugin should do:
 
 ```prompt
 Read https://angelicaproject.github.io/angelica/agent-setup.md and follow it to set up an Angelica plugin project.
 ```
 
-If you already know what the plugin should do, add it to the message. The agent follows [these instructions](https://angelicaproject.github.io/angelica/agent-setup.md).
+The card at the top of the home page writes the same message with your idea in it. The agent works from [these instructions](https://angelicaproject.github.io/angelica/agent-setup.md), and then from the `AGENTS.md` in the project it creates.
 
-## What happens next
+## What the agent does, and what it asks you
 
-1. The agent offers to install the missing tools and creates the project.
-1. You describe the idea. Together you decide what the plugin reads in the game, what it changes, and which permissions it needs.
-1. The agent implements the design and tests it without the game.
-1. If Angelica's map of the game lacks something the plugin needs, the agent finds it in the game and adds it to the map, so the plugin works on your computer at once. With your agreement, it sends the addition to the map's maintainers, and once they release it, the plugin works for every player. If it cannot be added, the agent drafts a request to the Angelica developers instead.
-1. The agent installs the plugin in your Angelica and tells you what to check in the game. You allow its permissions.
-1. To publish the plugin, ask the agent. See [Publish a plugin](publish.md).
+1. It checks for Rust, Git, `gh`, and the C++ build tools, and installs what is missing once you agree.
+1. It agrees with you on the plugin's ID. The ID is permanent and is also the plugin's chat command: a plugin called `timers` answers `/timers`.
+1. It works out with you what the plugin reads in the game, what it changes or does there, and which permissions that needs.
+1. It writes the plugin and tests it against a scripted game, so the game does not need to run.
+1. If the game map lacks something the plugin needs, it asks before turning on dev mode in your Angelica, finds the missing piece in the running game, and adds it to the map. The plugin then works on your computer. With your agreement it sends the addition for review; once a map with it is released, the plugin works for every player.
+1. It installs the plugin in your Angelica and tells you what to check in the game. You approve the plugin's permissions in the game yourself.
+1. When you ask, it publishes the plugin. See [Publish a plugin](publish.md).

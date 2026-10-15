@@ -9,7 +9,11 @@ The website at `https://angelicaproject.github.io/angelica/` is the home page fo
 - `site/pages/` holds the documentation pages, one Markdown file each. `site/docs.mjs` turns a page into HTML.
 - `site/agent-setup.md` is the instructions a coding agent follows to set up a plugin project; it is published as it is, and `agent.html` gives people the prompt that points to it.
 - `site/art/` holds the lily: `lily-photo.png` is the generated photograph it comes from, and `tones.png`, `detail.png`, and `ground.png` are the masks the home page prints it with. `site/tools/` makes the masks from the photograph.
-- `site/build.mjs` builds everything into `site/dist/` and needs the network for the feeds: `index.html`, an HTML and a Markdown copy of every page, and `llms.txt`, which lists every page as Markdown and the canonical documents a plugin author needs.
+- `site/build.mjs` builds everything into `site/dist/` and needs the network for the feeds and a Rust toolchain with the `wasm32-wasip2` target: `index.html`, an HTML and a Markdown copy of every page, the Reference pages, the Rust SDK's reference, and `llms.txt`, which lists every page as Markdown and the canonical documents a plugin author needs.
+- The Reference group of the menu is for agents and maintainers, with a notice on each page that says so:
+  - `site/docs.mjs` lists canonical documents of `docs/` (`reference`) that the build renders as `reference-*.html` pages. Their links lead to the other Reference pages or to the file on GitHub, and a link on any page to one of them stays on the site.
+  - `site/gamedata.mjs` writes **Game data** from the released map's files, which `status.mjs` downloads and checks: its domains, roots, types and fields, events, actions, and enums.
+  - The build runs `cargo rustdoc` for `angelica-sdk` and puts the result under `sdk/`, with `site/sdk-header.html` as the line that leads back to the documentation. The SDK warns on `missing_docs`, and CI's clippy fails on any warning, so every public item of the SDK has a description.
 
 ```text
 cd site
@@ -25,7 +29,7 @@ The build fails when a link inside the site leads to a missing file or a missing
 
 `docs/` stays the source of truth for behavior, formats, and rules ([documentation](./documentation.md)). A page in `site/pages/` explains a task or an idea to a reader and links to the canonical document instead of restating a contract. When behavior that a page describes changes, the page changes in the same pull request as the canonical document.
 
-The menu of the documentation follows the home page's three shelves: **Play** for players, **Build** for plugin authors, **Understand** for how Angelica works and how to contribute. A shelf lists only pages that exist; until a page for people exists, its entry links to the canonical document on GitHub.
+The menu of the documentation follows the home page's three shelves: **Play** for players, **Build** for plugin authors, **Understand** for how Angelica works and how to contribute. `llms.txt` lists the Understand pages under "How Angelica works". A shelf lists only pages that exist; until a page for people exists, its entry links to the canonical document on GitHub.
 
 ## Writing a page
 
@@ -44,7 +48,7 @@ next: Patch day
 # Turn on a plugin
 ```
 
-`section` is `Play` or `Build`; `order` places the page in its section and in `llms.txt`; `kicker` is the word above the title; `meta` is a few facts under it, separated by ` · `; `prev` and `next` are titles of other pages. A page links to another page by its Markdown file (`[Patch day](patch-day.md)`).
+`section` is `Play`, `Build`, or `Understand`; `order` places the page in its section and in `llms.txt`; `kicker` is the word above the title; `meta` is a few facts under it, separated by ` · `; `prev` and `next` are titles of other pages. A page links to another page by its Markdown file (`[Patch day](patch-day.md)`).
 
 Pages follow the topic types of the GitLab documentation: a tutorial teaches by building something, a task is numbered steps toward one goal, a concept explains an idea, and troubleshooting starts from what the reader sees. Player pages use the words of the interface, in bold, exactly as the menu shows them, and leave out how Angelica works inside. Every sentence says something the reader needs; a sentence that only reassures is removed.
 

@@ -46,6 +46,7 @@ impl Entry {
         self
     }
 
+    /// The mark at the right of the row: on, off, or needing the player.
     #[must_use]
     pub fn mark(mut self, mark: Mark) -> Self {
         self.mark = mark;
@@ -108,6 +109,7 @@ impl Entry {
 }
 
 impl Window {
+    /// A window with an id the plugin's events name and a title for its title bar.
     #[must_use]
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
@@ -138,27 +140,32 @@ impl Window {
         self
     }
 
+    /// Adds a widget below the ones added before it.
     #[must_use]
     pub fn with(mut self, widget: Widget) -> Self {
         self.widgets.push(widget);
         self
     }
 
+    /// A heading for the widgets under it.
     #[must_use]
     pub fn heading(self, text: impl Into<String>) -> Self {
         self.with(Widget::Heading(text.into()))
     }
 
+    /// A paragraph of text in the normal tone.
     #[must_use]
     pub fn text(self, text: impl Into<String>) -> Self {
         self.toned(text, Tone::Normal)
     }
 
+    /// A paragraph of text in the muted tone.
     #[must_use]
     pub fn muted(self, text: impl Into<String>) -> Self {
         self.toned(text, Tone::Muted)
     }
 
+    /// A paragraph of text in `tone`.
     #[must_use]
     pub fn toned(self, text: impl Into<String>, tone: Tone) -> Self {
         self.with(Widget::Text(Text {
@@ -167,11 +174,13 @@ impl Window {
         }))
     }
 
+    /// A button; pressing it arrives as `Event::Clicked` with `id`.
     #[must_use]
     pub fn button(self, id: impl Into<String>, label: impl Into<String>) -> Self {
         self.button_enabled(id, label, true)
     }
 
+    /// A button that the player can press only when `enabled`.
     #[must_use]
     pub fn button_enabled(
         self,
@@ -215,6 +224,7 @@ impl Window {
         self.with(Widget::Entry(entry))
     }
 
+    /// A checkbox; toggling it arrives as `Event::Toggled` with `id`.
     #[must_use]
     pub fn checkbox(self, id: impl Into<String>, label: impl Into<String>, checked: bool) -> Self {
         self.with(Widget::Checkbox(Checkbox {
@@ -224,6 +234,7 @@ impl Window {
         }))
     }
 
+    /// A text field with `value` and a `hint` while it is empty; each change arrives as `Event::Edited` with `id`.
     #[must_use]
     pub fn input(
         self,
@@ -240,6 +251,7 @@ impl Window {
         }))
     }
 
+    /// A choice of `options` with `selected` shown; a new choice arrives as `Event::Chosen` with `id`.
     #[must_use]
     pub fn choice(
         self,
@@ -256,6 +268,7 @@ impl Window {
         }))
     }
 
+    /// A progress line filled to `fraction`, from 0 to 1, with a label.
     #[must_use]
     pub fn progress(self, fraction: f32, label: impl Into<String>) -> Self {
         self.with(Widget::Progress(Progress {
@@ -264,6 +277,7 @@ impl Window {
         }))
     }
 
+    /// A thin line between the widgets before and after it.
     #[must_use]
     pub fn separator(self) -> Self {
         self.with(Widget::Separator)
