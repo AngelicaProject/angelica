@@ -83,7 +83,7 @@ doc = "Stores a parsed Excel row in a page whose rows are kept in a hash table."
 | a locator | it resolves to the same value as the entry |
 | `{ equals = "<entry>" }` | that entry is present with the same value |
 | `{ vtable_slot = n, code_slots = k }` | the entry's address is slot `n` of at least one 8-byte aligned table outside code whose first `k` slots (`k > n`) all point into code |
-| `{ contains = "<signature>" }`, optionally with `in = "<function entry>"` | the code of the entry's function, or of the `in` function, matches the signature exactly once. The function's code is every range of it in the exception directory, chained chunks included; a function without an entry there is searched as an `in` locator searches a leaf function. It confirms a fact of the game's code that an adapter relies on, such as a structure's size or a constant the game compares with |
+| `{ contains = "<signature>" }`, optionally with `in = "<function entry>"` | the code of the entry's function, or of the `in` function, matches the signature exactly once. An entry that is not code (a field, a global, or a vtable) names the function with `in`. The function's code is every range of it in the exception directory, chained chunks included; a function without an entry there is searched as an `in` locator searches a leaf function. It confirms a fact of the game's code that an adapter relies on, such as a structure's size or a constant the game compares with |
 
 ## Resolution
 
@@ -207,6 +207,8 @@ An array gives:
 - `stride`: the bytes from one element to the next, 1 to 65536; with `pointers = true`, every element is a pointer to the object, a zero pointer is skipped, and the stride is 8.
 - `present`: optional; a value or text field of the element. An element whose value of it is zero, false, or empty is skipped.
 - `partition`: optional; `{ field = "<field>", domains = { <domain> = ["<value>", …] } }`. The elements belong to domains by the value of `field`, a field of the element with an enum: a value listed under a domain belongs to it, any other named value to the array field's own domain, and an element whose value has no name in the enum is never read.
+
+A fixed `length` and a `stride` other than that of pointers are numbers of the map, and an update of the game can change them. The array field's entry confirms them for every build: when its offset is derived from code, it has `contains` checks on code of the game that walks or copies the array with those numbers, so the entry is absent when the code changes; when its offset is a constant, the build record confirms it only after its elements were checked in the game.
 
 Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
 

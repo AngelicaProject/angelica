@@ -389,6 +389,32 @@ fn check_references(entries: &BTreeMap<String, Entry>) -> Result<(), MapError> {
                 return Err(bad(entry, reference, "not defined"));
             }
         }
+        for check in &entry.checks {
+            let crate::Check::Contains { function, .. } = check else {
+                continue;
+            };
+            match function {
+                Some(function) => {
+                    if !matches!(entries[function].kind, EntryKind::Function { .. }) {
+                        return Err(bad(entry, function, "not a function"));
+                    }
+                }
+                None => {
+                    if !matches!(
+                        entry.kind,
+                        EntryKind::Function { .. }
+                            | EntryKind::Location { .. }
+                            | EntryKind::Patch { .. }
+                    ) {
+                        return Err(MapError::InvalidEntry {
+                            name: entry.name.clone(),
+                            message: "a `contains` check of an entry that is not code gives `in`"
+                                .to_owned(),
+                        });
+                    }
+                }
+            }
+        }
         let locators =
             entry
                 .locator
