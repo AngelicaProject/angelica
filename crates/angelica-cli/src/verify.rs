@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use angelica_map::{BuildRecord, Map, MapError};
+use angelica_map::{BuildRecord, EntryKind, Map, MapError};
 use angelica_pe::{Image, ImageError, Layout};
 use clap::Args;
 use serde_json::{Map as JsonObject, Value as Json, json};
@@ -25,12 +25,17 @@ pub struct VerifyArgs {
     /// Write the build record to `builds/<game version>.toml` in the map.
     #[arg(long)]
     write: bool,
+    /// A field with a constant offset that was checked in the game for this
+    /// build; repeatable. The build's existing record keeps confirming the
+    /// fields it confirmed, while their offsets stay the same.
+    #[arg(long, value_name = "ENTRY")]
+    confirm: Vec<String>,
     #[command(flatten)]
     output: Output,
 }
 
 #[derive(Debug, thiserror::Error)]
-enum VerifyError {
+pub(crate) enum VerifyError {
     #[error(transparent)]
     Map(#[from] MapError),
     #[error("{path}: {message}")]
@@ -39,6 +44,10 @@ enum VerifyError {
     Image { path: PathBuf, source: ImageError },
     #[error("{path}: `{text}` is not a game version")]
     Version { path: PathBuf, text: String },
+    #[error("{path}: {message}")]
+    Record { path: PathBuf, message: String },
+    #[error("`{0}` is not a field with a constant offset")]
+    NotConstant(String),
 }
 
 impl VerifyError {
@@ -48,6 +57,8 @@ impl VerifyError {
             Self::Io { path, .. } => ("io", Some(path.as_path()), None),
             Self::Image { path, .. } => ("image", Some(path.as_path()), None),
             Self::Version { path, .. } => ("game-version", Some(path.as_path()), None),
+            Self::Record { path, .. } => ("build-record", Some(path.as_path()), None),
+            Self::NotConstant(name) => ("not-constant", None, Some(name.as_str())),
         };
         json!({
             "error": {
@@ -135,11 +146,14 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         path: executable_path,
         source,
     })?;
+    let exe_sha256 = sha256_hex(&executable);
+    let record_path = args.map.join("builds").join(format!("{version_text}.toml"));
+    let confirmed = confirmed_offsets(&map, &record_path, &exe_sha256, &args.confirm)?;
     let record = BuildRecord {
         game_version: version_text,
-        exe_sha256: sha256_hex(&executable),
+        exe_sha256,
         entries_sha256: map.entries_sha256().to_owned(),
-        resolution: map.resolve(&image, image.image_base()),
+        resolution: map.resolve_confirming(&image, image.image_base(), &confirmed),
     };
 
     let mut sheets = SheetReport::new();
@@ -190,12 +204,8 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
     }
 
     let written = if args.write {
-        let path = args
-            .map
-            .join("builds")
-            .join(format!("{}.toml", record.game_version));
-        write_atomically(&path, record.to_toml().as_bytes())?;
-        Some(path)
+        write_atomically(&record_path, record.to_toml().as_bytes())?;
+        Some(record_path)
     } else {
         None
     };
@@ -209,6 +219,46 @@ fn verify(args: &VerifyArgs) -> Result<Verified, VerifyError> {
         fields,
         written,
     })
+}
+
+/// The fields whose constant offsets are confirmed for the executable: the
+/// ones `confirm` names, and the ones the build's existing record confirms
+/// with the offset the map still gives.
+pub(crate) fn confirmed_offsets(
+    map: &Map,
+    record_path: &Path,
+    executable: &str,
+    confirm: &[String],
+) -> Result<BTreeSet<String>, VerifyError> {
+    let constant = |name: &str| match map.get(name).map(|entry| &entry.kind) {
+        Some(EntryKind::Field { offset, .. }) => *offset,
+        _ => None,
+    };
+    let mut confirmed = BTreeSet::new();
+    for name in confirm {
+        if constant(name).is_none() {
+            return Err(VerifyError::NotConstant(name.clone()));
+        }
+        confirmed.insert(name.clone());
+    }
+    let text = match std::fs::read_to_string(record_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(confirmed),
+        Err(error) => return Err(io_error(record_path, &error)),
+    };
+    let recorded = BuildRecord::confirmed_offsets(&text, executable).map_err(|message| {
+        VerifyError::Record {
+            path: record_path.to_owned(),
+            message,
+        }
+    })?;
+    confirmed.extend(
+        recorded
+            .into_iter()
+            .filter(|(name, offset)| constant(name) == Some(*offset))
+            .map(|(name, _)| name),
+    );
+    Ok(confirmed)
 }
 
 /// Which places a build has, and why it lacks the others.
@@ -326,7 +376,7 @@ fn report_text(verified: &Verified) -> String {
         let _ = writeln!(text, "  absent {name}: {absence}");
     }
     for name in record.resolution.constant_offsets() {
-        let _ = writeln!(text, "  constant offset {name}");
+        let _ = writeln!(text, "  confirmed constant offset {name}");
     }
     for (kind, report) in [("sheets", &verified.sheets), ("windows", &verified.windows)] {
         if report.is_empty() {
@@ -404,7 +454,7 @@ fn io_error(path: &Path, error: &std::io::Error) -> VerifyError {
     }
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .fold(String::with_capacity(64), |mut hex, byte| {

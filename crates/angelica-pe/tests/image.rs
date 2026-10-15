@@ -185,3 +185,20 @@ fn reads_little_endian_words() {
         assert_eq!(image.read_u64(0x2000), None);
     });
 }
+
+#[test]
+fn a_function_has_the_prologue_its_unwind_information_gives() {
+    let builder = sample()
+        .functions(&[(0x1000, 0x1008), (0x1008, 0x1010), (0x1020, 0x1030)])
+        .chained(0x1008, 0x1000)
+        .prologue(0x1000, 6);
+    both_layouts(&builder, |image| {
+        assert_eq!(image.prologue_len(0x1000), Some(6));
+        assert_eq!(image.prologue_len(0x1008), None, "a chained chunk");
+        assert_eq!(image.prologue_len(0x1020), None, "no unwind information");
+        assert_eq!(image.prologue_len(0x1004), None, "not a function's start");
+        assert_eq!(image.function_root(0x100C), Some(0x1000));
+        assert_eq!(image.function_root(0x1024), Some(0x1020));
+        assert_eq!(image.function_root(0x1018), None);
+    });
+}

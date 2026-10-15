@@ -1,14 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use angelica_pe::{Image, Signature};
-use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind, Register};
+use iced_x86::{Decoder, DecoderOptions, OpKind, Register};
 
 use crate::Map;
 use crate::model::{Check, Entry, EntryKind, Follow, Locator};
-
-/// The longest leaf function an `in` locator searches.
-const MAX_LEAF_FUNCTION: u32 = 0x1_0000;
 
 /// What a present entry resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,14 +35,29 @@ pub enum Absence {
     OutsideImage,
     NotCode,
     Dependency(String),
-    SlotNotInImage { vtable: String, slot: u32 },
+    SlotNotInImage {
+        vtable: String,
+        slot: u32,
+    },
     SlotNotCode(u32),
     NoFunctionRange(String),
     NoOperand,
     PatchMismatch,
-    NotInVtable { slot: u32, code_slots: u32 },
-    CheckFailed { index: usize, reason: Box<Absence> },
-    CheckDiffers { index: usize, found: u32 },
+    NotInVtable {
+        slot: u32,
+        code_slots: u32,
+    },
+    CheckFailed {
+        index: usize,
+        reason: Box<Absence>,
+    },
+    CheckDiffers {
+        index: usize,
+        found: u32,
+    },
+    /// A field whose offset is a constant of the map, which no build record
+    /// confirms for this executable.
+    Unconfirmed,
 }
 
 impl fmt::Display for Absence {
@@ -74,6 +86,10 @@ impl fmt::Display for Absence {
             Self::PatchMismatch => {
                 write!(formatter, "bytes at the patch site differ from `original`")
             }
+            Self::Unconfirmed => write!(
+                formatter,
+                "a constant offset that no build record confirms for this executable"
+            ),
             Self::NotInVtable { slot, code_slots } => write!(
                 formatter,
                 "address is not slot {slot} of a table whose first {code_slots} slots point into code"
@@ -126,7 +142,7 @@ impl Resolution {
     }
 
     /// Present fields whose offset is a constant of the map rather than
-    /// derived from code, by name.
+    /// derived from code, by name: the ones confirmed for this build.
     #[must_use]
     pub fn constant_offsets(&self) -> &[String] {
         &self.constant_offsets
@@ -136,11 +152,26 @@ impl Resolution {
 impl Map {
     /// Resolves every entry against an image loaded at `load_base`: the
     /// image's preferred base for a file, the module address in the game.
+    /// A field whose offset is a constant of the map is absent: only a build
+    /// record confirms it.
     #[must_use]
     pub fn resolve(&self, image: &Image<'_>, load_base: u64) -> Resolution {
+        self.resolve_confirming(image, load_base, &BTreeSet::new())
+    }
+
+    /// Resolves like [`Map::resolve`], with the fields whose constant
+    /// offsets were checked in this build, by name, present.
+    #[must_use]
+    pub fn resolve_confirming(
+        &self,
+        image: &Image<'_>,
+        load_base: u64,
+        confirmed: &BTreeSet<String>,
+    ) -> Resolution {
         let mut resolver = Resolver {
             image,
             load_base,
+            confirmed,
             results: BTreeMap::new(),
         };
         let mut constant_offsets = Vec::new();
@@ -173,6 +204,7 @@ impl Map {
 struct Resolver<'a, 'b> {
     image: &'a Image<'b>,
     load_base: u64,
+    confirmed: &'a BTreeSet<String>,
     results: BTreeMap<String, Result<Value, Absence>>,
 }
 
@@ -191,7 +223,12 @@ impl Resolver<'_, '_> {
                     ..
                 },
                 _,
-            ) => Value::Offset(*offset),
+            ) => {
+                if !self.confirmed.contains(&entry.name) {
+                    return Err(Absence::Unconfirmed);
+                }
+                Value::Offset(*offset)
+            }
             (_, Some(locator)) => self.locate(locator)?,
             (_, None) => unreachable!("entries without a locator are constant fields"),
         };
@@ -329,47 +366,25 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// The code of the function that starts at `start`: its exception
-    /// directory entry when it has one; otherwise, for a leaf function, the
-    /// instructions from its start up to the first `int3`, the next function
-    /// in the exception directory, or the end of the section.
+    /// The code an `in` locator searches in the function that starts at
+    /// `start`: its exception directory entry when it has one; otherwise,
+    /// for a leaf function, the code its control flow reaches.
     fn function_code(&self, start: u32) -> Option<&[u8]> {
-        if let Some(range) = self.image.function_at(start) {
-            return self
-                .image
-                .bytes_at(range.start, (range.end - range.start) as usize);
-        }
-        let section = self.image.section_at(start)?;
-        let section_end = u32::try_from(self.image.section_data(section).len())
-            .ok()
-            .and_then(|len| section.virtual_address.checked_add(len))?;
-        let end = self
-            .image
-            .next_function_after(start)
-            .map_or(section_end, |next| next.min(section_end))
-            .min(start.saturating_add(MAX_LEAF_FUNCTION));
-        let bytes = self.image.bytes_at(start, (end - start) as usize)?;
-        let mut decoder = Decoder::with_ip(64, bytes, u64::from(start), DecoderOptions::NONE);
-        let mut length = 0;
-        while decoder.can_decode() {
-            let instruction = decoder.decode();
-            if instruction.is_invalid() || instruction.mnemonic() == Mnemonic::Int3 {
-                break;
-            }
-            length += instruction.len();
-        }
-        (length > 0).then(|| &bytes[..length])
+        let range = match self.image.function_at(start) {
+            Some(range) => range,
+            None => crate::code::leaf_function(self.image, start)?,
+        };
+        self.image
+            .bytes_at(range.start, (range.end - range.start) as usize)
     }
 
     /// All the code of the function that starts at `start`: every range in
     /// the exception directory that belongs to it, chained chunks included;
-    /// for a leaf function, its code as `function_code` finds it.
+    /// for a leaf function, the code its control flow reaches.
     fn whole_function(&self, start: u32) -> Vec<&[u8]> {
-        let chunks = self.image.function_chunks(start);
-        if chunks.is_empty() {
-            return self.function_code(start).into_iter().collect();
-        }
-        chunks
+        crate::code::function_code(self.image, start)
+            .map(|code| code.ranges)
+            .unwrap_or_default()
             .into_iter()
             .filter_map(|range| {
                 self.image

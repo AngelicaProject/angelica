@@ -73,7 +73,7 @@ fn install_resolved(
     ] {
         // SAFETY: the map verified this address as the start of a function
         // with this ABI; the replacement has the same ABI.
-        let detour = unsafe { Detour::new(function.address, replacement, function.length) }
+        let detour = unsafe { Detour::new(function.address, replacement, &function.code.clone()?) }
             .map_err(|e| format!("case detour: {e}"))?;
         original.store(detour.trampoline(), Ordering::Release);
         detours.push(detour);
@@ -249,14 +249,8 @@ mod tests {
         // `mov rax, rcx; nop; nop; ret`: returns the string unchanged, as the
         // game's functions do for text without letters they know.
         let code = [0x48, 0x89, 0xC8, 0x90, 0x90, 0xC3, 0x90, 0x90];
-        let upper = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
-        let lower = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
+        let upper = Function::synthetic(&code);
+        let lower = Function::synthetic(&code);
         let case = Arc::new(TextCase::default());
         let layout = Layout {
             string: 0,

@@ -311,6 +311,27 @@ checks = [{ contains = \"90\", signature = \"90\" }]
     );
     assert_eq!(
         entry_error(
+            "[global.\"game.a\"]
+locator = { signature = \"90\" }
+type = \"ptr\"
+checks = [{ contains = \"90\" }]
+"
+        ),
+        "a `contains` check of an entry that is not code gives `in`"
+    );
+    let not_function = "[global.\"game.g\"]
+locator = { signature = \"90\" }
+type = \"ptr\"
+                        [global.\"game.a\"]
+locator = { signature = \"90\" }
+type = \"ptr\"
+checks = [{ contains = \"90\", in = \"game.g\" }]
+";
+    assert!(
+        matches!(map(&[("entries/game.toml", not_function)]), Err(MapError::BadReference { problem, .. }) if problem == "not a function")
+    );
+    assert_eq!(
+        entry_error(
             "[global.\"game.a\"]\nlocator = { signature = \"90\" }\ntype = \"ptr\"\nchecks = [{ vtable_slot = 3, code_slots = 3 }]\n"
         ),
         "check 0: `code_slots` must be greater than `vtable_slot`"

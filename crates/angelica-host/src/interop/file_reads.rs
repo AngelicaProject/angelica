@@ -127,9 +127,14 @@ fn install_resolved(
 ) -> Result<(), String> {
     // SAFETY: the map verified this address as the start of a function with
     // this ABI in the executable's code; the replacement has the same ABI.
-    let mut detour =
-        unsafe { Detour::new(function.address, do_job as DoJob as usize, function.length) }
-            .map_err(|e| format!("file job detour: {e}"))?;
+    let mut detour = unsafe {
+        Detour::new(
+            function.address,
+            do_job as DoJob as usize,
+            &function.code.clone()?,
+        )
+    }
+    .map_err(|e| format!("file job detour: {e}"))?;
     ORIGINAL.store(detour.trampoline(), Ordering::Release);
     if ADAPTER
         .set(FileReads {
@@ -156,7 +161,7 @@ fn install_textures(textures: Textures, function: &Function) -> Result<(), Strin
         Detour::new(
             function.address,
             load_texture as LoadTexture as usize,
-            function.length,
+            &function.code.clone()?,
         )
     }
     .map_err(|e| format!("texture load detour: {e}"))?;
@@ -420,10 +425,7 @@ mod tests {
 
         // `mov eax, 7; ret`, long enough to detour.
         let code = [0xB8, 7, 0, 0, 0, 0xC3, 0x90, 0x90, 0x90, 0x90];
-        let function = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
+        let function = Function::synthetic(&code);
         let layout = Layout {
             mode: 0,
             length: 0x10,
@@ -506,10 +508,7 @@ mod tests {
 
         // The texture load refuses every disk file: `mov eax, 0xF1; ret`.
         let refuse = [0xB8, 0xF1, 0, 0, 0, 0xC3, 0x90, 0x90, 0x90, 0x90];
-        let load = Function {
-            address: angelica_hook::testing::executable(&refuse),
-            length: Some(refuse.len()),
-        };
+        let load = Function::synthetic(&refuse);
         // The plain loader returns the detail level plus 0x20:
         // `lea eax, [rdx + 0x20]; ret`.
         let load_unpacked = angelica_hook::testing::executable(&[0x8D, 0x42, 0x20, 0xC3]);

@@ -6,6 +6,7 @@
 //! mapped module, so both always agree on what an entry means.
 
 mod actions;
+mod code;
 mod error;
 mod events;
 mod load;
@@ -19,6 +20,7 @@ mod windows;
 pub use actions::{
     ActArg, Action, Condition as ActCondition, MOST_ACT_RATE, Number, Param, Source as ActSource,
 };
+pub use code::{FunctionCode, function_code, function_holding, leaf_function};
 pub use error::MapError;
 pub use events::{
     Arg, DERIVATIONS, DerivedValue, Event, MOST_OUTCOME_TEXT, MOST_RATE, Outcome, RULE_FORMATS,

@@ -116,6 +116,46 @@ struct Lod {
     index_offset: usize,
 }
 
+/// The most a model has of each list, the most any model of the game has.
+/// The game is known to load models up to these, and nothing shows it
+/// takes more.
+const MOST: Most = Most {
+    meshes: 235,
+    attributes: 19,
+    submeshes: 1567,
+    materials: 83,
+    bones: 270,
+    bone_tables: 6,
+    shapes: 26,
+    shape_meshes: 166,
+    shape_values: 49_295,
+    element_ids: 15,
+    terrain_meshes: 3,
+    terrain_submeshes: 236,
+    bone_indices: 818,
+    bone_map: 1652,
+};
+/// The most bones a bone table of version 6 names, the most any table of
+/// the game's models does; version 5 tables hold at most 64.
+const MOST_TABLE_BONES: usize = 245;
+
+struct Most {
+    meshes: usize,
+    attributes: usize,
+    submeshes: usize,
+    materials: usize,
+    bones: usize,
+    bone_tables: usize,
+    shapes: usize,
+    shape_meshes: usize,
+    shape_values: usize,
+    element_ids: usize,
+    terrain_meshes: usize,
+    terrain_submeshes: usize,
+    bone_indices: usize,
+    bone_map: usize,
+}
+
 /// The counts of the model header.
 struct Counts {
     meshes: usize,
@@ -294,6 +334,12 @@ fn read(bytes: &[u8]) -> Result<Model<'_>, String> {
     let (shapes, shape_meshes) = read_shapes(&mut r, &counts, &string)?;
     let shape_values = r.take(4 * counts.shape_values, "shape values")?;
     let bone_map_size = r.u32("submesh bone map")?;
+    if bone_map_size / 2 > MOST.bone_map {
+        return Err(format!(
+            "a model's submeshes name at most {} bones, as the game's own do",
+            MOST.bone_map
+        ));
+    }
     r.take(bone_map_size, "submesh bone map")?;
     let padding = usize::from(r.u8("padding")?);
     r.take(padding, "padding")?;
@@ -354,7 +400,7 @@ fn read_strings<'a>(r: &mut Reader<'a>) -> Result<&'a [u8], String> {
 
 fn read_counts(r: &mut Reader<'_>) -> Result<Counts, String> {
     let header = r.take(56, "model header")?;
-    Ok(Counts {
+    let counts = Counts {
         meshes: half(header, 4),
         attributes: half(header, 6),
         submeshes: half(header, 8),
@@ -370,7 +416,43 @@ fn read_counts(r: &mut Reader<'_>) -> Result<Counts, String> {
         extra_lods: header[27] & 0x10 != 0,
         terrain_submeshes: half(header, 38),
         bone_indices: half(header, 44),
-    })
+    };
+    within_most(&counts)?;
+    Ok(counts)
+}
+
+/// Refuses a model with more of a list than any model of the game has.
+fn within_most(counts: &Counts) -> Result<(), String> {
+    for (what, count, most) in [
+        ("meshes", counts.meshes, MOST.meshes),
+        ("attributes", counts.attributes, MOST.attributes),
+        ("submeshes", counts.submeshes, MOST.submeshes),
+        ("materials", counts.materials, MOST.materials),
+        ("bones", counts.bones, MOST.bones),
+        ("bone tables", counts.bone_tables, MOST.bone_tables),
+        ("shapes", counts.shapes, MOST.shapes),
+        ("shape meshes", counts.shape_meshes, MOST.shape_meshes),
+        ("shape values", counts.shape_values, MOST.shape_values),
+        ("element ids", counts.element_ids, MOST.element_ids),
+        (
+            "terrain shadow meshes",
+            counts.terrain_meshes,
+            MOST.terrain_meshes,
+        ),
+        (
+            "terrain shadow submeshes",
+            counts.terrain_submeshes,
+            MOST.terrain_submeshes,
+        ),
+        ("bone indices", counts.bone_indices, MOST.bone_indices),
+    ] {
+        if count > most {
+            return Err(format!(
+                "a model has at most {most} {what}, as the game's own do"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The three levels of detail, and the mesh ranges of the extra ones.
@@ -452,6 +534,11 @@ fn read_bone_tables(r: &mut Reader<'_>, version: u32, counts: &Counts) -> Result
         for table in 0..counts.bone_tables {
             let entry = entries + 4 * table;
             let (offset, count) = (half(bytes, entry), half(bytes, entry + 2));
+            if count > MOST_TABLE_BONES {
+                return Err(format!(
+                    "a bone table holds at most {MOST_TABLE_BONES} bones, as the game's own do"
+                ));
+            }
             let start = entry + 4 * offset;
             if start < indices || start + 2 * count > indices + 2 * counts.bone_indices {
                 return Err("a bone table lies outside the bone indices".into());
@@ -784,6 +871,16 @@ pub(crate) mod tests {
         let mut version = model_file(&Parts::default());
         version[0] = 7;
         assert!(model(&version).unwrap_err().contains("version"));
+        // The model header's bone count, after the stack, the string
+        // table's 8-byte head, and its 20 bytes.
+        let mut bones = model_file(&Parts::default());
+        let at = HEADER + DECLARATION + 8 + 20 + 12;
+        bones[at..at + 2].copy_from_slice(&271u16.to_le_bytes());
+        assert!(
+            model(&bones)
+                .unwrap_err()
+                .contains("at most 270 bones, as the game's own do")
+        );
         let whole = model_file(&Parts::default());
         for cut in [10, HEADER + 20, whole.len() - 1] {
             assert!(model(&whole[..cut]).is_err(), "{cut}");

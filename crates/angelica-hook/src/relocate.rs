@@ -2,7 +2,7 @@
 
 use iced_x86::{
     BlockEncoder, BlockEncoderOptions, Code, Decoder, DecoderOptions, FlowControl, Instruction,
-    InstructionBlock, OpKind,
+    InstructionBlock, OpKind, Register,
 };
 
 /// The length of the jump a detour writes over the start of a function: a
@@ -125,31 +125,113 @@ pub fn relocate(
     })
 }
 
-/// The first relative branch in `function`, located at `ip`, whose target
-/// lies inside `[start, start + len)` but is not `start` itself: code that
-/// would jump into the middle of bytes a detour overwrites. Returns the
-/// branch's address and its target.
-#[must_use]
-pub fn branch_into(function: &[u8], ip: u64, start: u64, len: usize) -> Option<(u64, u64)> {
-    let end = start + len as u64;
-    let mut decoder = Decoder::with_ip(64, function, ip, DecoderOptions::NONE);
-    while decoder.can_decode() {
-        let instruction = decoder.decode();
-        if instruction.is_invalid() {
-            continue;
-        }
-        let is_branch = (0..instruction.op_count()).any(|operand| {
-            matches!(
-                instruction.op_kind(operand),
-                OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
-            )
-        });
-        let target = instruction.near_branch_target();
-        if is_branch && target > start && target < end {
-            return Some((instruction.ip(), target));
+/// Why a function's code cannot be shown free of branches into the bytes a
+/// modification overwrites.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FlowError {
+    #[error(
+        "an instruction at {from:#X} branches to {to:#X}, inside the bytes a detour overwrites"
+    )]
+    BranchInto { from: u64, to: u64 },
+    #[error("the function's code reaches an invalid instruction at {0:#X}")]
+    Invalid(u64),
+    #[error("the function jumps at {0:#X} to targets its code does not state")]
+    IndirectJump(u64),
+    #[error("{0:#X} is not an instruction of the function's code")]
+    NotAnInstruction(u64),
+}
+
+/// Checks that no code of a function branches into the `len` bytes at
+/// `location` that a modification overwrites, except to `location` itself.
+///
+/// `chunks` are the function's ranges of code, each at its address, and
+/// `start` is the function's first instruction. When the bytes lie within
+/// the function's prologue of `prologue` bytes, nothing branches into them:
+/// the prologue runs only when the function is entered. Otherwise the code
+/// is followed from the start of every chunk: each instruction to the next,
+/// and every branch whose target is in the function; it ends at a return,
+/// `int3`, `ud2`, an unconditional jump, and a jump through a RIP-relative
+/// pointer. A jump through anything else has targets the code does not
+/// state, and the check fails.
+///
+/// # Errors
+///
+/// Returns a [`FlowError`] when a branch targets the bytes, the followed
+/// code reaches an invalid instruction or a jump through a register or
+/// computed address, or `location` is not an instruction the followed code
+/// reaches.
+pub fn check_flow(
+    chunks: &[(u64, &[u8])],
+    start: u64,
+    prologue: usize,
+    location: u64,
+    len: usize,
+) -> Result<(), FlowError> {
+    let end = location + len as u64;
+    if location == start && len <= prologue {
+        return Ok(());
+    }
+    let chunk_of = |address: u64| {
+        chunks
+            .iter()
+            .find(|(begin, bytes)| (*begin..*begin + bytes.len() as u64).contains(&address))
+    };
+    let mut reached = std::collections::BTreeSet::new();
+    let mut work: Vec<u64> = chunks.iter().map(|(begin, _)| *begin).collect();
+    while let Some(mut at) = work.pop() {
+        while !reached.contains(&at) {
+            let Some(&(begin, bytes)) = chunk_of(at) else {
+                break;
+            };
+            let Some(rest) = usize::try_from(at - begin)
+                .ok()
+                .and_then(|offset| bytes.get(offset..))
+            else {
+                break;
+            };
+            let instruction = Decoder::with_ip(64, rest, at, DecoderOptions::NONE).decode();
+            if instruction.is_invalid() {
+                return Err(FlowError::Invalid(at));
+            }
+            reached.insert(at);
+            let is_branch = (0..instruction.op_count()).any(|operand| {
+                matches!(
+                    instruction.op_kind(operand),
+                    OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
+                )
+            });
+            if is_branch {
+                let target = instruction.near_branch_target();
+                if target > location && target < end {
+                    return Err(FlowError::BranchInto {
+                        from: at,
+                        to: target,
+                    });
+                }
+            }
+            match instruction.flow_control() {
+                FlowControl::Return | FlowControl::Interrupt | FlowControl::Exception => break,
+                FlowControl::UnconditionalBranch => {
+                    work.push(instruction.near_branch_target());
+                    break;
+                }
+                FlowControl::IndirectBranch => {
+                    if instruction.memory_base() == Register::RIP {
+                        break;
+                    }
+                    return Err(FlowError::IndirectJump(at));
+                }
+                FlowControl::ConditionalBranch => work.push(instruction.near_branch_target()),
+                _ => {}
+            }
+            at = instruction.next_ip();
         }
     }
-    None
+    if reached.contains(&location) {
+        Ok(())
+    } else {
+        Err(FlowError::NotAnInstruction(location))
+    }
 }
 
 #[cfg(test)]
@@ -254,9 +336,63 @@ mod tests {
     fn finds_a_branch_into_the_overwritten_bytes() {
         // 0: xor eax, eax; 2: inc eax; 4: cmp eax, 10; 7: jl 2; 9: ret
         let code = [0x31, 0xC0, 0xFF, 0xC0, 0x83, 0xF8, 0x0A, 0x7C, 0xF9, 0xC3];
-        assert_eq!(branch_into(&code, IP, IP, 7), Some((IP + 7, IP + 2)));
-        // A branch to the start itself is allowed.
-        assert_eq!(branch_into(&code, IP, IP + 2, 5), None);
-        assert_eq!(branch_into(&code, IP, IP, 2), None);
+        let chunks = [(IP, &code[..])];
+        assert_eq!(
+            check_flow(&chunks, IP, 0, IP, 7),
+            Err(FlowError::BranchInto {
+                from: IP + 7,
+                to: IP + 2
+            })
+        );
+        // A branch to the location itself is allowed.
+        assert_eq!(check_flow(&chunks, IP, 0, IP + 2, 5), Ok(()));
+        assert_eq!(check_flow(&chunks, IP, 0, IP, 2), Ok(()));
+        // Nothing branches into a prologue.
+        assert_eq!(check_flow(&chunks, IP, 7, IP, 7), Ok(()));
+        assert_eq!(
+            check_flow(&chunks, IP, 0, IP + 5, 1),
+            Err(FlowError::NotAnInstruction(IP + 5))
+        );
+    }
+
+    #[test]
+    fn follows_every_chunk_of_the_function() {
+        // The function: 0: xor eax, eax; 2: jmp to the chunk. The chunk:
+        // 0: inc eax; 2: jl to the function's offset 1; 8: ret.
+        let function = [0x31, 0xC0, 0xE9, 0xF9, 0x0F, 0, 0];
+        let chunk_ip = IP + 0x1000;
+        let back =
+            i32::try_from(i64::try_from(IP + 1).unwrap() - i64::try_from(chunk_ip + 8).unwrap())
+                .unwrap();
+        let mut chunk = vec![0xFF, 0xC0, 0x0F, 0x8C];
+        chunk.extend(back.to_le_bytes());
+        chunk.push(0xC3);
+        assert_eq!(
+            check_flow(&[(IP, &function[..]), (chunk_ip, &chunk[..])], IP, 0, IP, 5),
+            Err(FlowError::BranchInto {
+                from: chunk_ip + 2,
+                to: IP + 1
+            }),
+            "a chained chunk branches into the bytes"
+        );
+    }
+
+    #[test]
+    fn refuses_code_it_cannot_follow() {
+        // 0: test ecx, ecx; 2: je 6; 4: jmp rax; 6: ret
+        let code = [0x85, 0xC9, 0x74, 0x02, 0xFF, 0xE0, 0xC3];
+        assert_eq!(
+            check_flow(&[(IP, &code[..])], IP, 0, IP, 5),
+            Err(FlowError::IndirectJump(IP + 4))
+        );
+        // 0: jmp [rip+0], a tail call through a pointer.
+        let tail = [0xFF, 0x25, 0, 0, 0, 0];
+        assert_eq!(check_flow(&[(IP, &tail[..])], IP, 0, IP, 6), Ok(()));
+        // 0: test ecx, ecx; 2: je 4; 4: an invalid instruction.
+        let invalid = [0x85, 0xC9, 0x74, 0x00, 0x06];
+        assert_eq!(
+            check_flow(&[(IP, &invalid[..])], IP, 0, IP, 2),
+            Err(FlowError::Invalid(IP + 4))
+        );
     }
 }

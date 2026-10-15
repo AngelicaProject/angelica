@@ -144,7 +144,7 @@ fn install_resolved(
         // SAFETY: the map verified this address as the start of a function
         // with this ABI in the executable's code, which stays mapped; the
         // replacement has the same ABI.
-        let detour = unsafe { Detour::new(function.address, replacement, function.length) }
+        let detour = unsafe { Detour::new(function.address, replacement, &function.code.clone()?) }
             .map_err(|e| format!("StoreRow detour: {e}"))?;
         original.store(detour.trampoline(), Ordering::Release);
         detours.push(detour);
@@ -540,14 +540,7 @@ mod tests {
     fn store_row_detour_rebuilds_listed_rows_with_the_game_allocator() {
         // `mov eax, 7; ret`, long enough to detour.
         let code = [0xB8, 7, 0, 0, 0, 0xC3, 0x90, 0x90, 0x90, 0x90];
-        let hash_table = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
-        let ring_buffer = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
+        let (hash_table, ring_buffer) = (Function::synthetic(&code), Function::synthetic(&code));
         let layout = synthetic_layout();
 
         let text = Arc::new(ExcelText::default());

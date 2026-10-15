@@ -1,6 +1,6 @@
 //! Verified entries exposed to the host by name, never supplied by a plugin.
 #![forbid(unsafe_code)]
-use angelica_map::{Entry, Map, Value};
+use angelica_map::{Entry, EntryKind, FunctionCode, Map, Value};
 use angelica_pe::{Image, Layout};
 use std::collections::BTreeMap;
 
@@ -8,7 +8,50 @@ use std::collections::BTreeMap;
 pub struct ResolvedEntry {
     pub entry: Entry,
     pub value: Value,
-    pub function_range: Option<std::ops::Range<u32>>,
+    /// For a function, its code; for a location or a patch, the code of the
+    /// function in the exception directory that holds it. `None` when the
+    /// code is not known exactly.
+    pub code: Option<FunctionCode>,
+}
+
+impl ResolvedEntry {
+    /// The entry's code in the game loaded at `base`, as a hook checks it.
+    ///
+    /// # Errors
+    ///
+    /// Why the code is not known, so nothing is hooked there.
+    pub fn hook_code(&self, base: usize) -> Result<angelica_hook::FunctionCode, String> {
+        let code = self.code.as_ref().ok_or_else(|| {
+            format!(
+                "the code of map entry {} is not known exactly, so it is not hooked",
+                self.entry.name
+            )
+        })?;
+        let at = |rva: u32| base + rva as usize;
+        Ok(angelica_hook::FunctionCode {
+            start: at(code.start),
+            ranges: code
+                .ranges
+                .iter()
+                .map(|range| at(range.start)..at(range.end))
+                .collect(),
+            prologue: code.prologue.unwrap_or(0) as usize,
+        })
+    }
+}
+
+/// The code of an entry at `value` in `image`.
+fn code_of(entry: &Entry, value: Value, image: &Image<'_>) -> Option<FunctionCode> {
+    let Value::Address(rva) = value else {
+        return None;
+    };
+    match entry.kind {
+        EntryKind::Function { .. } => angelica_map::function_code(image, rva),
+        EntryKind::Location { .. } | EntryKind::Patch { .. } => {
+            angelica_map::function_holding(image, rva)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -57,16 +100,12 @@ impl Catalog {
             };
             for (name, value) in record.resolution.present() {
                 let entry = map.get(name).ok_or("recorded entry is not in map")?;
-                let function_range = match value {
-                    Value::Address(rva) => image.function_at(rva),
-                    Value::Offset(_) => None,
-                };
                 catalog.present.insert(
                     name.into(),
                     ResolvedEntry {
                         entry: entry.clone(),
                         value,
-                        function_range,
+                        code: code_of(entry, value, &image),
                     },
                 );
             }
@@ -99,16 +138,12 @@ impl Catalog {
             match result {
                 Ok(value) => {
                     if let Some(entry) = map.get(name) {
-                        let function_range = match value {
-                            Value::Address(rva) => image.function_at(*rva),
-                            Value::Offset(_) => None,
-                        };
                         catalog.present.insert(
                             name.clone(),
                             ResolvedEntry {
                                 entry: entry.clone(),
                                 value: *value,
-                                function_range,
+                                code: code_of(entry, *value, &image),
                             },
                         );
                     }
@@ -189,5 +224,59 @@ doc = "Where."
         let map = Catalog::map_from_files(&files).unwrap();
         assert!(map.objects().actions.contains_key("go"));
         assert!(map.objects().domains.contains_key("moves"));
+    }
+
+    #[test]
+    fn a_constant_offset_is_used_only_in_a_build_its_record_confirms() {
+        use angelica_pe::testing::{CODE, PeBuilder};
+        let mut files: BTreeMap<String, Vec<u8>> = [
+            (
+                "map.toml",
+                "format = 2
+",
+            ),
+            (
+                "entries/game.toml",
+                "[field.\"game.thing.name\"]
+of = \"game.thing\"
+type = \"ptr\"
+offset = 0x8
+",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_owned(), text.as_bytes().to_vec()))
+        .collect();
+        let builder = PeBuilder::new().section(".text", CODE, &[0xC3]);
+        let mapped = builder.build_mapped();
+        let base = 0x1_4000_0000;
+        let hash = "ab".repeat(32);
+
+        let (map, catalog) =
+            Catalog::from_signed_files(&files, &mapped, base, hash.clone()).unwrap();
+        assert!(!catalog.verified);
+        assert!(
+            catalog.absent.contains_key("game.thing.name"),
+            "a build without a record does not use a constant offset"
+        );
+
+        let image = Image::parse(&mapped, Layout::Mapped).unwrap();
+        let record = angelica_map::BuildRecord {
+            game_version: "2026.09.15.0000.0000".to_owned(),
+            exe_sha256: hash.clone(),
+            entries_sha256: map.entries_sha256().to_owned(),
+            resolution: map.resolve_confirming(
+                &image,
+                base,
+                &["game.thing.name".to_owned()].into(),
+            ),
+        };
+        files.insert(
+            "builds/2026.09.15.0000.0000.toml".to_owned(),
+            record.to_toml().into_bytes(),
+        );
+        let (_, catalog) = Catalog::from_signed_files(&files, &mapped, base, hash).unwrap();
+        assert!(catalog.verified);
+        assert_eq!(catalog.present["game.thing.name"].value, Value::Offset(0x8));
     }
 }

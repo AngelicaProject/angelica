@@ -11,7 +11,7 @@ authors.workspace = true
 
 [dependencies]
 angelica-pe.workspace = true
-iced-x86.workspace = true
+iced-x86 = { workspace = true, features = ["instr_info"] }
 serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

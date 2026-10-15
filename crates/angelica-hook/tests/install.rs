@@ -2,7 +2,8 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use angelica_hook::testing::executable;
+use angelica_hook::relocate::FlowError;
+use angelica_hook::testing::{executable, whole};
 use angelica_hook::{CodePatch, Detour, HookError, RelocateError, VtableSlot};
 
 type Add = extern "C" fn(i64, i64) -> i64;
@@ -29,7 +30,14 @@ fn a_detour_replaces_the_function_and_can_call_the_original() {
     let target = executable(&ADD);
     let add = function::<Add>(target);
     // SAFETY: `target` is a whole function and `replacement` matches it.
-    let mut detour = unsafe { Detour::new(target, replacement as Add as usize, None) }.unwrap();
+    let mut detour = unsafe {
+        Detour::new(
+            target,
+            replacement as Add as usize,
+            &whole(target, ADD.len()),
+        )
+    }
+    .unwrap();
     ORIGINAL.store(detour.trampoline(), Ordering::Release);
     assert_eq!(add(2, 3), 5);
 
@@ -66,11 +74,23 @@ fn moved_instructions_keep_rip_relative_data_and_branches() {
     ]);
 
     // SAFETY: whole functions with matching replacements.
-    let mut load_detour =
-        unsafe { Detour::new(load, load_plus_one as Nullary as usize, None) }.unwrap();
+    let mut load_detour = unsafe {
+        Detour::new(
+            load,
+            load_plus_one as Nullary as usize,
+            &whole(load, load_code.len()),
+        )
+    }
+    .unwrap();
     // SAFETY: as above.
-    let mut branch_detour =
-        unsafe { Detour::new(branch, branch_times_ten as Unary as usize, None) }.unwrap();
+    let mut branch_detour = unsafe {
+        Detour::new(
+            branch,
+            branch_times_ten as Unary as usize,
+            &whole(branch, 13),
+        )
+    }
+    .unwrap();
     LOAD.store(load_detour.trampoline(), Ordering::Release);
     BRANCH.store(branch_detour.trampoline(), Ordering::Release);
     // SAFETY: only this test changes these functions.
@@ -98,11 +118,13 @@ fn detours_chain_and_unwind_in_order() {
     let add = function::<Add>(target);
     // SAFETY: whole function, matching replacements; only this test changes it.
     unsafe {
-        let mut first = Detour::new(target, plus_ten as Add as usize, None).unwrap();
+        let mut first =
+            Detour::new(target, plus_ten as Add as usize, &whole(target, ADD.len())).unwrap();
         FIRST.store(first.trampoline(), Ordering::Release);
         first.enable().unwrap();
         // The second detour moves the first one's jump into its trampoline.
-        let mut second = Detour::new(target, times_two as Add as usize, None).unwrap();
+        let mut second =
+            Detour::new(target, times_two as Add as usize, &whole(target, ADD.len())).unwrap();
         SECOND.store(second.trampoline(), Ordering::Release);
         second.enable().unwrap();
         assert_eq!(add(1, 2), (3 + 10) * 2);
@@ -129,26 +151,27 @@ fn refuses_what_it_cannot_install_safely() {
     let looping = [0x31, 0xC0, 0xFF, 0xC0, 0x83, 0xF8, 0x0A, 0x7C, 0xF9, 0xC3];
     let target = executable(&looping);
     // SAFETY: `target` is a whole function of `looping.len()` bytes.
-    let error = unsafe { Detour::new(target, replacement, Some(looping.len())) }.unwrap_err();
+    let error =
+        unsafe { Detour::new(target, replacement, &whole(target, looping.len())) }.unwrap_err();
     assert_eq!(
         error,
-        HookError::BranchIntoPatch {
+        HookError::Flow(FlowError::BranchInto {
             from: target as u64 + 7,
             to: target as u64 + 2
-        }
+        })
     );
 
     let short = executable(&[0xC3, 0x90, 0x90, 0x90, 0x90, 0x90]);
     // SAFETY: as above.
-    let error = unsafe { Detour::new(short, replacement, None) }.unwrap_err();
+    let error = unsafe { Detour::new(short, replacement, &whole(short, 6)) }.unwrap_err();
     assert_eq!(error, HookError::Relocate(RelocateError::TooShort(0)));
 
     // A detour prepared before another one was installed refuses to enable.
     let target = executable(&ADD);
     // SAFETY: whole function; only this test changes it.
     unsafe {
-        let mut stale = Detour::new(target, replacement, None).unwrap();
-        let mut other = Detour::new(target, replacement, None).unwrap();
+        let mut stale = Detour::new(target, replacement, &whole(target, ADD.len())).unwrap();
+        let mut other = Detour::new(target, replacement, &whole(target, ADD.len())).unwrap();
         other.enable().unwrap();
         assert_eq!(stale.enable(), Err(HookError::Changed(target)));
         other.disable().unwrap();
@@ -179,7 +202,14 @@ fn a_thread_inside_the_overwritten_bytes_continues_in_the_trampoline() {
         // changes it. A thread that stops inside the first 9 bytes must be
         // moved to the trampoline, or it would run the jump's bytes from the
         // middle.
-        let mut detour = unsafe { Detour::new(target, answer as Nullary as usize, None) }.unwrap();
+        let mut detour = unsafe {
+            Detour::new(
+                target,
+                answer as Nullary as usize,
+                &whole(target, code.len()),
+            )
+        }
+        .unwrap();
         // SAFETY: as above.
         unsafe { detour.enable() }.unwrap();
         assert_eq!(spinning.join().unwrap(), 42);

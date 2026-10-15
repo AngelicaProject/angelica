@@ -40,6 +40,29 @@ impl BuildRecord {
         Ok(raw.exe_sha256 == executable && raw.entries_sha256 == entries)
     }
 
+    /// The constant offsets a record confirms for `executable`, with the
+    /// values they were confirmed with; none when the record is of another
+    /// executable.
+    /// # Errors
+    /// Rejects malformed record data.
+    pub fn confirmed_offsets(
+        text: &str,
+        executable: &str,
+    ) -> Result<BTreeMap<String, u32>, String> {
+        let raw: RawRecord = toml::from_str(text).map_err(|e| e.to_string())?;
+        if raw.exe_sha256 != executable {
+            return Ok(BTreeMap::new());
+        }
+        raw.constant_offsets
+            .names
+            .into_iter()
+            .map(|name| match raw.present.get(&name) {
+                Some(value) => Ok((name, *value)),
+                None => Err(format!("build record confirms absent entry {name}")),
+            })
+            .collect()
+    }
+
     /// Reads an authenticated record, validating its completeness and image bounds.
     /// # Errors
     /// Rejects mismatched map hashes, missing/extra entries and invalid recorded addresses.

@@ -41,7 +41,7 @@ Each entry is a table keyed by its name under its kind.
 | `field` | a field of a structure | `of`, `locator` or `offset`, `type` |
 | `patch` | bytes to replace | `locator`, `original`, `replacement` |
 
-A field has either a `locator`, which must be an `in` locator, or a constant `offset`. `type` is a value kind other than `void` (see below), or `struct` for a structure embedded at the global's address or the field's offset, which is never read as a value. `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
+A field has either a `locator`, which must be an `in` locator, or a constant `offset`. A constant `offset` is present only in a build whose [build record](#build-records) confirms it. `type` is a value kind other than `void` (see below), or `struct` for a structure embedded at the global's address or the field's offset, which is never read as a value. `original` and `replacement` of a patch are hexadecimal bytes without wildcards, of the same length.
 
 Common optional fields: `doc` (one sentence: what it is, not how it was found), `checks`, `depends` (names of entries that must be present), and `origin`.
 
@@ -59,7 +59,7 @@ A field that does not belong to the entry's kind, a table other than the six kin
 
 A signature is hexadecimal bytes with `??` for any byte; it is searched in every code section. A locator that matches zero or more than one address makes the entry absent. Overlapping matches count as separate matches.
 
-The code an `in` locator searches is the function's entry in the executable's exception directory. A leaf function has no entry; its code is the instructions from its start up to the first `int3`, the start of the next function in the exception directory, or the end of the section, at most 64 KiB. The memory operand must have a base register other than RIP and a non-negative displacement.
+The code an `in` locator searches is the function's entry in the executable's exception directory. A leaf function has no entry; its code runs from its start to the end of the farthest instruction its control flow reaches: each instruction to the next, conditional branches, and unconditional jumps to code it already spans, ending at a return, `int3`, `ud2`, or a jump through a RIP-relative pointer. A jump beyond what the flow spans is a tail call to another function, unless other flow reaches its target. A leaf function has no code, and every search in it fails, when its flow reaches an invalid instruction, a jump through a register or a computed address, an address before its start, the code of a function in the exception directory, or more than 64 KiB from its start. The memory operand must have a base register other than RIP and a non-negative displacement.
 
 ## Function ABI and thread
 
@@ -83,7 +83,7 @@ doc = "Stores a parsed Excel row in a page whose rows are kept in a hash table."
 | a locator | it resolves to the same value as the entry |
 | `{ equals = "<entry>" }` | that entry is present with the same value |
 | `{ vtable_slot = n, code_slots = k }` | the entry's address is slot `n` of at least one 8-byte aligned table outside code whose first `k` slots (`k > n`) all point into code |
-| `{ contains = "<signature>" }`, optionally with `in = "<function entry>"` | the code of the entry's function, or of the `in` function, matches the signature exactly once. The function's code is every range of it in the exception directory, chained chunks included; a function without an entry there is searched as an `in` locator searches a leaf function. It confirms a fact of the game's code that an adapter relies on, such as a structure's size or a constant the game compares with |
+| `{ contains = "<signature>" }`, optionally with `in = "<function entry>"` | the code of the entry's function, or of the `in` function, matches the signature exactly once. An entry that is not code (a field, a global, or a vtable) names the function with `in`. The function's code is every range of it in the exception directory, chained chunks included; a function without an entry there is searched as an `in` locator searches a leaf function. It confirms a fact of the game's code that an adapter relies on, such as a structure's size or a constant the game compares with |
 
 ## Resolution
 
@@ -208,6 +208,8 @@ An array gives:
 - `present`: optional; a value or text field of the element. An element whose value of it is zero, false, or empty is skipped.
 - `partition`: optional; `{ field = "<field>", domains = { <domain> = ["<value>", …] } }`. The elements belong to domains by the value of `field`, a field of the element with an enum: a value listed under a domain belongs to it, any other named value to the array field's own domain, and an element whose value has no name in the enum is never read.
 
+A fixed `length` and a `stride` other than that of pointers are numbers of the map, and an update of the game can change them. The array field's entry confirms them for every build: when its offset is derived from code, it has `contains` checks on code of the game that walks or copies the array with those numbers, so the entry is absent when the code changes; when its offset is a constant, the build record confirms it only after its elements were checked in the game.
+
 Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
 
 A value or text field may have `set`: `true`, or a table of `range = [least, most]`, `call`, and `hold`, when plugins may change it. Only a value that exists on the player's computer alone is marked, such as the camera's zoom limits or what the game's windows show: never one the game sends to its servers. The field is a number, a `bool`, or text, never a pointer or forbidden; its domain has `change` wording; only a number has a range, and an integer field an integer one.
@@ -326,7 +328,7 @@ default = 0
   - a parameter the plugin gives, with `doc`: a number or a `bool`, never a pointer, with `sheet`, `enum`, `flags`, and `unit` as for a field, an optional `default` used when the plugin gives none, and an optional `range = [least, most]`;
   - `value`: always this number or boolean;
   - `global = "<entry>"`: a `global` entry of type `struct`, passed as its address, or `ptr`, passed as the pointer it holds; the kind is `ptr`;
-  - `object = "<path>"`: the address of the first object a path through the object model reaches; the kind is `ptr`.
+  - `object = "<path>"`: the address of the object a path through the object model reaches; the kind is `ptr`. The path must reach exactly one object: when it reaches none or several, the action is not taken.
 
 ### Rules and resolution
 
@@ -388,6 +390,6 @@ names = ["text.utf8_string.string_ptr"]
 - `entries_sha256` identifies the map the record was produced from: the SHA-256 over `map.toml` and then every file of `entries/` in path order, each as its path relative to the map directory with `/` separators, a NUL byte, its length as a little-endian 64-bit integer, and its bytes.
 - `present` holds the value of every present entry: an RVA (relative to the image base) for every kind except fields, the offset for a field.
 - `absent` holds the reason for every absent entry.
-- `constant_offsets` lists the present fields whose offset is a constant of the map rather than derived from code.
+- `constant_offsets` lists the fields whose offset is a constant of the map rather than derived from code and that were confirmed for this executable; they are present with that offset. A field with a constant offset that is not listed is absent, as it is in every build without a record.
 
 The same map and executable always produce the same text.

@@ -1,6 +1,7 @@
 use angelica_map::{Absence, BuildRecord, Map, Value};
 use angelica_pe::testing::{CODE, PeBuilder, RDATA};
 use angelica_pe::{Image, Layout};
+use std::collections::BTreeSet;
 
 const BASE: u64 = 0x1_4000_0000;
 const VTABLE: u32 = 0x2000;
@@ -165,7 +166,7 @@ fn expected() -> Vec<(&'static str, Result<Value, Absence>)> {
         ("game.thing.leaf", Ok(Value::Address(0x1060))),
         ("game.thing.leaf_size", Ok(Value::Offset(0x18))),
         ("game.thing.missing", Err(Absence::NoMatch)),
-        ("game.thing.name", Ok(Value::Offset(0x8))),
+        ("game.thing.name", Err(Absence::Unconfirmed)),
         (
             "game.thing.not_slot",
             Err(Absence::CheckFailed {
@@ -245,13 +246,17 @@ fn a_wrong_load_base_makes_slot_locators_absent() {
 }
 
 #[test]
-fn lists_constant_offsets() {
+fn a_constant_offset_is_present_only_when_confirmed() {
     let file = builder(BASE).build_file();
     let image = Image::parse(&file, Layout::File).unwrap();
+    assert!(map().resolve(&image, BASE).constant_offsets().is_empty());
+    let confirmed = BTreeSet::from(["game.thing.name".to_owned()]);
+    let resolution = map().resolve_confirming(&image, BASE, &confirmed);
     assert_eq!(
-        map().resolve(&image, BASE).constant_offsets(),
-        ["game.thing.name"]
+        resolution.get("game.thing.name"),
+        Some(&Ok(Value::Offset(0x8)))
     );
+    assert_eq!(resolution.constant_offsets(), ["game.thing.name"]);
 }
 
 #[test]
@@ -263,9 +268,23 @@ fn writes_a_deterministic_build_record() {
         game_version: "2026.09.15.0000.0000".to_owned(),
         exe_sha256: "ab".repeat(32),
         entries_sha256: map.entries_sha256().to_owned(),
-        resolution: map.resolve(&image, BASE),
+        resolution: map.resolve_confirming(
+            &image,
+            BASE,
+            &BTreeSet::from(["game.thing.name".to_owned()]),
+        ),
     };
     let text = record.to_toml();
+    assert_eq!(
+        BuildRecord::confirmed_offsets(&text, &record.exe_sha256).unwrap(),
+        [("game.thing.name".to_owned(), 0x8)].into()
+    );
+    assert!(
+        BuildRecord::confirmed_offsets(&text, &"cd".repeat(32))
+            .unwrap()
+            .is_empty(),
+        "a record confirms offsets only for its own executable"
+    );
     let parsed = BuildRecord::from_toml(&text, &map, &image).unwrap();
     assert_eq!(
         parsed.resolution.present().collect::<Vec<_>>(),
@@ -383,5 +402,75 @@ fn a_contains_check_searches_the_whole_function() {
     assert_eq!(
         resolution.get("game.facts.other").cloned(),
         Some(Ok(Value::Address(0x1040)))
+    );
+}
+
+#[test]
+fn a_leaf_function_ends_where_its_control_flow_ends() {
+    let mut code = vec![0xCC; 0x80];
+    let mut put = |at: usize, bytes: &[u8]| code[at..at + bytes.len()].copy_from_slice(bytes);
+    // 0x1000: test rcx, rcx; je +4; mov rax, [rcx+0x18]; ret; xor eax, eax;
+    // ret. 0x100D, with no padding: the next leaf function, mov rax,
+    // [rcx+0x20]; ret.
+    put(
+        0x00,
+        &[0x48, 0x85, 0xC9, 0x74, 0x05, 0x48, 0x8B, 0x41, 0x18, 0xC3],
+    );
+    put(0x0A, &[0x31, 0xC0, 0xC3]);
+    put(0x0D, &[0x48, 0x8B, 0x41, 0x20, 0xC3]);
+    // 0x1020: jmp +0x20, a tail call beyond the function.
+    put(0x20, &[0xEB, 0x1E]);
+    // 0x1030: jmp rax, an indirect jump.
+    put(0x30, &[0xFF, 0xE0]);
+    // 0x1040: jmp [rip+0], a tail call through a pointer.
+    put(0x40, &[0xFF, 0x25, 0, 0, 0, 0]);
+    let file = PeBuilder::new()
+        .section(".text", CODE, &code)
+        .functions(&[(0x1060, 0x1070)])
+        .build_file();
+    let image = Image::parse(&file, Layout::File).unwrap();
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1000),
+        Some(0x1000..0x100D),
+        "the branch's target is part of the function; the next function is not"
+    );
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1020),
+        Some(0x1020..0x1022)
+    );
+    assert_eq!(angelica_map::leaf_function(&image, 0x1030), None);
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1040),
+        Some(0x1040..0x1046)
+    );
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1062),
+        None,
+        "inside a function of the exception directory"
+    );
+
+    let map = Map::from_sources(
+        "format = 2\n",
+        &[(
+            "entries/game.toml".to_owned(),
+            r#"
+[function."game.leaf"]
+locator = { signature = "48 85 C9 74 05" }
+abi = { args = ["ptr"], ret = "ptr" }
+thread = "any"
+
+[field."game.thing.next"]
+of = "game.thing"
+type = "u64"
+locator = { in = "game.leaf", signature = "48 8B 41 20", operand = "disp" }
+"#
+            .to_owned(),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        map.resolve(&image, BASE).get("game.thing.next"),
+        Some(&Err(Absence::NoMatch)),
+        "an `in` locator never searches the next function"
     );
 }

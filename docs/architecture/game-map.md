@@ -54,15 +54,17 @@ While the game runs, the host looks at the signed map every second. When its fil
 
 A build record maps the hash of one executable to the resolved address of every entry and the result of every check. It is produced offline by `angelica map verify` and published with the map. With a record for the running executable, the host does not scan: it checks the hash and uses the recorded addresses.
 
-Without a record (a patch the map has not caught up with), the host resolves in the game. Entries that pass resolution are used. The overlay marks the build as unverified until a record is published.
+Without a record (a patch the map has not caught up with), the host resolves in the game. Entries that pass resolution are used, except fields with a constant offset: nothing in the new build confirms them, so they are absent until a record is published. The overlay marks the build as unverified until then.
 
 ## Offsets anchored in code
 
-A field offset is preferably derived from code: "the displacement of the memory operand of the instruction matched by this pattern in this function". A derived offset is recomputed for every build. An offset given as a constant is allowed only while no code anchor is known, and the verification report lists every constant offset, so the list of unanchored offsets is always visible.
+A field offset is preferably derived from code: "the displacement of the memory operand of the instruction matched by this pattern in this function". A derived offset is recomputed for every build. An offset given as a constant is allowed only while no code anchor is known.
+
+A constant offset is present only in a build whose record confirms it, because no locator notices when an update moves the field. A maintainer confirms it after checking the field in that build with `angelica look`: `angelica map verify --confirm <entry>` makes the field present and `--write` records the confirmation in the build record's `constant_offsets`. The next `verify` of the same executable keeps every confirmation of its existing record while the map gives the same offset; a changed offset, or a new executable, is confirmed again. To look at an unconfirmed field in the game, the maintainer writes a record with `--confirm` locally and installs the map with `angelica dev install`; the record is committed only after the values are right.
 
 ## Patch-day tools
 
-- `angelica map verify --map <map> --game <game folder> [--write] [--json]` resolves every entry against `ffxiv_dx11.exe` and reports present and absent entries; `--write` writes the build record. It exits with 0 when every entry is present, 1 when an entry is absent or the map or the game cannot be read, and 2 on a usage error.
+- `angelica map verify --map <map> --game <game folder> [--confirm <entry>]... [--write] [--json]` resolves every entry against `ffxiv_dx11.exe` and reports present and absent entries; `--confirm` confirms a constant offset for this build, and `--write` writes the build record. It exits with 0 when every entry is present, 1 when an entry is absent or the map or the game cannot be read, and 2 on a usage error.
 - `angelica map recover` proposes locators for entries that no longer resolve, by matching each lost function's fingerprint (normalized instructions, calls, constants, referenced strings, vtable positions) from the previous build against the new one. Proposals are verified like any other change before they are accepted.
 - `angelica map diff` compares two builds' reports.
 - `angelica map import` converts externally maintained data into entries marked as imported; see the game map repository for its rules.
