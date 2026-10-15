@@ -2346,6 +2346,7 @@ fn look_watches_dumps_and_counts_for_work_on_the_map() {
         seconds: Some(1),
         bytes: Some(0x30),
         entries: vec!["test.use_action".into()],
+        follow: Vec::new(),
     };
 
     ask(&request(Mode::Dump, "player.data"));

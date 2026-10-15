@@ -31,6 +31,8 @@ pub const MOST_SECONDS: u32 = 60;
 pub const MOST_BYTES: u32 = 4096;
 /// The most entries a trace counts.
 pub const MOST_ENTRIES: usize = 64;
+/// The most pointers a dump follows from each object.
+pub const MOST_FOLLOWS: usize = 8;
 /// The plugin id the watches of `look` are kept under; no plugin id starts
 /// with `_`.
 const LOOK: &str = "_look";
@@ -65,6 +67,11 @@ pub struct Request {
     /// The `function` and `location` entries `trace` counts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<String>,
+    /// For `dump`: from each object, the pointers to follow before reading,
+    /// each at this offset of the object reached so far; for memory the map
+    /// does not describe yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub follow: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -202,6 +209,23 @@ fn rows(rows: Vec<crate::lens::Row>) -> Vec<Row> {
         .collect()
 }
 
+/// The address reached from `address` by reading a pointer at each offset
+/// in turn; none when a pointer cannot be read or is null.
+fn follow(memory: &dyn crate::lens::Memory, address: u64, offsets: &[u32]) -> Option<u64> {
+    offsets.iter().try_fold(address, |at, offset| {
+        let mut pointer = [0u8; 8];
+        memory
+            .read(at.checked_add(u64::from(*offset))?, &mut pointer)
+            .then(|| u64::from_le_bytes(pointer))
+            .filter(|pointer| *pointer != 0)
+    })
+}
+
+fn read_bytes(memory: &dyn crate::lens::Memory, address: u64, bytes: usize) -> Option<Vec<u8>> {
+    let mut buffer = vec![0u8; bytes];
+    memory.read(address, &mut buffer).then_some(buffer)
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut text, byte| {
@@ -227,17 +251,36 @@ pub fn answer(services: &Services, request: &Request) -> Response {
         },
         Mode::Dump => {
             let bytes = request.bytes.unwrap_or(256).clamp(1, MOST_BYTES);
+            let memory = services.game.memory();
             match prepare_objects(&schema, &request.query).and_then(|prepared| {
-                crate::lens::objects(services.game.memory(), &prepared, bytes as usize)
+                if request.follow.len() > MOST_FOLLOWS {
+                    return Err(crate::error::Error::invalid(format!(
+                        "a dump follows at most {MOST_FOLLOWS} pointers"
+                    )));
+                }
+                crate::lens::objects(memory, &prepared, bytes as usize)
             }) {
                 Ok(found) => Response {
                     objects: Some(
                         found
                             .into_iter()
-                            .map(|(indexes, address, bytes)| Dumped {
-                                indexes,
-                                address,
-                                bytes: bytes.as_deref().map(hex),
+                            .map(|(indexes, address, read)| {
+                                if request.follow.is_empty() {
+                                    return Dumped {
+                                        indexes,
+                                        address,
+                                        bytes: read.as_deref().map(hex),
+                                    };
+                                }
+                                let reached = follow(memory, address, &request.follow);
+                                Dumped {
+                                    indexes,
+                                    address: reached.unwrap_or(0),
+                                    bytes: reached
+                                        .and_then(|at| read_bytes(memory, at, bytes as usize))
+                                        .as_deref()
+                                        .map(hex),
+                                }
                             })
                             .collect(),
                     ),
@@ -490,5 +533,48 @@ impl Look {
             request.query.clone()
         };
         format!("look: {subject}: {what}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Memory of a few 8-byte pointers; everything else unreadable.
+    struct Pointers(BTreeMap<u64, u64>);
+
+    impl crate::lens::Memory for Pointers {
+        fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
+            match self.0.get(&address) {
+                Some(value) if buffer.len() <= 8 => {
+                    buffer.copy_from_slice(&value.to_le_bytes()[..buffer.len()]);
+                    true
+                }
+                _ => false,
+            }
+        }
+    }
+
+    #[test]
+    fn a_dump_follows_pointers_until_one_is_unreadable_or_null() {
+        let memory = Pointers(BTreeMap::from([
+            (0x1008, 0x2000),
+            (0x2010, 0x3000),
+            (0x3000, 0),
+        ]));
+        assert_eq!(follow(&memory, 0x1000, &[]), Some(0x1000));
+        assert_eq!(follow(&memory, 0x1000, &[8]), Some(0x2000));
+        assert_eq!(follow(&memory, 0x1000, &[8, 0x10]), Some(0x3000));
+        assert_eq!(
+            follow(&memory, 0x1000, &[8, 0x10, 0]),
+            None,
+            "a null pointer"
+        );
+        assert_eq!(follow(&memory, 0x1000, &[0x18]), None, "unreadable");
+        assert_eq!(
+            follow(&memory, u64::MAX, &[8]),
+            None,
+            "past the address space"
+        );
     }
 }

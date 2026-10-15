@@ -57,7 +57,7 @@ A development build of the runtime, and any build in [dev mode](#dev-mode), answ
 A request may also have `mode`, `rows` by default:
 
 - `watch`: `query` is a [watch](./plugin-api-v1.md#lens) and `seconds` (1 to 60) how long it lasts; the response has `columns`, `firings` (the rows of each firing), and `dropped`.
-- `dump`: `query` is a path to objects and `bytes` (1 to 4096) how much of each object to read; the response has `objects`, each with `indexes`, `address`, and `bytes` as lowercase hexadecimal, or `null` where the memory cannot be read.
+- `dump`: `query` is a path to objects and `bytes` (1 to 4096) how much of each object to read; with `follow`, up to 8 offsets, the host first follows from each object the pointer at each offset in turn, for memory the map does not describe yet. The response has `objects`, each with `indexes`, `address` (where the bytes were read, or 0 when a followed pointer was null or unreadable), and `bytes` as lowercase hexadecimal, or `null` where the memory cannot be read.
 - `trace`: `entries` lists up to 64 `function` and `location` entries and `seconds` (1 to 60) how long to count; the response has `calls`, the count of each entry.
 
 The host answers a `watch` or a `trace` when its seconds are over.

@@ -87,6 +87,11 @@ pub struct LookArgs {
     /// JSON with `--json` to compare it later.
     #[arg(long, value_name = "BYTES", conflicts_with = "trace")]
     dump: Option<u32>,
+    /// With `--dump`: from each object, follow the pointer at this offset
+    /// (`0x1A8` or `424`) before reading; repeatable, in order, for memory
+    /// the map does not describe yet.
+    #[arg(long, value_name = "OFFSET", requires = "dump", value_parser = offset)]
+    follow: Vec<u32>,
     /// Count how many times the game's code reaches this function or
     /// location entry of the map; repeatable.
     #[arg(long, value_name = "ENTRY")]
@@ -661,6 +666,15 @@ fn row_lines(text: &mut String, columns: &[runtime::look::Column], rows: &[runti
     }
 }
 
+/// An offset as `0x1A8` or `424`.
+fn offset(text: &str) -> Result<u32, String> {
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => text.parse(),
+    }
+    .map_err(|e| format!("`{text}` is not an offset: {e}"))
+}
+
 fn look(args: &LookArgs) -> Result<(Json, String), String> {
     use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response, write_atomically};
     if let [before, after] = args.compare.as_slice() {
@@ -693,6 +707,7 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
             .then_some(u32::try_from(lasts).unwrap_or(u32::MAX)),
         bytes: args.dump,
         entries: args.trace.clone(),
+        follow: args.follow.clone(),
     };
     let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     write_atomically(&folder.join(REQUEST), &bytes)?;
@@ -709,7 +724,7 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
         if started.elapsed() > wait {
             let _ = std::fs::remove_file(folder.join(REQUEST));
             return Err(format!(
-                "no answer in {} s: the game must be running with a development build of Angelica from {}",
+                "no answer in {} s: the game must be running with Angelica from {} in dev mode (angelica dev mode on) or a development build",
                 wait.as_secs(),
                 installation.display()
             ));
