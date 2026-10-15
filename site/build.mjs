@@ -3,7 +3,7 @@
 // leads to a file and, with a #, to an element of that file.
 // Usage: node build.mjs
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { page, read } from "./docs.mjs";
@@ -23,6 +23,8 @@ const sources = readdirSync(join(here, "pages")).filter((f) => f.endsWith(".md")
 const docs = sources.map((f) => ({ file: f.replace(/\.md$/, ".html"), ...read(readFileSync(join(here, "pages", f), "utf8")) }))
   .sort((a, b) => (Number(a.front.order) || 99) - (Number(b.front.order) || 99));
 const pages = Object.fromEntries(docs.map((d) => [d.title.replace(/^[^:]+: /, ""), d.file]));
+// Instructions for a coding agent, served as they are.
+copyFileSync(join(here, "agent-setup.md"), join(dist, "agent-setup.md"));
 for (const d of docs) {
   writeFileSync(join(dist, d.file), page(d, d.file, pages));
   writeFileSync(join(dist, d.file.replace(/\.html$/, ".md")), d.md.trimStart());
@@ -42,6 +44,8 @@ const canonical = [
 writeFileSync(join(dist, "llms.txt"), `# Angelica
 
 > A plugin platform for FINAL FANTASY XIV. A plugin is a Rust WebAssembly component that runs in a sandbox and can do only what the player allowed. It names entries of the game map instead of game addresses, so it keeps working across game patches.
+
+To set up a plugin project, follow [Set up an Angelica plugin project](${site}agent-setup.md); the project's AGENTS.md then guides the work.
 
 ## Players
 

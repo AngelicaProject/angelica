@@ -46,7 +46,7 @@ angelica query "<query>" --map <map> --game <game folder> --plugin .
 
 `search` lists the roots, types, fields, events, and domains with those words; `show` a type's fields or an event's arguments with what they hold and their domains; `query` checks a query as the host will, including the domains the manifest's `[lens] read` lists. With a development installation, `angelica look "<query>" --installation <folder>` runs it in the running game.
 
-When a piece is missing — a sheet column without a name, a field the object model lacks, an event, an operation on the game — the plugin does not work around it. File an [API request](./api-requests.md) and build the rest of the plugin meanwhile.
+When a piece is missing — a sheet column without a name, a field the object model lacks, an event, an operation on the game — the plugin does not work around it. The plugin API is the game map, so add the piece to the map: find it in the game with [dev mode](../formats/host-installation-v1.md#dev-mode) and `angelica look`, try it with `angelica map try`, and send it to the game map repository ([adding what a plugin needs](https://github.com/AngelicaProject/angelica-gamemap/blob/main/.ai/adding-entries.md)); the plugin uses it on your computer at once and on players' computers once the map is released. When you cannot add it, file an [API request](./api-requests.md). Build the rest of the plugin meanwhile.
 
 ## 3. Write the plugin
 

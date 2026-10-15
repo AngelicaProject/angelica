@@ -1,6 +1,6 @@
 # API requests
 
-When a plugin needs something of the game the [plugin API](../formats/plugin-api-v1.md) does not offer, its author files an API request instead of working around the gap ([growing the API](../architecture/services.md#growing-the-api)). A platform maintainer designs the capability for the game domain, for every plugin that needs it, and adds it with its permission, map entries, and tests.
+When a plugin needs something of the game the [plugin API](../formats/plugin-api-v1.md) does not offer, its author adds it to the game map ([adding what a plugin needs](https://github.com/AngelicaProject/angelica-gamemap/blob/main/.ai/adding-entries.md)), or, when they cannot, files an API request instead of working around the gap ([growing the API](../architecture/services.md#growing-the-api)). A platform maintainer designs the capability for the game domain, for every plugin that needs it, and adds it with its permission, map entries, and tests.
 
 A request describes the game, not an implementation. It never contains addresses, offsets, signatures, or code from the game's executable, and never asks for raw memory access, game function calls, or hooks.
 
