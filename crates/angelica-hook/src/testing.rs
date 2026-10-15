@@ -1,5 +1,6 @@
 //! Executable copies of machine code for tests.
 
+use crate::FunctionCode;
 use crate::memory::{allocate_near, write};
 
 /// Copies `code` into new executable memory and returns its address. The
@@ -16,4 +17,15 @@ pub fn executable(code: &[u8]) -> usize {
     // SAFETY: the memory was just allocated and nothing can reach it yet.
     unsafe { write(address, code) }.expect("the copy");
     address
+}
+
+/// The code of a function of `len` bytes at `start` in one range, without a
+/// prologue.
+#[must_use]
+pub fn whole(start: usize, len: usize) -> FunctionCode {
+    FunctionCode {
+        start,
+        ranges: std::iter::once(start..start + len).collect(),
+        prologue: 0,
+    }
 }

@@ -33,6 +33,20 @@ mod vtable;
 #[cfg(all(windows, feature = "testing"))]
 pub mod testing;
 
+/// The code of the function a hook is in, which is checked for branches
+/// into the bytes the hook overwrites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionCode {
+    /// The function's first instruction.
+    pub start: usize,
+    /// Every range of the function's code: its exception directory entries,
+    /// chained chunks included, or the one range of a leaf function.
+    pub ranges: Vec<std::ops::Range<usize>>,
+    /// The length of the function's prologue from its unwind information;
+    /// 0 when it has none.
+    pub prologue: usize,
+}
+
 #[cfg(windows)]
 pub use detour::Detour;
 pub use error::HookError;

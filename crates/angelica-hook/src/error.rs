@@ -5,10 +5,8 @@ use crate::RelocateError;
 pub enum HookError {
     #[error(transparent)]
     Relocate(#[from] RelocateError),
-    #[error(
-        "an instruction at {from:#X} branches to {to:#X}, inside the bytes a detour overwrites"
-    )]
-    BranchIntoPatch { from: u64, to: u64 },
+    #[error(transparent)]
+    Flow(#[from] crate::relocate::FlowError),
     #[error("no free memory within 2 GiB of {0:#X} for a trampoline")]
     NoNearMemory(usize),
     #[error("the bytes at {0:#X} changed since the modification was prepared")]

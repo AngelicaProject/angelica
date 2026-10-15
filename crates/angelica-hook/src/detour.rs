@@ -1,7 +1,7 @@
-use crate::HookError;
 use crate::memory::{allocate_near, read, readable_len, write};
-use crate::relocate::{JUMP_LEN, branch_into, relocate};
+use crate::relocate::{JUMP_LEN, check_flow, relocate};
 use crate::splice::Splice;
+use crate::{FunctionCode, HookError};
 
 /// Space reserved for a trampoline: the moved instructions, which are at
 /// most a few instructions of up to 15 bytes, and the jump back.
@@ -26,34 +26,31 @@ pub struct Detour {
 }
 
 impl Detour {
-    /// Prepares a detour from `target` to `replacement` without changing the
-    /// target. With `function_len`, the function's code is checked for
-    /// branches into the bytes the detour overwrites.
+    /// Prepares a detour from `target`, the start of `function`, to
+    /// `replacement` without changing the target. The function's code is
+    /// checked for branches into the bytes the detour overwrites.
     ///
     /// # Errors
     ///
     /// Returns a [`HookError`] when the first instructions cannot be moved,
-    /// the function branches into them, or no memory is free near the
-    /// target.
+    /// the function's code cannot be shown free of branches into them, or
+    /// no memory is free near the target.
     ///
     /// # Safety
     ///
     /// `target` is the start of an instruction in executable code that stays
-    /// mapped for the life of the process, with `function_len` bytes of
-    /// readable code when given. `replacement` is a function with the same
+    /// mapped for the life of the process, and every range of `function` is
+    /// readable code. `replacement` is a function with the same
     /// signature and calling convention as the target.
     pub unsafe fn new(
         target: usize,
         replacement: usize,
-        function_len: Option<usize>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: `readable_len` bounds the read to readable memory.
         let code = unsafe { read(target, readable_len(target, READ_LEN)) };
-        if let Some(len) = function_len {
-            // SAFETY: the caller guarantees `len` readable bytes of code.
-            let function = unsafe { read(target, len) };
-            check_branches(&function, target, target, &code)?;
-        }
+        // SAFETY: the caller guarantees the function's ranges are readable.
+        unsafe { check_branches(function, target, &code) }?;
 
         let trampoline = allocate_near(target, TRAMPOLINE_LEN)?;
         let relocation = relocate(&code, target as u64, JUMP_LEN, trampoline as u64)?;
@@ -132,17 +129,38 @@ impl Detour {
     }
 }
 
-/// Refuses a function that branches into the instructions a jump at
-/// `location` would overwrite.
-pub(crate) fn check_branches(
-    function: &[u8],
-    function_start: usize,
+/// Refuses a function whose code cannot be shown free of branches into
+/// the instructions a jump at `location`, whose bytes are `code`, would
+/// overwrite.
+///
+/// # Safety
+///
+/// Every range of `function` is readable code.
+pub(crate) unsafe fn check_branches(
+    function: &FunctionCode,
     location: usize,
     code: &[u8],
 ) -> Result<(), HookError> {
     let stolen = relocate(code, location as u64, JUMP_LEN, location as u64)?.stolen_len;
-    match branch_into(function, function_start as u64, location as u64, stolen) {
-        Some((from, to)) => Err(HookError::BranchIntoPatch { from, to }),
-        None => Ok(()),
-    }
+    let chunks = function
+        .ranges
+        .iter()
+        .map(|range| {
+            // SAFETY: the caller guarantees the range is readable.
+            let bytes = unsafe { read(range.start, range.len()) };
+            (range.start as u64, bytes)
+        })
+        .collect::<Vec<_>>();
+    let chunks = chunks
+        .iter()
+        .map(|(start, bytes)| (*start, bytes.as_slice()))
+        .collect::<Vec<_>>();
+    check_flow(
+        &chunks,
+        function.start as u64,
+        function.prologue,
+        location as u64,
+        stolen,
+    )?;
+    Ok(())
 }

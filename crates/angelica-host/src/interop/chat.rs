@@ -60,7 +60,7 @@ fn install_resolved(lines: Lines, function: &Function) -> Result<(), String> {
         Detour::new(
             function.address,
             execute as Execute as usize,
-            function.length,
+            &function.code.clone()?,
         )
     }
     .map_err(|e| format!("command detour: {e}"))?;
@@ -237,10 +237,7 @@ mod tests {
         // The game's handler counts the lines it runs in the counter its
         // first argument points to: `inc qword [rcx]; nop; nop; ret`.
         let code = [0x48, 0xFF, 0x01, 0x90, 0x90, 0xC3, 0x90, 0x90, 0x90, 0x90];
-        let function = Function {
-            address: angelica_hook::testing::executable(&code),
-            length: Some(code.len()),
-        };
+        let function = Function::synthetic(&code);
         install_resolved(
             Lines {
                 commands: commands.clone(),

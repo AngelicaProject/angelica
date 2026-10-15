@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use angelica_hook::testing::executable;
+use angelica_hook::testing::{executable, whole};
 use angelica_hook::{Context, MidDataHandler, MidHandler, MidHook, MidReturnHandler};
 
 fn function<F: Copy>(address: usize) -> F {
@@ -12,10 +12,11 @@ fn function<F: Copy>(address: usize) -> F {
     unsafe { std::mem::transmute_copy(&address) }
 }
 
-fn hook(location: usize, handler: MidHandler) -> MidHook {
+/// A hook at `location` in the function of `len` bytes at `start`.
+fn hook(start: usize, len: usize, location: usize, handler: MidHandler) -> MidHook {
     // SAFETY: `location` starts an instruction of machine code copied for
     // the test, and the handlers do not unwind.
-    let mut hook = unsafe { MidHook::new(location, handler, None) }.unwrap();
+    let mut hook = unsafe { MidHook::new(location, handler, &whole(start, len)) }.unwrap();
     // SAFETY: only this test changes the code.
     unsafe { hook.enable() }.unwrap();
     hook
@@ -38,7 +39,7 @@ fn a_handler_reads_and_changes_registers() {
     let add = function::<extern "C" fn(i64, i64) -> i64>(code);
     assert_eq!(add(5, 7), 13);
 
-    let mut hooked = hook(code + 3, handler);
+    let mut hooked = hook(code, 11, code + 3, handler);
     assert_eq!(add(5, 7), 106);
     let seen = SEEN.each_ref().map(|value| value.load(Ordering::Relaxed));
     assert_eq!(seen, [5, 5, 7]);
@@ -64,7 +65,9 @@ fn one_handler_serves_hooks_by_their_data() {
         .map(|(data, location)| {
             let handler: MidDataHandler = handler;
             // SAFETY: as in `hook`.
-            let mut hook = unsafe { MidHook::with_data(location, handler, data, None) }.unwrap();
+            let mut hook =
+                unsafe { MidHook::with_data(location, handler, data, &whole(location, 8)) }
+                    .unwrap();
             // SAFETY: only this test changes the code.
             unsafe { hook.enable() }.unwrap();
             hook
@@ -96,7 +99,7 @@ fn a_handler_at_the_entry_returns_without_running_the_function() {
     let handler: MidReturnHandler = handler;
     // SAFETY: `code` is the function's first instruction, copied for the
     // test, and the handler does not unwind.
-    let mut hooked = unsafe { MidHook::returning(code, handler, 77, None) }.unwrap();
+    let mut hooked = unsafe { MidHook::returning(code, handler, 77, &whole(code, 11)) }.unwrap();
     // SAFETY: only this test changes the code.
     unsafe { hooked.enable() }.unwrap();
     assert_eq!(add(5, 7), 13, "the function runs");
@@ -119,7 +122,7 @@ fn registers_and_flags_survive_a_handler() {
     let sum = executable(&[
         0x4C, 0x89, 0xC0, 0x4C, 0x01, 0xC8, 0x48, 0x01, 0xC8, 0x48, 0x01, 0xD0, 0xC3,
     ]);
-    let _sum_hook = hook(sum, nothing);
+    let _sum_hook = hook(sum, 13, sum, nothing);
     assert_eq!(
         function::<extern "C" fn(i64, i64, i64, i64) -> i64>(sum)(1, 2, 3, 4),
         10
@@ -129,7 +132,7 @@ fn registers_and_flags_survive_a_handler() {
     let less = executable(&[
         0x31, 0xC0, 0x48, 0x39, 0xD1, 0x90, 0x90, 0x90, 0x90, 0x90, 0x0F, 0x9C, 0xC0, 0xC3,
     ]);
-    let _less_hook = hook(less + 5, clobber_flags);
+    let _less_hook = hook(less, 14, less + 5, clobber_flags);
     let less = function::<extern "C" fn(i64, i64) -> i64>(less);
     assert_eq!(less(1, 2), 1);
     assert_eq!(less(2, 1), 0);
@@ -142,7 +145,7 @@ fn a_handler_changes_xmm_registers() {
     }
     // 0: movq rax, xmm0; 5: ret
     let bits = executable(&[0x66, 0x48, 0x0F, 0x7E, 0xC0, 0xC3]);
-    let _hook = hook(bits, handler);
+    let _hook = hook(bits, 6, bits, handler);
     let bits = function::<extern "C" fn(f64) -> u64>(bits);
     assert_eq!(bits(1.0), 42.5_f64.to_bits());
 }
@@ -155,7 +158,7 @@ fn the_context_knows_the_stack_pointer() {
     }
     // 0: mov rax, rsp; 3: nop; 4: nop; 5: ret
     let stack = executable(&[0x48, 0x89, 0xE0, 0x90, 0x90, 0xC3]);
-    let _hook = hook(stack, handler);
+    let _hook = hook(stack, 6, stack, handler);
     let rsp = function::<extern "C" fn() -> u64>(stack)();
     assert_eq!(RSP.load(Ordering::Relaxed), rsp);
 }

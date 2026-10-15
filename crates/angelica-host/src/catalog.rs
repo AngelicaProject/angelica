@@ -1,6 +1,6 @@
 //! Verified entries exposed to the host by name, never supplied by a plugin.
 #![forbid(unsafe_code)]
-use angelica_map::{Entry, Map, Value};
+use angelica_map::{Entry, EntryKind, FunctionCode, Map, Value};
 use angelica_pe::{Image, Layout};
 use std::collections::BTreeMap;
 
@@ -8,7 +8,50 @@ use std::collections::BTreeMap;
 pub struct ResolvedEntry {
     pub entry: Entry,
     pub value: Value,
-    pub function_range: Option<std::ops::Range<u32>>,
+    /// For a function, its code; for a location or a patch, the code of the
+    /// function in the exception directory that holds it. `None` when the
+    /// code is not known exactly.
+    pub code: Option<FunctionCode>,
+}
+
+impl ResolvedEntry {
+    /// The entry's code in the game loaded at `base`, as a hook checks it.
+    ///
+    /// # Errors
+    ///
+    /// Why the code is not known, so nothing is hooked there.
+    pub fn hook_code(&self, base: usize) -> Result<angelica_hook::FunctionCode, String> {
+        let code = self.code.as_ref().ok_or_else(|| {
+            format!(
+                "the code of map entry {} is not known exactly, so it is not hooked",
+                self.entry.name
+            )
+        })?;
+        let at = |rva: u32| base + rva as usize;
+        Ok(angelica_hook::FunctionCode {
+            start: at(code.start),
+            ranges: code
+                .ranges
+                .iter()
+                .map(|range| at(range.start)..at(range.end))
+                .collect(),
+            prologue: code.prologue.unwrap_or(0) as usize,
+        })
+    }
+}
+
+/// The code of an entry at `value` in `image`.
+fn code_of(entry: &Entry, value: Value, image: &Image<'_>) -> Option<FunctionCode> {
+    let Value::Address(rva) = value else {
+        return None;
+    };
+    match entry.kind {
+        EntryKind::Function { .. } => angelica_map::function_code(image, rva),
+        EntryKind::Location { .. } | EntryKind::Patch { .. } => {
+            angelica_map::function_holding(image, rva)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -57,16 +100,12 @@ impl Catalog {
             };
             for (name, value) in record.resolution.present() {
                 let entry = map.get(name).ok_or("recorded entry is not in map")?;
-                let function_range = match value {
-                    Value::Address(rva) => image.function_at(rva),
-                    Value::Offset(_) => None,
-                };
                 catalog.present.insert(
                     name.into(),
                     ResolvedEntry {
                         entry: entry.clone(),
                         value,
-                        function_range,
+                        code: code_of(entry, value, &image),
                     },
                 );
             }
@@ -99,16 +138,12 @@ impl Catalog {
             match result {
                 Ok(value) => {
                     if let Some(entry) = map.get(name) {
-                        let function_range = match value {
-                            Value::Address(rva) => image.function_at(*rva),
-                            Value::Offset(_) => None,
-                        };
                         catalog.present.insert(
                             name.clone(),
                             ResolvedEntry {
                                 entry: entry.clone(),
                                 value: *value,
-                                function_range,
+                                code: code_of(entry, *value, &image),
                             },
                         );
                     }

@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use iced_x86::IcedError;
 use iced_x86::code_asm::{
     AsmRegister64, AsmRegisterXmm, CodeAssembler, al, ptr, r8, r9, r10, r11, r12, r13, r14, r15,
@@ -11,7 +9,7 @@ use crate::detour::{READ_LEN, check_branches};
 use crate::memory::{allocate_near, read, readable_len, write};
 use crate::relocate::{JUMP_LEN, relocate};
 use crate::splice::Splice;
-use crate::{HookError, RelocateError};
+use crate::{FunctionCode, HookError, RelocateError};
 
 /// Space reserved for a stub: saving and restoring the context, the call,
 /// the moved instructions, and the jump back.
@@ -87,9 +85,9 @@ pub struct MidHook {
 }
 
 impl MidHook {
-    /// Prepares a hook at `location` without changing it. With `function`,
-    /// the range of the function that contains the location, the function is
-    /// checked for branches into the bytes the hook overwrites.
+    /// Prepares a hook at `location` in `function` without changing it. The
+    /// function's code is checked for branches into the bytes the hook
+    /// overwrites.
     ///
     /// # Errors
     ///
@@ -98,12 +96,12 @@ impl MidHook {
     /// # Safety
     ///
     /// `location` is the start of an instruction in executable code that
-    /// stays mapped for the life of the process, `function` is readable code
-    /// when given, and `handler` does not unwind.
+    /// stays mapped for the life of the process, every range of `function`
+    /// is readable code, and `handler` does not unwind.
     pub unsafe fn new(
         location: usize,
         handler: MidHandler,
-        function: Option<Range<usize>>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: the caller's guarantees are those of `prepare`.
         unsafe { Self::prepare(location, handler as usize as u64, None, function) }
@@ -122,7 +120,7 @@ impl MidHook {
         location: usize,
         handler: MidDataHandler,
         data: usize,
-        function: Option<Range<usize>>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: the caller's guarantees are those of `prepare`.
         unsafe {
@@ -151,7 +149,7 @@ impl MidHook {
         location: usize,
         handler: MidReturnHandler,
         data: usize,
-        function: Option<Range<usize>>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: the caller's guarantees are those of `prepare_with`.
         unsafe {
@@ -171,7 +169,7 @@ impl MidHook {
         location: usize,
         handler: u64,
         data: Option<u64>,
-        function: Option<Range<usize>>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: the caller's guarantees are those of `prepare_with`.
         unsafe { Self::prepare_with(location, save_call_restore(handler, data), function) }
@@ -184,15 +182,12 @@ impl MidHook {
     unsafe fn prepare_with(
         location: usize,
         saving: Result<CodeAssembler, IcedError>,
-        function: Option<Range<usize>>,
+        function: &FunctionCode,
     ) -> Result<Self, HookError> {
         // SAFETY: `readable_len` bounds the read to readable memory.
         let code = unsafe { read(location, readable_len(location, READ_LEN)) };
-        if let Some(function) = function {
-            // SAFETY: the caller guarantees the range is readable code.
-            let bytes = unsafe { read(function.start, function.len()) };
-            check_branches(&bytes, function.start, location, &code)?;
-        }
+        // SAFETY: the caller guarantees the function's ranges are readable.
+        unsafe { check_branches(function, location, &code) }?;
 
         let stub = allocate_near(location, STUB_LEN)?;
         let saving = saving

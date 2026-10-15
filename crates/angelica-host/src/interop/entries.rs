@@ -8,10 +8,23 @@ pub struct Entries<'a> {
     pub base: usize,
 }
 
-/// A function: its address and the length of its code.
+/// A function: its address, and its code as a hook checks it, or why that
+/// is not known.
 pub struct Function {
     pub address: usize,
-    pub length: Option<usize>,
+    pub code: Result<angelica_hook::FunctionCode, String>,
+}
+
+#[cfg(test)]
+impl Function {
+    /// A function whose machine code is copied to executable memory.
+    pub fn synthetic(code: &[u8]) -> Self {
+        let address = angelica_hook::testing::executable(code);
+        Self {
+            address,
+            code: Ok(angelica_hook::testing::whole(address, code.len())),
+        }
+    }
 }
 
 impl Entries<'_> {
@@ -32,10 +45,7 @@ impl Entries<'_> {
             {
                 Ok(Function {
                     address: self.base + rva as usize,
-                    length: entry
-                        .function_range
-                        .as_ref()
-                        .map(|range| (range.end - range.start) as usize),
+                    code: entry.hook_code(self.base),
                 })
             }
             _ => Err(format!(

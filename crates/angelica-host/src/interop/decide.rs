@@ -43,15 +43,13 @@ pub fn install(
     let _ = LENS.set(lens.clone());
     let base = address - u64::from(resolved.value.get());
     #[allow(clippy::cast_possible_truncation)] // the game is a 64-bit process
-    let function = resolved.function_range.as_ref().map(|range| {
-        (base + u64::from(range.start)) as usize..(base + u64::from(range.end)) as usize
-    });
+    let function = resolved.hook_code(base as usize)?;
     let start = usize::try_from(address).map_err(|e| e.to_string())?;
     // SAFETY: the map verified `start` as a function's first instruction in
     // the executable's code, where the stack pointer points to the return
-    // address; `function` is its code from the exception directory, and the
+    // address; `function` is its code, and the
     // handler catches every panic.
-    let mut hook = unsafe { MidHook::returning(start, decide, point, function) }
+    let mut hook = unsafe { MidHook::returning(start, decide, point, &function) }
         .map_err(|e| format!("decision hook: {e}"))?;
     // SAFETY: the handler only reads the registers and the game's memory
     // through the checked copy and sets rax; nothing else in this process

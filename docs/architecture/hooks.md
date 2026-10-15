@@ -24,7 +24,7 @@ Relocation decodes whole instructions with `iced-x86` until they cover 5 bytes a
 - an instruction is invalid or cut off;
 - the function leaves unconditionally (a return, a jump, an interrupt) before 5 bytes;
 - a RIP-relative operand cannot reach its target from the trampoline;
-- a relative branch anywhere in the function targets the overwritten bytes other than the function's start. The function's code is known from its map entry (see [`game-map.md`](./game-map.md)).
+- the function's code cannot be shown free of branches into the overwritten bytes other than the hook's own address. The function's code is known exactly from its map entry: its ranges in the exception directory, chained chunks included, or, for a leaf function, the code its control flow reaches ([format](../formats/game-map-v2.md#locators)); a hook in code that is not known exactly is not installed. When the overwritten bytes lie within the function's prologue, which its unwind information gives, nothing branches into them: the Windows x64 conventions enter a prologue only at the function's start. Otherwise the code is followed from the start of every range, through every instruction and every branch within the function; the hook is refused when a branch targets the overwritten bytes, when the followed code reaches an invalid instruction or a jump through a register or computed address, whose targets the code does not state, or when the hook's address is not an instruction the followed code reaches.
 
 ### Installing and removing
 
