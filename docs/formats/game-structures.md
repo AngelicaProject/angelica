@@ -24,7 +24,7 @@ The game builds a row with its row parser and immediately hands it to the sheet'
 - The variant is 0 for a sheet of rows and 1 for a sheet of subrows (the row parser adds a 2-byte subrow header per variant step to the fixed size); other values leave the sheet untouched. A subrow descriptor carries its subrow id as its single key: `subrow_count` must be 1.
 - The language is the game's language number: 1 Japanese, 2 English, 3 German, 4 French, 5 and 6 Chinese, 7 Korean; 0 for a sheet without a language.
 - The name is the NUL-terminated ASCII text `name_ptr` points to.
-- Sheets of version 2 and earlier are left untouched; later versions use the version 3 row parser. A row buffer is `data_offset` bytes of fields followed by one NUL-terminated string per text column, in column order, with nothing between them. A text field is 4 bytes: its low 24 bits are the distance from the field to its string, its high byte the game's hash of the string (`hash = byte ^ (hash << 1)` over its bytes). A buffer in any other layout is left untouched and counted as refused.
+- Only sheets of version 3 are changed; every other version is left untouched. The game builds the row buffer of every version above 2 with its version 3 parser, and the map's check on `excel.row.construct` confirms that comparison. A row buffer is `data_offset` bytes of fields followed by one NUL-terminated string per text column, in column order, with nothing between them. A text field is 4 bytes: its low 24 bits are the distance from the field to its string, its high byte the game's hash of the string (`hash = byte ^ (hash << 1)` over its bytes). A buffer in any other layout is left untouched and counted as refused.
 
 ### Rewriting
 
