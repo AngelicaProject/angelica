@@ -297,7 +297,17 @@ fn refuses_locators_that_do_not_fit() {
         entry_error(
             "[global.\"game.a\"]\nlocator = { signature = \"90\" }\ntype = \"ptr\"\nchecks = [{ equals = \"game.b\", signature = \"90\" }]\n"
         ),
-        "check 0: a check is a locator, `equals`, or `vtable_slot` with `code_slots`"
+        "check 0: a check is a locator, `equals`, `vtable_slot` with `code_slots`, or `contains`"
+    );
+    assert_eq!(
+        entry_error(
+            "[global.\"game.a\"]
+locator = { signature = \"90\" }
+type = \"ptr\"
+checks = [{ contains = \"90\", signature = \"90\" }]
+"
+        ),
+        "check 0: `contains` takes only `in`"
     );
     assert_eq!(
         entry_error(
