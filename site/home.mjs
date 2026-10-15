@@ -79,14 +79,14 @@ const gameWindow = `<div class="win" data-state="0">
   <div class="wbar"><span class="wm">angelica</span><span class="status"><i></i><span class="s0">1 waits for you · 1 running</span><span class="s2">2 running</span></span><span class="x">×</span></div>
   <div class="tabs"><b>Installed</b><span>Catalog</span><span>Settings</span></div>
   <div class="sect wait"><span>Needs you</span><em>1</em></div>
-  ${row("new", "G", "Gathering", "wants to read game data")}
+  ${row("new", "G", "Gathering", "wants to see the items you carry")}
   <div class="sect"><span>On</span><em class="count">1</em></div>
   ${row("on", "H", "Harmonia", "translation")}
-  ${row("on moved", "G", "Gathering", "reads game data")}
+  ${row("on moved", "G", "Gathering", "sees the items you carry")}
 </div>`;
 const letters = (word) => [...word].map((c, i) => `<span style="--i:${i}">${c}</span>`).join("");
-// What a plugin can do today, in the words of the permissions the player sees (docs/architecture/permissions.md).
-const ticker = ["add chat commands", "print to your chat log", "read chat", "replace game text", "replace fonts and textures", "hide parts of the game interface", "put text in game windows", "read your character", "download from approved hosts", "keep its own files", "show its own windows"].join(" · ") + " · ";
+// What a plugin can do today, in the words the player approves: the host's permissions (docs/architecture/permissions.md) and the game map's domains.
+const ticker = ["use actions for you", "teleport you", "answer the game's dialogs", "see your character", "see the items you carry", "read chat", "hide chat messages", "change the game's text", "change your camera's zoom limits", "hide parts of the game's windows", "replace fonts and textures", "draw over the game world", "show notifications", "play sounds", "add chat commands", "print to your chat log", "download from approved hosts"].join(" · ") + " · ";
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Angelica</title>
@@ -429,7 +429,7 @@ footer .big span:hover { color: var(--red); }
     <div data-r style="--d:5"><i>3</i><h3>Press <kbd class="key">Insert</kbd></h3><p>The Angelica window opens over the game. Pick a plugin, read what it asks for, and turn it on.</p></div>
   </div>
   <div class="after" data-r><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a>
-    <p>Windows 10 or later, DirectX 11 client. The installer is not code-signed, so SmartScreen may warn you the first time. Angelica checks every file it loads against its own release key.</p></div>
+    <p>Windows 10 or later, DirectX 11 client. The installer is not code-signed, so SmartScreen may warn you the first time. Angelica checks the signature of every file it installs or loads.</p></div>
 </section>
 
 <section id="docs">
@@ -437,8 +437,8 @@ footer .big span:hover { color: var(--red); }
     <p data-r style="--d:2">If you are reading this yourself, start with a guide. If an agent is reading for you, point it at <code>llms.txt</code>, which lists every page as plain Markdown.</p></div>
   <div class="shelves">
     <div class="shelf" data-r><span class="kicker">Players</span><h3>Play</h3><ul><li><a href="install.html">Install Angelica</a></li><li><a href="turn-on-a-plugin.html">Turn on a plugin</a></li><li><a href="patch-day.html">Patch day</a></li><li><a href="remove.html">Remove Angelica</a></li><li><a href="troubleshooting.html">When something goes wrong</a></li></ul></div>
-    <div class="shelf" data-r style="--d:1"><span class="kicker">Authors</span><h3>Build</h3><ul><li><a href="first-plugin.html">Write your first plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/authoring.md">Writing a plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md">Interface cards</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/formats/plugin-api-v1.md">Plugin API 1.0</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/api-requests.md">Request an API</a></li></ul></div>
-    <div class="shelf" data-r style="--d:2"><span class="kicker">Internals</span><h3>Understand</h3><ul><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/loading.md">How Angelica loads into the game</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/game-map.md">The game map</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/permissions.md">The sandbox and permissions</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/formats/README.md">File formats</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/development/README.md">Contribute</a></li></ul></div>
+    <div class="shelf" data-r style="--d:1"><span class="kicker">Authors</span><h3>Build</h3><ul><li><a href="first-plugin.html">Write your first plugin</a></li><li><a href="run-in-the-game.html">Run your plugin in the game</a></li><li><a href="publish.html">Publish a plugin</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/interfaces.md">Interface cards</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/api-requests.md">Request an API</a></li></ul></div>
+    <div class="shelf" data-r style="--d:2"><span class="kicker">Internals</span><h3>Understand</h3><ul><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/lens.md">How plugins see the game</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/game-map.md">The game map</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/permissions.md">The sandbox and permissions</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/architecture/loading.md">How Angelica loads into the game</a></li><li><a href="https://github.com/AngelicaProject/angelica/blob/main/docs/development/README.md">Contribute</a></li></ul></div>
   </div>
 </section>
 

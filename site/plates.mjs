@@ -22,7 +22,7 @@ function sandbox() {
 }
 
 // Plate 2: the game map. The hollow, dotted drawing is where things were before a patch. The solid one, with the names, is where they are after; on the page it is drawn moving there (see `moving.map`), and `rest` is the same thing standing still.
-const mapPoints = [[90, 96, 34, 20, "player"], [214, 70, -22, 30, "inventory"], [330, 120, 28, -18, "chat"], [150, 200, 26, 26, "zone"], [300, 226, -30, 14, "target"], [420, 190, 20, 24, "party"]];
+const mapPoints = [[90, 96, 34, 20, "character"], [214, 70, -22, 30, "inventory"], [330, 120, 28, -18, "chat"], [150, 200, 26, 26, "location"], [300, 226, -30, 14, "windows"], [420, 190, 20, 24, "actions"]];
 const mapEdges = [[0, 1], [1, 2], [0, 3], [3, 4], [2, 4], [2, 5], [4, 5]];
 function map() {
   const pts = mapPoints, o = [], rest = [];
