@@ -71,6 +71,9 @@ impl Entry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declared {
     pub permissions: BTreeSet<String>,
+    /// The game map domains it reads, acts in, and changes through Lens, as
+    /// `<domain>.read`, `<domain>.act`, and `<domain>.change`.
+    pub lens: BTreeSet<String>,
     pub hosts: BTreeSet<String>,
     pub memory: Option<u64>,
 }
@@ -84,6 +87,18 @@ impl Declared {
                 .iter()
                 .map(|p| p.name().to_owned())
                 .collect(),
+            lens: [
+                ("read", manifest.lens_read()),
+                ("act", manifest.lens_act()),
+                ("change", manifest.lens_change()),
+            ]
+            .into_iter()
+            .flat_map(|(verb, domains)| {
+                domains
+                    .into_iter()
+                    .map(move |domain| format!("{domain}.{verb}"))
+            })
+            .collect(),
             hosts: manifest.http_hosts(),
             memory: manifest.plugin.memory_bytes,
         }
@@ -102,6 +117,9 @@ pub struct Review {
     pub permissions: Vec<String>,
     pub hosts: Vec<String>,
     pub permissions_added: Vec<String>,
+    /// Game map domains it reads, acts in, or changes that the catalog
+    /// version does not.
+    pub lens_added: Vec<String>,
     pub hosts_added: Vec<String>,
 }
 
@@ -163,7 +181,8 @@ pub fn review(
     }
     let declared = Declared::of(&manifest);
     let mut reasons = Vec::new();
-    let (mut permissions_added, mut hosts_added) = (Vec::new(), Vec::new());
+    let (mut permissions_added, mut lens_added, mut hosts_added) =
+        (Vec::new(), Vec::new(), Vec::new());
     match previous {
         None => reasons.push("a new plugin".to_owned()),
         Some((before, published)) => {
@@ -188,9 +207,13 @@ pub fn review(
                 .difference(&was.permissions)
                 .cloned()
                 .collect();
+            lens_added = declared.lens.difference(&was.lens).cloned().collect();
             hosts_added = declared.hosts.difference(&was.hosts).cloned().collect();
             if !permissions_added.is_empty() {
                 reasons.push(format!("new permissions: {}", permissions_added.join(", ")));
+            }
+            if !lens_added.is_empty() {
+                reasons.push(format!("new game map domains: {}", lens_added.join(", ")));
             }
             if !hosts_added.is_empty() {
                 reasons.push(format!("new hosts: {}", hosts_added.join(", ")));
@@ -208,6 +231,7 @@ pub fn review(
         permissions: declared.permissions.into_iter().collect(),
         hosts: declared.hosts.into_iter().collect(),
         permissions_added,
+        lens_added,
         hosts_added,
     })
 }
@@ -350,6 +374,27 @@ mod tests {
         let more = review(&entry("v1.2.0", &key), &file, Some((&before, &published))).unwrap();
         assert!(!more.automatic);
         assert_eq!(more.permissions_added, vec!["sound.play"]);
+
+        // Changing a domain of the game map is as new as a permission.
+        let lens_file = runtime::author::sign(
+            &key,
+            format!(
+                "{}\n[lens]\nchange = [\"text\"]\n",
+                manifest("1.3.0", "\"chat.print\" = true\n")
+            )
+            .as_bytes(),
+            b"\0asm",
+        )
+        .unwrap();
+        let lens = review(
+            &entry("v1.3.0", &key),
+            &lens_file,
+            Some((&before, &published)),
+        )
+        .unwrap();
+        assert!(!lens.automatic);
+        assert_eq!(lens.lens_added, vec!["text.change"]);
+        assert_eq!(lens.reasons, vec!["new game map domains: text.change"]);
 
         let new = review(&entry("v1.2.0", &key), &file, None).unwrap();
         assert_eq!(new.reasons, vec!["a new plugin"]);
