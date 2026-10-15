@@ -308,8 +308,12 @@ fn publish_plugin(args: &PublishArgs) -> Result<serde_json::Value, String> {
             ));
         }
         let current =
-            Manifest::parse(std::str::from_utf8(&current.manifest).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+            // The published version may declare permissions this Angelica
+            // removed.
+            Manifest::parse_earlier(
+                std::str::from_utf8(&current.manifest).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
         if !installer::newer(&packed.version, &current.plugin.version)? {
             return Err(format!(
                 "{link} already has version {}; raise plugin.version",

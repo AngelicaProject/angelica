@@ -295,7 +295,7 @@ fn review(args: &ReviewArgs) -> Result<serde_json::Value, String> {
         (Some(entry), Some(file)) => {
             let before = read_entry(entry)?;
             let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
-            let (_, manifest) = crate::catalog::open(&bytes)?;
+            let (_, manifest) = crate::catalog::open_earlier(&bytes)?;
             Some((before, manifest))
         }
         _ => None,

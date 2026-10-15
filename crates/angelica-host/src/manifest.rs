@@ -468,6 +468,22 @@ impl Manifest {
     /// # Errors
     /// Names the first field that breaks the format.
     pub fn parse(text: &str) -> Result<Self, ManifestError> {
+        Self::parse_as(text, false)
+    }
+
+    /// Parses the manifest of a version published or installed before:
+    /// a permission this Angelica no longer has, such as one an update
+    /// replaced with a domain of the game map, is left out instead of
+    /// refusing the manifest, so its version and what it still declares
+    /// can be compared with a newer one.
+    ///
+    /// # Errors
+    /// As for [`Manifest::parse`], except for removed permissions.
+    pub fn parse_earlier(text: &str) -> Result<Self, ManifestError> {
+        Self::parse_as(text, true)
+    }
+
+    fn parse_as(text: &str, earlier: bool) -> Result<Self, ManifestError> {
         let fail = |message: String| Err(ManifestError(message));
         let mut manifest: Self = toml::from_str(text).map_err(|e| ManifestError(e.to_string()))?;
         if manifest.manifest != 1 {
@@ -504,9 +520,12 @@ impl Manifest {
         }
         let mut declared = BTreeSet::new();
         for (name, value) in &manifest.permissions {
-            let permission: Permission = toml::Value::String(name.clone())
-                .try_into()
-                .map_err(|_| ManifestError(format!("unknown permission {name}")))?;
+            let Ok(permission) = toml::Value::String(name.clone()).try_into::<Permission>() else {
+                if earlier {
+                    continue;
+                }
+                return fail(format!("unknown permission {name}"));
+            };
             match value {
                 toml::Value::Boolean(true) => {
                     declared.insert(permission);
@@ -856,6 +875,27 @@ description = "Community translations."
             );
         }
         assert!(Manifest::parse(&format!("{VALID}[lens]\nwrite = []\n")).is_err());
+    }
+
+    #[test]
+    fn an_earlier_manifest_is_read_without_the_permissions_angelica_removed() {
+        let earlier = VALID.replace(
+            "\"draw.world\" = true",
+            "\"draw.world\" = true
+\"excel.text\" = true",
+        );
+        assert!(Manifest::parse(&earlier).is_err(), "a new version may not");
+        let manifest = Manifest::parse_earlier(&earlier).unwrap();
+        assert_eq!(manifest.plugin.version, "0.2.0");
+        assert_eq!(
+            manifest.permissions().iter().copied().collect::<Vec<_>>(),
+            [Permission::FilesReplace, Permission::DrawWorld]
+        );
+        assert!(
+            Manifest::parse_earlier(&VALID.replace("\"draw.world\" = true", "\"draw.world\" = 1"))
+                .is_err(),
+            "everything else is checked as before"
+        );
     }
 
     #[test]
