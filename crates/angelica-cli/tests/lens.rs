@@ -300,7 +300,7 @@ fn look_writes_a_request_and_prints_the_games_answer() {
     ]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("development build of Angelica"),
+        String::from_utf8_lossy(&output.stderr).contains("in dev mode (angelica dev mode on)"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );

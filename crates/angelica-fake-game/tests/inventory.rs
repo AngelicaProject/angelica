@@ -293,6 +293,9 @@ fn look_answers_a_query_from_the_command_line_between_frames() {
             seconds: None,
             bytes: None,
             entries: Vec::new(),
+            follow: Vec::new(),
+            offset: None,
+            size: None,
         };
         std::fs::write(folder.join(REQUEST), serde_json::to_vec(&request).unwrap()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(120));
@@ -339,6 +342,9 @@ fn a_release_build_answers_look_only_in_dev_mode() {
         seconds: None,
         bytes: None,
         entries: Vec::new(),
+        follow: Vec::new(),
+        offset: None,
+        size: None,
     };
     std::fs::write(folder.join(REQUEST), serde_json::to_vec(&request).unwrap()).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(120));

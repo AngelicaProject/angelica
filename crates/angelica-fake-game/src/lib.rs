@@ -68,7 +68,15 @@ pub struct ScriptedGame {
     /// The server on this computer that plugins' WebSocket connections
     /// reach, whatever their URL; none unless a test starts one.
     pub socket_server: Mutex<Option<std::net::SocketAddr>>,
+    /// The address and size whose writes `angelica look` watches, and
+    /// where the writes a test made came from; see
+    /// [`ScriptedGame::write_from`].
+    pub writes: Mutex<WriteWatch>,
 }
+
+/// The address and size a watch of writes is on, and where writes came
+/// from.
+pub type WriteWatch = (Option<(u64, u8)>, Vec<runtime::game::Written>);
 
 impl Default for ScriptedGame {
     fn default() -> Self {
@@ -89,6 +97,27 @@ impl Default for ScriptedGame {
             view_projection: Mutex::new(None),
             played: Mutex::new(Vec::new()),
             socket_server: Mutex::new(None),
+            writes: Mutex::new((None, Vec::new())),
+        }
+    }
+}
+
+impl ScriptedGame {
+    /// A write to the watched address by an instruction that ended at
+    /// `after`, as the processor would report it; nothing while no watch
+    /// runs.
+    pub fn write_from(&self, after: u64) {
+        let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        if writes.0.is_none() {
+            return;
+        }
+        match writes.1.iter_mut().find(|place| place.after == after) {
+            Some(place) => place.count += 1,
+            None => writes.1.push(runtime::game::Written {
+                after,
+                offset: Some(after),
+                count: 1,
+            }),
         }
     }
 }
@@ -202,6 +231,21 @@ impl Game for ScriptedGame {
             .unwrap_or_else(PoisonError::into_inner)
             .push(entry.to_owned());
         Ok(())
+    }
+
+    fn watch_writes(&self, address: u64, size: u8) -> Result<(), String> {
+        let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        if writes.0.is_some() {
+            return Err("another watch of writes runs".into());
+        }
+        *writes = (Some((address, size)), Vec::new());
+        Ok(())
+    }
+
+    fn take_writes(&self) -> (Vec<runtime::game::Written>, u64) {
+        let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        writes.0 = None;
+        (std::mem::take(&mut writes.1), 0)
     }
 
     fn enable_watch(&self, _point: usize, entry: &str, _address: u64) -> Result<(), String> {

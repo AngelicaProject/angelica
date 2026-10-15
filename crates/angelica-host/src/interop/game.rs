@@ -144,4 +144,35 @@ impl Game for WindowsGame {
             super::watch::install(&self.catalog, &self.lens, point, entry, address),
         )
     }
+
+    fn watch_writes(&self, address: u64, size: u8) -> Result<(), String> {
+        super::writes::start(address, size)
+    }
+
+    fn take_writes(&self) -> (Vec<crate::game::Written>, u64) {
+        let (mut written, missed) = super::writes::finish();
+        let size = image_size(self.base);
+        for place in &mut written {
+            place.offset = usize::try_from(place.after)
+                .ok()
+                .and_then(|after| after.checked_sub(self.base))
+                .filter(|offset| size.is_some_and(|size| *offset < size))
+                .map(|offset| offset as u64);
+        }
+        (written, missed)
+    }
+}
+
+/// `SizeOfImage` of the module at `base`, from its PE headers in memory.
+fn image_size(base: usize) -> Option<usize> {
+    let read_u32 = |at: usize| {
+        super::memory::read(at, 4)
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+    };
+    let headers = base.checked_add(usize::try_from(read_u32(base.checked_add(0x3C)?)?).ok()?)?;
+    // The optional header follows the 4-byte signature and the 20-byte
+    // file header; `SizeOfImage` is at offset 56 in it.
+    usize::try_from(read_u32(headers.checked_add(4 + 20 + 56)?)?).ok()
 }

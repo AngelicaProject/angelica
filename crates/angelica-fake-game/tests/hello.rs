@@ -2346,6 +2346,9 @@ fn look_watches_dumps_and_counts_for_work_on_the_map() {
         seconds: Some(1),
         bytes: Some(0x30),
         entries: vec!["test.use_action".into()],
+        follow: Vec::new(),
+        offset: None,
+        size: None,
     };
 
     ask(&request(Mode::Dump, "player.data"));
@@ -2387,4 +2390,64 @@ fn look_watches_dumps_and_counts_for_work_on_the_map() {
     let traced = answer();
     assert_eq!(traced.id, "Trace");
     assert_eq!(traced.calls.unwrap()["test.use_action"], 3);
+}
+
+#[test]
+fn look_finds_the_instructions_that_write_a_field() {
+    use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response, Write};
+    let test = with_character(MANIFEST, &[]);
+    test.game.set("player", &[("data.level", 90.into())]);
+    let folder = test.folder.path().join("look");
+    std::fs::create_dir_all(&folder).unwrap();
+    test.host.serve_look(folder.clone());
+    let request = |query: &str, size: u8| Request {
+        format: 1,
+        id: "w".into(),
+        mode: Mode::Writes,
+        query: query.into(),
+        seconds: Some(1),
+        bytes: None,
+        entries: Vec::new(),
+        follow: Vec::new(),
+        offset: Some(0x2B),
+        size: Some(size),
+    };
+    let ask = |request: &Request| {
+        std::fs::write(folder.join(REQUEST), serde_json::to_vec(request).unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        test.frames(1);
+    };
+    let answer = || {
+        serde_json::from_slice::<Response>(&std::fs::read(folder.join(RESPONSE)).unwrap()).unwrap()
+    };
+
+    ask(&request("player.data", 1));
+    let (watched, _) = test.game.writes.lock().unwrap().0.unwrap();
+    test.game.write_from(0x1234);
+    test.game.write_from(0x5678);
+    test.game.write_from(0x5678);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    test.frames(2);
+    let response = answer();
+    assert_eq!(response.watched, Some(watched));
+    assert_eq!(
+        response.writes.unwrap(),
+        [
+            Write {
+                after: 0x5678,
+                offset: Some(0x5678),
+                count: 2
+            },
+            Write {
+                after: 0x1234,
+                offset: Some(0x1234),
+                count: 1
+            },
+        ],
+        "most first"
+    );
+    assert!(
+        test.game.writes.lock().unwrap().0.is_none(),
+        "the watch ended"
+    );
 }

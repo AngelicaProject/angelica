@@ -87,11 +87,25 @@ pub struct LookArgs {
     /// JSON with `--json` to compare it later.
     #[arg(long, value_name = "BYTES", conflicts_with = "trace")]
     dump: Option<u32>,
+    /// With `--dump`: from each object, follow the pointer at this offset
+    /// (`0x1A8` or `424`) before reading; repeatable, in order, for memory
+    /// the map does not describe yet.
+    #[arg(long, value_name = "OFFSET", value_parser = offset)]
+    follow: Vec<u32>,
+    /// Which instructions write the field at this offset (`0x2B`) of the one
+    /// object the path reaches, during `--seconds`; dev mode only. Each is
+    /// shown as where it ended in the executable: `angelica exe disasm`
+    /// shows the writing instruction just before.
+    #[arg(long, value_name = "OFFSET", value_parser = offset, conflicts_with_all = ["watch", "dump", "trace"])]
+    writes: Option<u32>,
+    /// The size of the field `--writes` watches: 1, 2, 4, or 8 bytes.
+    #[arg(long, default_value_t = 4, requires = "writes")]
+    size: u8,
     /// Count how many times the game's code reaches this function or
     /// location entry of the map; repeatable.
     #[arg(long, value_name = "ENTRY")]
     trace: Vec<String>,
-    /// How many seconds `--trace` counts.
+    /// How many seconds `--trace` counts and `--writes` watches.
     #[arg(long, default_value_t = 10)]
     seconds: u32,
     /// Compare two dumps saved with `--dump --json`, before and after
@@ -661,6 +675,15 @@ fn row_lines(text: &mut String, columns: &[runtime::look::Column], rows: &[runti
     }
 }
 
+/// An offset as `0x1A8` or `424`.
+fn offset(text: &str) -> Result<u32, String> {
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => text.parse(),
+    }
+    .map_err(|e| format!("`{text}` is not an offset: {e}"))
+}
+
 fn look(args: &LookArgs) -> Result<(Json, String), String> {
     use runtime::look::{Mode, REQUEST, RESPONSE, Request, Response, write_atomically};
     if let [before, after] = args.compare.as_slice() {
@@ -670,7 +693,11 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
         .installation
         .as_ref()
         .ok_or("--installation names the installation the game runs")?;
+    if !args.follow.is_empty() && args.dump.is_none() && args.writes.is_none() {
+        return Err("--follow goes with --dump or --writes".into());
+    }
     let (mode, lasts) = match (&args.watch, &args.dump, args.trace.is_empty()) {
+        _ if args.writes.is_some() => (Mode::Writes, u64::from(args.seconds)),
         (Some(seconds), _, _) => (Mode::Watch, u64::from(*seconds)),
         (None, Some(_), _) => (Mode::Dump, 0),
         (None, None, false) => (Mode::Trace, u64::from(args.seconds)),
@@ -689,10 +716,13 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
         id: request_id(),
         mode,
         query,
-        seconds: (mode == Mode::Watch || mode == Mode::Trace)
+        seconds: matches!(mode, Mode::Watch | Mode::Trace | Mode::Writes)
             .then_some(u32::try_from(lasts).unwrap_or(u32::MAX)),
         bytes: args.dump,
         entries: args.trace.clone(),
+        follow: args.follow.clone(),
+        offset: args.writes,
+        size: args.writes.map(|_| args.size),
     };
     let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     write_atomically(&folder.join(REQUEST), &bytes)?;
@@ -709,7 +739,7 @@ fn look(args: &LookArgs) -> Result<(Json, String), String> {
         if started.elapsed() > wait {
             let _ = std::fs::remove_file(folder.join(REQUEST));
             return Err(format!(
-                "no answer in {} s: the game must be running with a development build of Angelica from {}",
+                "no answer in {} s: the game must be running with Angelica from {} in dev mode (angelica dev mode on) or a development build",
                 wait.as_secs(),
                 installation.display()
             ));
@@ -931,6 +961,30 @@ fn response_text(mode: runtime::look::Mode, response: &runtime::look::Response) 
             calls.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
             for (entry, count) in calls {
                 let _ = writeln!(text, "{count:>8}  {entry}");
+            }
+        }
+        Mode::Writes => {
+            let _ = writeln!(
+                text,
+                "writes to {:#x}, where each writing instruction ended:",
+                response.watched.unwrap_or(0)
+            );
+            for place in response.writes.clone().unwrap_or_default() {
+                match place.offset {
+                    Some(offset) => {
+                        let _ = writeln!(text, "{:>8}  executable +{offset:#x}", place.count);
+                    }
+                    None => {
+                        let _ = writeln!(
+                            text,
+                            "{:>8}  {:#x}, outside the executable",
+                            place.count, place.after
+                        );
+                    }
+                }
+            }
+            if let Some(missed) = response.missed.filter(|missed| *missed > 0) {
+                let _ = writeln!(text, "{missed:>8}  from other places");
             }
         }
     }

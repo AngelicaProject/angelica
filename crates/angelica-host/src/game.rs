@@ -3,6 +3,16 @@
 //! `angelica-fake-game` drives the same services from test data.
 #![forbid(unsafe_code)]
 
+/// Where writes to a watched address came from: the address where the
+/// writing instruction ended, its offset in the game's executable when it
+/// is there, and how many writes ended there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Written {
+    pub after: u64,
+    pub offset: Option<u64>,
+    pub count: u64,
+}
+
 pub trait Game: Send + Sync {
     /// The contents of `game/ffxivgame.ver`.
     fn version(&self) -> String;
@@ -63,6 +73,22 @@ pub trait Game: Send + Sync {
     /// # Errors
     /// Why the point cannot be hooked in this build.
     fn enable_watch(&self, point: usize, entry: &str, address: u64) -> Result<(), String>;
+
+    /// Starts counting the instructions that write `size` bytes at
+    /// `address`, for `angelica look` in dev mode; one watch at a time.
+    ///
+    /// # Errors
+    /// Why writes cannot be watched there.
+    fn watch_writes(&self, address: u64, size: u8) -> Result<(), String> {
+        let _ = (address, size);
+        Err("this game cannot watch writes".into())
+    }
+
+    /// Ends the watch of writes: where they came from, and how many came
+    /// from places past the ones it tells apart.
+    fn take_writes(&self) -> (Vec<Written>, u64) {
+        (Vec::new(), 0)
+    }
 
     /// Calls the game's function at `address` with `args`, each as its 64
     /// bits, on the game's main thread, for a Lens action.
