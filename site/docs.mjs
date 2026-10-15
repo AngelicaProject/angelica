@@ -5,7 +5,7 @@ import { Marked } from "marked";
 
 const repo = "https://github.com/AngelicaProject/angelica";
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const slug = (s) => s.toLowerCase().replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, "").replace(/[^a-z0-9 -]/g, "").trim().replace(/ +/g, "-");
+const slug = (s) => s.toLowerCase().replace(/<[^>]+>/g, "").replace(/&#?[a-z0-9]+;/g, "").replace(/[^a-z0-9 -]/g, "").trim().replace(/ +/g, "-");
 
 // Colour code the way a reader scans it: names of the language quiet, the parts you change loud.
 const rules = {
@@ -40,16 +40,47 @@ export function read(text) {
   return { front, md, title };
 }
 
-// The menu follows the home page's shelves. A name is a page from pages/ by its title; a pair is a link elsewhere.
+// The canonical documents of docs/ shown on the site as Reference: the exact contracts, written
+// for coding agents and maintainers. Each is its own page; links between them stay on the site.
+export const reference = [
+  { path: "plugins/authoring.md", file: "reference-writing-a-plugin.html", title: "Writing a plugin", lede: "The steps from an empty folder to a published plugin, with the commands." },
+  { path: "plugins/interfaces.md", file: "reference-interface-cards.html", title: "Interface cards", lede: "What each part of the plugin API does, its permission, and how to use it." },
+  { path: "formats/plugin-api-v1.md", file: "reference-plugin-api.html", title: "Plugin API 1.0", lede: "The contract between a plugin and Angelica." },
+  { path: "formats/plugin-manifest-v1.md", file: "reference-plugin-manifest.html", title: "Plugin manifest", lede: "The fields of angelica.toml." },
+  { path: "plugins/api-requests.md", file: "reference-api-requests.html", title: "Request an API", lede: "How to ask for an operation the API does not have." },
+  { path: "architecture/overview.md", file: "reference-architecture.html", title: "Architecture", lede: "The components of Angelica and what each owns." },
+];
+
+// The menu follows the home page's shelves. A name is a page by its title; a pair is a link elsewhere.
 const doc = (path) => `${repo}/blob/main/docs/${path}`;
 const nav = [
   ["Play", ["Install Angelica", "Turn on a plugin", "Patch day", "Remove Angelica", "When something goes wrong"]],
-  ["Build", ["Build a plugin with an agent", "Write your first plugin", "Run your plugin in the game", "Publish a plugin", ["Writing a plugin", doc("plugins/authoring.md")], ["Interface cards", doc("plugins/interfaces.md")], ["Plugin API 1.0", doc("formats/plugin-api-v1.md")], ["Plugin manifest", doc("formats/plugin-manifest-v1.md")], ["Request an API", doc("plugins/api-requests.md")]]],
-  ["Understand", [["Overview", doc("architecture/overview.md")], ["How plugins see the game", doc("architecture/lens.md")], ["Loading into the game", doc("architecture/loading.md")], ["The game map", doc("architecture/game-map.md")], ["Permissions", doc("architecture/permissions.md")], ["Contribute", doc("development/README.md")]]],
+  ["Build", ["Build a plugin with an agent", "Write your first plugin", "Run your plugin in the game", "Publish a plugin"]],
+  ["Understand", ["How Angelica works", "How plugins see the game", "The game map and patch day", "The sandbox and permissions", ["Contribute", doc("development/README.md")]]],
+  ["Reference", ["Game data", ...reference.map((r) => r.title), ["Rust SDK", "sdk/angelica_sdk/index.html"]], "For agents and maintainers"],
 ];
 
-/** One page as HTML. `pages` maps every page title to its file name. */
-export function page({ front, md, title }, file, pages) {
+/** A link of a canonical document, `href` relative to `from` in docs/: the site's page for a document
+ * shown on the site, otherwise the file on GitHub. Links to the web and to anchors stay as they are. */
+export function referenceLink(href, from) {
+  if (/^(?:[a-z]+:|#)/i.test(href)) return href;
+  const [target, hash = ""] = href.split("#");
+  const parts = ["docs", ...from.split("/").slice(0, -1)];
+  for (const part of target.split("/")) {
+    if (part === "..") parts.pop();
+    else if (part && part !== ".") parts.push(part);
+  }
+  const path = parts.join("/");
+  const shown = reference.find((r) => `docs/${r.path}` === path);
+  if (shown) return shown.file + (hash ? `#${hash}` : "");
+  const kind = /\.[a-z0-9]+$/i.test(path) ? "blob" : "tree";
+  return `${repo}/${kind}/main/${path}${hash ? `#${hash}` : ""}`;
+}
+
+/** One page as HTML. `pages` maps every page title to its file name. A Reference page passes
+ * `source`, its file in the repository, and `lede`, since a canonical document may not open with one.
+ * A generated page passes `generated`: what it is made from, `{ text, href }`. */
+export function page({ front, md, title }, file, pages, { source: from, lede: given, generated } = {}) {
   const headings = [];
   const renderer = {
     heading(text, level) {
@@ -68,10 +99,18 @@ export function page({ front, md, title }, file, pages) {
     },
     table(header, body) { return `<div class="table"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`; },
   };
-  // Links between pages are written to the Markdown files and served as HTML.
-  const body = new Marked({ renderer, gfm: true }).parse(md).replace(/href="([^":#]+)\.md(#[^"]*)?"/g, (_, name, hash = "") => `href="${name}.html${hash}"`);
-  const lede = body.match(/<p>([\s\S]*?)<\/p>/)[1];
-  const rest = body.replace(/<p>[\s\S]*?<\/p>/, "");
+  // Links between pages are written to the Markdown files and served as HTML. A canonical document's
+  // links lead to the Reference pages or to GitHub, and links on any page to a document shown here stay on the site.
+  let body = new Marked({ renderer, gfm: true }).parse(md);
+  body = from
+    ? body.replace(/href="([^"]*)"/g, (_, href) => `href="${referenceLink(href, from.replace(/^docs\//, ""))}"`)
+    : body.replace(/href="([^":#]+)\.md(#[^"]*)?"/g, (_, name, hash = "") => `href="${name}.html${hash}"`);
+  body = body.replace(/href="https:\/\/github\.com\/AngelicaProject\/angelica\/blob\/main\/docs\/([^"#]+)(#[^"]*)?"/g, (whole, path, hash = "") => {
+    const shown = reference.find((r) => r.path === path);
+    return shown ? `href="${shown.file}${hash}"` : whole;
+  });
+  const lede = given ?? body.match(/<p>([\s\S]*?)<\/p>/)[1];
+  const rest = given ? body : body.replace(/<p>[\s\S]*?<\/p>/, "");
   const [kind, name] = title.includes(": ") ? title.split(": ") : [front.kicker || "Guide", title];
 
   const item = (entry) => {
@@ -79,17 +118,19 @@ export function page({ front, md, title }, file, pages) {
     if (!pages[entry]) return "";
     return `<li><a href="${pages[entry]}"${entry === title ? ' aria-current="page"' : ""}>${entry}</a></li>`;
   };
-  const sidebar = `<nav class="side" aria-label="Documentation">${nav.map(([group, items]) => `<p class="kicker">${group}</p><ul>${items.map(item).join("")}</ul>`).join("")}</nav>`;
-  const source = `site/pages/${file.replace(/\.html$/, ".md")}`;
-  const toc = `<aside class="toc">${headings.length ? `<p class="kicker">On this page</p>` : ""}<ul>${headings.map((h) => `<li><a href="#${h.id}">${h.text}</a></li>`).join("")}</ul><p class="edit"><a href="${repo}/edit/main/${source}">Edit this page</a></p></aside>`;
+  const sidebar = `<nav class="side" aria-label="Documentation">${nav.map(([group, items, note]) => `<p class="kicker">${group}</p>${note ? `<p class="note">${note}</p>` : ""}<ul>${items.map(item).join("")}</ul>`).join("")}</nav>`;
+  const source = from || `site/pages/${file.replace(/\.html$/, ".md")}`;
+  const toc = `<aside class="toc">${headings.length ? `<p class="kicker">On this page</p>` : ""}<ul>${headings.map((h) => `<li><a href="#${h.id}">${h.text}</a></li>`).join("")}</ul><p class="edit">${generated ? `<a href="${generated.href}">Source on GitHub</a>` : `<a href="${repo}/edit/main/${source}">Edit this page</a>`}</p></aside>`;
   const top = `<header class="bar"><div class="in"><a class="mark" href="index.html">angelica</a><a class="where" href="index.html#docs">Documentation</a>
   <span class="theme" role="group" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button></span><a class="nav" href="${repo}">GitHub</a><a class="b one" href="${repo}/releases/download/nightly/angelica-setup.exe">Download</a></div></header>`;
   const meta = front.meta ? `<p class="meta">${front.meta.split(" · ").map((m) => `<span>${m}</span>`).join("")}</p>` : "";
   const crumbs = `<p class="crumbs"><a href="index.html#docs">Documentation</a> / <span>${front.section || "Build"}</span> / <span>${name}</span></p>`;
   const near = (t, label, cls) => t && pages[t] ? `<a href="${pages[t]}"${cls}><small>${label}</small>${t}</a>` : "<span></span>";
   const foot = `<div class="pager">${near(front.prev, "Previous", "")}${near(front.next, "Next", ' class="next"')}</div>
-  <footer class="foot"><span>This page is <code>${source}</code> in the Angelica repository.</span><a href="${repo}/issues/new">Something here is wrong</a></footer>`;
+  <footer class="foot"><span>${generated ? generated.text : `This page is <code>${source}</code> in the Angelica repository.`}</span><a href="${repo}/issues/new">Something here is wrong</a></footer>`;
   const head = `<p class="kicker">${kind}</p><h1>${name}</h1><p class="lede">${lede}</p>`;
+  const notice = from ? `<div class="reference"><p><b>Reference.</b> The exact contract, written for coding agents and maintainers. For a walkthrough, see <a href="first-plugin.html">Write your first plugin</a>.</p><a href="${repo}/blob/main/${from}">Source on GitHub ↗</a></div>`
+    : generated ? `<div class="reference"><p><b>Reference.</b> ${generated.text}</p><a href="${generated.href}">Source on GitHub ↗</a></div>` : "";
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${name}: Angelica</title>
@@ -97,7 +138,7 @@ export function page({ front, md, title }, file, pages) {
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <style>${css}</style></head><body>
-${top}<div class="page">${sidebar}<main class="doc">${crumbs}${head}${meta}${rest}${foot}</main>${toc}</div>
+${top}<div class="page">${sidebar}<main class="doc">${crumbs}${head}${meta}${notice}${rest}${foot}</main>${toc}</div>
 <script>${js}</script></body></html>`;
 }
 
@@ -138,6 +179,10 @@ a { color: inherit; }
 .side ul, .toc ul { list-style: none; margin: 0; padding: 0; }
 .side a { display: block; padding: 4px 0 4px 12px; border-left: 2px solid transparent; text-decoration: none; font-size: 15px; color: var(--ink-2); transition: color .15s, border-color .15s; }
 .side a:hover { color: var(--ink); border-left-color: var(--line-2); }
+.side .note { font-size: 12.5px; color: var(--ink-2); margin: -2px 0 6px; }
+.reference { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 24px; flex-wrap: wrap; margin: 18px 0 8px; padding: 12px 16px; border: 1px solid var(--line-2); border-left: 3px solid var(--blueprint); border-radius: 4px; background: var(--plate); font-size: 15px; }
+.reference p { margin: 0; }
+.reference a { color: var(--blueprint); }
 .side .part { font-size: 12.5px; font-weight: 600; color: var(--ink); padding: 12px 0 2px 14px; }
 kbd { font: 600 .8em var(--mono); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 3px; padding: 0 6px; background: var(--plate); }
 .side a[aria-current] { color: var(--ink); font-weight: 600; border-left-color: var(--red); }
@@ -171,10 +216,10 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
 .doc a:hover { color: var(--red); }
 .doc :not(pre) > code { font-family: var(--mono); font-size: .84em; background: var(--tint); border-radius: 3px; padding: 1px 5px; }
 
-/* Numbered steps: the number stands in the margin, the way the install steps do on the home page. */
+/* Numbered steps: 01, 02 in the margin, the way the home page numbers its steps, on the baseline of the step's first line. */
 .doc ol { counter-reset: step; list-style: none; padding-left: 44px; }
 .doc ol > li { counter-increment: step; position: relative; margin: 0 0 18px; }
-.doc ol > li::before { content: counter(step); position: absolute; left: -44px; top: -6px; width: 30px; text-align: right; font-family: var(--soft); font-style: italic; font-size: 30px; line-height: 1.2; color: var(--blueprint); }
+.doc ol > li:not(:has(> p))::before, .doc ol > li > p:first-child::before { content: counter(step, decimal-leading-zero); display: inline-block; width: 44px; margin-left: -44px; font-family: var(--mono); font-size: 12px; letter-spacing: .08em; color: var(--blueprint); }
 
 figure { margin: 14px 0 20px; }
 .code { background: var(--plate); border: 1px solid var(--line-2); border-radius: 4px; overflow: hidden; }

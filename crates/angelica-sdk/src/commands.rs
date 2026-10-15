@@ -52,12 +52,14 @@ impl Command {
         self
     }
 
+    /// A parameter of the command, after the parameters added before it.
     #[must_use]
     pub fn parameter(mut self, parameter: Parameter) -> Self {
         self.parameters.push(parameter.0);
         self
     }
 
+    /// A command under this one, run as this command's words followed by its name.
     #[must_use]
     pub fn subcommand(mut self, command: Command) -> Self {
         self.subcommands.push(command);
@@ -120,6 +122,7 @@ impl Parameter {
         )
     }
 
+    /// A number that may have a fractional part, such as `1.5`.
     #[must_use]
     pub fn number(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self::new(name, description, api::ValueKind::Number)
@@ -188,6 +191,7 @@ impl Invocation {
         }
     }
 
+    /// The value of the integer parameter `name`; none when the player left it out.
     #[must_use]
     pub fn integer(&self, name: &str) -> Option<i64> {
         match self.get(name)? {
@@ -196,6 +200,7 @@ impl Invocation {
         }
     }
 
+    /// The value of the number parameter `name`; none when the player left it out.
     #[must_use]
     pub fn number(&self, name: &str) -> Option<f64> {
         match self.get(name)? {
@@ -204,6 +209,7 @@ impl Invocation {
         }
     }
 
+    /// Whether the switch `name` was given; none when the player left it out.
     #[must_use]
     pub fn switch(&self, name: &str) -> Option<bool> {
         match self.get(name)? {

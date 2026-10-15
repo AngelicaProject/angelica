@@ -31,6 +31,8 @@
 //! angelica_sdk::plugin!(Hello);
 //! ```
 
+#![warn(missing_docs)]
+
 #[doc(hidden)]
 pub mod bindings {
     // Canonical ABI allocations carry a length and allocate exactly that capacity.

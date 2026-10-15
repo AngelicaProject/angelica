@@ -19,6 +19,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// An empty message; add spans to it.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -44,31 +45,37 @@ impl Message {
         self
     }
 
+    /// A span in the normal tone.
     #[must_use]
     pub fn text(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Normal)
     }
 
+    /// A span in the accent tone, for names and what the player typed.
     #[must_use]
     pub fn accent(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Accent)
     }
 
+    /// A span in the muted tone, for what matters less.
     #[must_use]
     pub fn muted(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Muted)
     }
 
+    /// A span in the tone of success.
     #[must_use]
     pub fn good(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Good)
     }
 
+    /// A span in the tone of a warning.
     #[must_use]
     pub fn warning(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Warning)
     }
 
+    /// A span in the tone of a failure.
     #[must_use]
     pub fn bad(self, text: impl Into<String>) -> Self {
         self.span(text, Tone::Bad)

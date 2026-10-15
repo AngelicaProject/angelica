@@ -34,7 +34,7 @@ Tests use `tempfile` (MIT OR Apache-2.0) for temporary directories.
 
 ## Website
 
-The [website](./website.md) is built with Node.js 24 and one npm package, `marked` (MIT), which turns the documentation pages from Markdown into HTML. `site/package-lock.json` pins it, and the build installs it with `npm ci`. Nothing of the website runs in the game.
+The [website](./website.md) is built with Node.js 24 and two npm packages: `marked` (MIT), which turns the documentation pages from Markdown into HTML, and `smol-toml` 1.9.0 (BSD-3-Clause, no dependencies), which reads the released game map's files for the Game data reference. `site/package-lock.json` pins them, and the build installs them with `npm ci`. Nothing of the website runs in the game.
 
 ## Fonts
 
