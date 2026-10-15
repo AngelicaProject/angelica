@@ -240,7 +240,7 @@ section { margin-top: 120px; }
 .win .name { font-weight: 500; }
 .win .about { color: rgba(36,33,28,.6); font-size: 12.5px; margin-left: auto; }
 .win .act { display: none; margin-left: auto; color: #7a5c2e; font-weight: 600; }
-.win .state { display: flex; align-items: baseline; gap: 9px; margin: 22px 0 0; font-size: 15.5px; font-weight: 600; width: 8px; height: 8px; border-radius: 50%; background: #2e7d46; flex: none; }
+.win .state { width: 8px; height: 8px; border-radius: 50%; background: #2e7d46; flex: none; }
 .win .new .state { background: none; width: auto; height: auto; }
 .win .new .state::after { content: "!"; color: #b76e00; font-weight: 600; font-style: normal; }
 .win .moved { height: 0; opacity: 0; }
