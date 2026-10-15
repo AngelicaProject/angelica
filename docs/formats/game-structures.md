@@ -1,6 +1,6 @@
 # Game structures the host changes
 
-The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v2.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can.
+The host changes game data only through the adapters described here. Each one names the [map entries](./game-map-v2.md) it uses and checks their kind, type, and ABI; a missing entry makes the adapter unavailable, and the operation that needs it returns `unavailable` with the entry's name. Layout facts that the map does not describe are stated here, and the adapter checks them where it can. A fact that shows in the game's code is confirmed by a `contains` check on the entry whose code shows it: when an update changes the fact, the entry is absent and the adapter unavailable, instead of misreading the game's memory. Each section names those checks.
 
 ## Excel rows, version 3
 
@@ -20,7 +20,7 @@ The game builds a row with its row parser and immediately hands it to the sheet'
 
 ### Layout
 
-- A sheet's column definitions are `column_count` records of 6 bytes. The record's position is the column's index; a column of kind 0 is a text column. Text columns are matched against a table by index and offset, in index order.
+- A sheet's column definitions are `column_count` records of 6 bytes, as the check on `excel.sheet.column_offset` confirms. The record's position is the column's index; a column of kind 0 is a text column. Text columns are matched against a table by index and offset, in index order.
 - The variant is 0 for a sheet of rows and 1 for a sheet of subrows (the row parser adds a 2-byte subrow header per variant step to the fixed size); other values leave the sheet untouched. A subrow descriptor carries its subrow id as its single key: `subrow_count` must be 1.
 - The language is the game's language number: 1 Japanese, 2 English, 3 German, 4 French, 5 and 6 Chinese, 7 Korean; 0 for a sheet without a language.
 - The name is the NUL-terminated ASCII text `name_ptr` points to.
@@ -48,9 +48,9 @@ The game loads every resource file as a job on a file thread. A job's descriptor
 | `file.texture_handle.flags` (`u8`), `file.resource_handle.category` (`u16`) | fields of a texture handle | the texture's flags and the resource's category |
 | `graphics.config.instance` (`ptr`), `graphics.config.texture_detail` (`u8`) | global and field | the graphics settings and their texture detail level |
 
-The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
+The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The checks on `file.file_thread.do_job` confirm the mode byte at the descriptor's start and the cases below 9, 9, 10, and 11. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
 
-A texture is the exception to the game's disk reader: the texture load takes a texture read from disk only from the game's protected file list, and refuses any other with 0xF1 (load state 13) before it sets the handle's flags, so the texture's glyphs or pixels are missing. The adapter detours the texture load. When the original refuses a disk job whose path is a file in the host's cache, it calls the game's loader for plain `.tex` files, which reads the header and the texture from the job's file, and returns its result. It passes the detail level the refused load chose: 0 unless flag bit 0 is set, then the settings' texture detail, 2 when that is 0xFF. Then it sets the flags the refused load left unset: bit 1 when the category is 1 or 2, and bit 2, 3, or 4 when the letter before the game path's extension is `d`, `n`, or `s`. Every other result, and every file outside the cache, is the original's. All entries of this section are needed; without one, file replacements are unavailable.
+A texture is the exception to the game's disk reader: the texture load takes a texture read from disk only from the game's protected file list, and refuses any other with 0xF1 (load state 13) before it sets the handle's flags, so the texture's glyphs or pixels are missing. The adapter detours the texture load. When the original refuses a disk job whose path is a file in the host's cache, it calls the game's loader for plain `.tex` files, which reads the header and the texture from the job's file, and returns its result. It passes the detail level the refused load chose: 0 unless flag bit 0 is set, then the settings' texture detail, 2 when that is 0xFF. Then it sets the flags the refused load left unset: bit 1 when the category is 1 or 2, and bit 2, 3, or 4 when the letter before the game path's extension is `d`, `n`, or `s`. Every other result, and every file outside the cache, is the original's. The checks on `file.texture_handle.load` confirm the detail level it chooses, the game path as a `std::string` at 0x48 of the resource handle with its capacity at 0x60, and the refusal with 0xF1, which lies in a chunk of the function chained to its first range. All entries of this section are needed; without one, file replacements are unavailable.
 
 ## Letter case
 
@@ -63,7 +63,7 @@ A texture is the exception to the game's disk reader: the texture load takes a t
 | `text.utf8_string.string_ptr` (`ptr`), `.used_size` (`i64`) | fields of the string | its bytes and their count with the terminator |
 | `text.case_exclusion.word` (`ptr`), `.length` (`i32`) | fields of an exclusion record | a word the conversion leaves unchanged |
 
-The exclusion list is an array of 16-byte records ended by one whose length is zero; the adapter reads at most 256. A word is excluded at a position when the text there begins with it, as the game compares it. Strings longer than 1 MiB are left as the game converted them. Macros (`0x02` … `0x03`) are skipped whole; a malformed macro ends the conversion.
+The exclusion list is an array of 16-byte records ended by one whose length is zero, as the checks on `text.utf8_string.to_upper` confirm; the adapter reads at most 256. A word is excluded at a position when the text there begins with it, as the game compares it. Strings longer than 1 MiB are left as the game converted them. Macros (`0x02` … `0x03`) are skipped whole; a malformed macro ends the conversion.
 
 ## Game windows
 
@@ -103,7 +103,7 @@ The game runs a line the player sends from the chat box or a macro with the comm
 
 The line is a `Utf8String`; the detour reads it only when its used size is 2 to 4096, otherwise the game handles it. A framework, UI module, or log module that is zero means the chat log does not exist yet, and printing returns `unavailable`.
 
-To print, the adapter constructs two game strings in zeroed 0x80-byte buffers (the constructor uses the first 0x62 bytes and allocates when the text does not fit its 64-byte inline buffer): an empty sender and the message. It calls `PrintMessage(log, 56, sender, message, 0, 0)` — log kind 56 is the Echo channel, timestamp 0 means now — and then destroys both strings; the log keeps its own copy.
+To print, the adapter constructs two game strings in zeroed 0x100-byte buffers (the constructor uses the first 0x62 bytes and allocates when the text does not fit its 64-byte inline buffer; the rest is a margin): an empty sender and the message. The checks on `text.utf8_string.from_sequence` confirm the inline buffer at 0x22 and its capacity of 0x40 bytes, and the check on `text.utf8_string.dtor` the flag that says the text is inline. It calls `PrintMessage(log, 56, sender, message, 0, 0)` — log kind 56 is the Echo channel, timestamp 0 means now — and then destroys both strings; the log keeps its own copy.
 
 The message is the game's encoded text: `[<plugin name>]` in color row 500, a space, then each span. A tone other than `normal` sets the text color with the macro `0x48` (`UIForeground`) and the tone's row, and resets it with row 0 after the span; an italic span is wrapped in macro `0x1A` with 1 and 0; a line break is macro `0x10`. Rows are of the game's `UIColor` sheet, which holds a color for each interface theme, so the colors follow the player's theme:
 
