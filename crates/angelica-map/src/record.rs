@@ -71,12 +71,33 @@ impl BuildRecord {
         map: &Map,
         image: &angelica_pe::Image<'_>,
     ) -> Result<Self, String> {
+        Self::read(text, map, Some(image))
+    }
+
+    /// Reads a record against the map without the executable: every rule
+    /// of [`BuildRecord::from_toml`] except that recorded addresses lie in
+    /// the executable's image.
+    /// # Errors
+    /// Rejects mismatched map hashes, missing/extra entries, and constant
+    /// offsets the map does not give.
+    pub fn check(text: &str, map: &Map) -> Result<Self, String> {
+        Self::read(text, map, None)
+    }
+
+    fn read(text: &str, map: &Map, image: Option<&angelica_pe::Image<'_>>) -> Result<Self, String> {
         let raw: RawRecord = toml::from_str(text).map_err(|e| e.to_string())?;
-        if raw.game_version.trim().is_empty()
-            || !valid_hash(&raw.exe_sha256)
-            || raw.entries_sha256 != map.entries_sha256()
-        {
-            return Err("build record identity or map hash is invalid".into());
+        if raw.game_version.trim().is_empty() {
+            return Err("build record has no game_version".into());
+        }
+        if !valid_hash(&raw.exe_sha256) {
+            return Err("build record exe_sha256 is not a SHA-256 hash".into());
+        }
+        if raw.entries_sha256 != map.entries_sha256() {
+            return Err(format!(
+                "build record is of other entries: its entries_sha256 is {}, the map's is {}",
+                raw.entries_sha256,
+                map.entries_sha256()
+            ));
         }
         for name in raw.present.keys().chain(raw.absent.keys()) {
             if map.get(name).is_none() {
@@ -100,30 +121,11 @@ impl BuildRecord {
                     }
                     EntryKind::Function { .. }
                     | EntryKind::Location { .. }
-                    | EntryKind::Patch { .. } => {
-                        if !image.is_code(*value) {
-                            return Err(format!("recorded entry {name} is outside code"));
-                        }
-                        Value::Address(*value)
-                    }
-                    EntryKind::Vtable { slots } => {
-                        if image
-                            .bytes_at(
-                                *value,
-                                usize::try_from(*slots)
-                                    .map_err(|e| e.to_string())?
-                                    .checked_mul(8)
-                                    .ok_or("vtable size overflow")?,
-                            )
-                            .is_none()
-                        {
-                            return Err(format!("recorded vtable {name} is outside image"));
-                        }
-                        Value::Address(*value)
-                    }
-                    EntryKind::Global { .. } => {
-                        if image.bytes_at(*value, 1).is_none() {
-                            return Err(format!("recorded global {name} is outside image"));
+                    | EntryKind::Patch { .. }
+                    | EntryKind::Vtable { .. }
+                    | EntryKind::Global { .. } => {
+                        if let Some(image) = image {
+                            in_image(image, name, &entry.kind, *value)?;
                         }
                         Value::Address(*value)
                     }
@@ -199,6 +201,39 @@ impl BuildRecord {
         text.push_str("]\n");
         text
     }
+}
+
+/// Whether a recorded address lies where an entry of its kind must: code
+/// for functions, locations, and patches, the image for vtables and
+/// globals.
+fn in_image(
+    image: &angelica_pe::Image<'_>,
+    name: &str,
+    kind: &EntryKind,
+    value: u32,
+) -> Result<(), String> {
+    match kind {
+        EntryKind::Vtable { slots } => {
+            let size = usize::try_from(*slots)
+                .map_err(|e| e.to_string())?
+                .checked_mul(8)
+                .ok_or("vtable size overflow")?;
+            if image.bytes_at(value, size).is_none() {
+                return Err(format!("recorded vtable {name} is outside image"));
+            }
+        }
+        EntryKind::Global { .. } => {
+            if image.bytes_at(value, 1).is_none() {
+                return Err(format!("recorded global {name} is outside image"));
+            }
+        }
+        _ => {
+            if !image.is_code(value) {
+                return Err(format!("recorded entry {name} is outside code"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn valid_hash(hash: &str) -> bool {

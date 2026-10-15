@@ -2,6 +2,7 @@
 
 mod author;
 mod catalog;
+mod check;
 mod compile;
 mod dev;
 mod excel;
@@ -73,6 +74,8 @@ enum PluginCommand {
 enum MapCommand {
     /// Resolve every entry of a map against the game's executable.
     Verify(verify::VerifyArgs),
+    /// Check a map and its build records without the game's executable.
+    Check(check::CheckArgs),
 }
 
 /// Output options shared by every command.
@@ -87,6 +90,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
+        Command::Map(MapCommand::Check(args)) => check::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
         Command::Plugin(PluginCommand::New(args)) => new::run(&args),
         Command::Plugin(PluginCommand::Key(args)) => author::key(&args),
