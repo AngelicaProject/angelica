@@ -11,6 +11,7 @@ pub use angelica_sqpack::testing as game_files;
 use angelica_text::table::Column;
 pub use objects::{Fire, Set};
 
+pub mod maps;
 mod objects;
 /// The host the tests run plugins in.
 pub use runtime;
