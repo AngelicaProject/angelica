@@ -45,7 +45,7 @@ const doc = (path) => `${repo}/blob/main/docs/${path}`;
 const nav = [
   ["Play", ["Install Angelica", "Turn on a plugin", "Patch day", "Remove Angelica", "When something goes wrong"]],
   ["Build", ["Write your first plugin", "Run your plugin in the game", "Publish a plugin", ["Writing a plugin", doc("plugins/authoring.md")], ["Interface cards", doc("plugins/interfaces.md")], ["Plugin API 1.0", doc("formats/plugin-api-v1.md")], ["Plugin manifest", doc("formats/plugin-manifest-v1.md")], ["Request an API", doc("plugins/api-requests.md")]]],
-  ["Understand", [["Overview", doc("architecture/overview.md")], ["Loading into the game", doc("architecture/loading.md")], ["The game map", doc("architecture/game-map.md")], ["Permissions", doc("architecture/permissions.md")], ["Contribute", doc("development/README.md")]]],
+  ["Understand", [["Overview", doc("architecture/overview.md")], ["How plugins see the game", doc("architecture/lens.md")], ["Loading into the game", doc("architecture/loading.md")], ["The game map", doc("architecture/game-map.md")], ["Permissions", doc("architecture/permissions.md")], ["Contribute", doc("development/README.md")]]],
 ];
 
 /** One page as HTML. `pages` maps every page title to its file name. */
