@@ -300,7 +300,7 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 
 1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Show the plan and the permissions it needs to the user.
 2. Look up every piece in the interface cards: SDK call, permission, main instance or job. For the game's objects, find the roots, types, and fields with `angelica schema search` and check each query with `angelica query`. Add the permissions to `angelica.toml`, and the domains the queries read to its `[lens] read`; nothing else.
-3. Collect every piece the cards do not cover at once: those are not available. Look for open requests first (`gh issue list --repo AngelicaProject/angelica --label api-request`). Write each new request in the format of `api-requests.md` and show it to the user. File it with `gh issue create`, as `api-requests.md` shows, only once the user agrees. Then build everything else, so the plugin is useful while it waits.
+3. Collect every piece the cards and the map do not cover at once. The plugin API is the game map, so the usual way is to add the piece to the map: follow https://github.com/AngelicaProject/angelica-gamemap/blob/main/docs/architecture/adding-entries.md (dev mode, `angelica look`, a disassembler, `angelica map try`), with the user's agreement before turning on dev mode and before sending the pull request. The plugin can use the piece on this computer as soon as `map try` put it in. When it cannot be added, look for open requests (`gh issue list --repo AngelicaProject/angelica --label api-request`), write a request in the format of `api-requests.md`, show it to the user, and file it with `gh issue create` only once the user agrees. Build everything else meanwhile.
 4. Write the code in `src/lib.rs`; long work goes in a job.
 5. Test in `tests/` with `angelica-fake-game`: every command, window action, and handled failure. Run the checks below.
 6. When the user has Angelica installed, build, pack, and install the plugin (commands below), then tell the user exactly what to click or type in the game and what they should see. The user approves the plugin's permissions in the game; never approve them for the user. Report only what was observed.
@@ -320,7 +320,7 @@ The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user
 
 ## Rules
 
-- Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin. When the API lacks a capability, do not work around it: write an API request.
+- Use only the plugin API. There are no game addresses, offsets, hooks, or memory reads in a plugin: what the game holds is found and described in the game map, never in the plugin. When the API lacks a capability, do not work around it: add it to the map, or write an API request.
 - Declare only the permissions the plugin uses; the player sees each one.
 - Never read, print, or copy the author key (`%APPDATA%\Angelica\author.key`). The user puts it into the repository secret `ANGELICA_AUTHOR_KEY` themselves.
 - Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds.
