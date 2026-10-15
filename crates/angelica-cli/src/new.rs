@@ -296,6 +296,8 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 - https://github.com/AngelicaProject/angelica/blob/main/docs/plugins/api-requests.md: what to write when the API lacks a capability.
 - https://github.com/AngelicaProject/angelica/blob/main/docs/formats/plugin-api-v1.md: the contract. After the first `cargo test`, cargo's copy of the Angelica repository holds the SDK (`crates/angelica-sdk`), the test kit (`crates/angelica-fake-game`), and the WIT files (`wit/`); `cargo doc --open` shows the SDK.
 
+Other documents are listed in https://github.com/AngelicaProject/angelica/blob/main/docs/README.md; do not guess their names.
+
 ## Work loop
 
 1. Before any code, design the whole feature in game terms: what it reads, what it changes, how the player drives it. Show the plan and the permissions it needs to the user.
@@ -310,13 +312,14 @@ An Angelica plugin for FINAL FANTASY XIV, in Rust, compiled to a WebAssembly com
 
 The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user's account (https://cli.github.com/). When `gh` is missing or not signed in, ask the user to install it and run `gh auth login`.
 
+- `angelica where` prints each game folder on this computer and the Angelica installation it loads: its `game` is the `<game folder>`, its `installation` the `<installation>`, and its `map.folder` the `<map>` of the commands below. Never guess these paths.
 - `cargo test`: builds the component and runs `tests/` against the scripted game. The first run fetches the Angelica repository and builds the host, which takes a few minutes; later runs are quick.
 - `cargo clippy --target wasm32-wasip2 -- -D warnings -W clippy::pedantic` for the plugin, `cargo clippy --tests -- -D warnings -W clippy::pedantic` for the tests, and `cargo fmt --check`.
 - `cargo build --release --target wasm32-wasip2` builds `target/wasm32-wasip2/release/{crate}.wasm`.
 - `angelica plugin pack --component target/wasm32-wasip2/release/{crate}.wasm` signs it into `{id}-<version>.angelica` with the author key.
-- `angelica plugin install {id}-<version>.angelica --installation <installation>` installs it into Angelica (`%LOCALAPPDATA%\Angelica` for an installed Angelica); the running game loads it within a second.
+- `angelica plugin install {id}-<version>.angelica --installation <installation>` installs it into the Angelica the game loads; the running game loads it within a second.
 - `angelica excel sheets --game <game folder>` and `angelica excel show <sheet> --game <game folder>` show the game's own data, such as item names and recipes, from the installed game's `game` folder.
-- `angelica schema search <words> --map <map> --game <game folder>` and `angelica schema show <root or type> --map <map>` show what the game map describes of the game's objects: roots, types, fields, and the domain of each; `angelica query "<query>" --map <map> --game <game folder> --plugin .` checks a query and the domains `angelica.toml` lists. The map of an installed Angelica is its `map` folder (`%LOCALAPPDATA%\Angelica\map`).
+- `angelica schema search <words> --map <map> --game <game folder>` and `angelica schema show <root or type> --map <map>` show what the game map describes of the game's objects: roots, types, fields, and the domain of each; `angelica query "<query>" --map <map> --game <game folder> --plugin .` checks a query and the domains `angelica.toml` lists.
 
 ## Rules
 
@@ -325,6 +328,7 @@ The work needs `cargo`, `git`, and the GitHub command `gh` signed in to the user
 - Never read, print, or copy the author key (`%APPDATA%\Angelica\author.key`). The user puts it into the repository secret `ANGELICA_AUTHOR_KEY` themselves.
 - Long work (bulk sheet reads, HTTP) runs in a job; frame callbacks have a few milliseconds.
 - For your own serde types, add the `serde` crate with its `derive` feature.
+- Ask the user which language the plugin's texts (windows, chat, README) are in; it need not be the language you talk to the user in.
 - Text printed to the chat log uses ASCII `...`, never `…`.
 - Name commands for what they do; never like the game's commands that talk to other players (`say`, `shout`, `tell`).
 "#;

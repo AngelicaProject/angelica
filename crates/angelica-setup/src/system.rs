@@ -1,4 +1,4 @@
-//! What the installer asks of Windows. The registry is read and written
+//! What the installer asks of Windows. The registry is written
 //! with the system's `reg.exe`; the only `unsafe` code starts a copy of the
 //! installer with administrator rights, reads the interface language, and
 //! opens Windows' folder dialog.
@@ -23,23 +23,6 @@ fn reg(args: &[&str]) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// The value `name` of `key`, as `reg query` prints it.
-fn reg_value(key: &str, name: &str) -> Option<String> {
-    let output = reg(&["query", key, "/v", name])?;
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        let rest = line.strip_prefix(name)?.trim_start();
-        let (_, value) = rest.split_once("REG_SZ")?;
-        Some(value.trim().to_owned())
-    })
-}
-
-/// Steam's folder.
-#[must_use]
-pub fn steam_path() -> Option<String> {
-    reg_value(r"HKCU\Software\Valve\Steam", "SteamPath")
 }
 
 /// Lists Angelica under the user's installed apps, with `uninstaller` as

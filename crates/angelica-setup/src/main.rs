@@ -5,7 +5,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
-mod games;
 mod install;
 mod neighbors;
 mod payload;

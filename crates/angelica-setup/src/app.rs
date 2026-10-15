@@ -1,6 +1,6 @@
 //! The installer's one window: the same tall shape on every screen, with
 //! Angelica's own title bar, in its light look (`docs/architecture/ui.md`).
-use crate::{exit, games, install, neighbors::Neighbors, payload, system, words::Words};
+use crate::{exit, install, neighbors::Neighbors, payload, system, words::Words};
 use egui::{Color32, CornerRadius, FontFamily, FontId, Rect, RichText, Sense, Stroke, pos2, vec2};
 use std::{
     path::PathBuf,
@@ -72,7 +72,7 @@ pub fn run(mode: Mode) {
         ..Default::default()
     };
     let games = if mode == Mode::Install {
-        games::find()
+        angelica_games::find()
     } else {
         Vec::new()
     };
@@ -389,7 +389,7 @@ impl App {
         let Some(folder) = picked else {
             return;
         };
-        match games::resolve(&folder) {
+        match angelica_games::resolve(&folder) {
             Some(game) => {
                 self.missing = false;
                 self.chosen = self
