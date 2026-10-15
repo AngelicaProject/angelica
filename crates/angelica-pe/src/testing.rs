@@ -21,6 +21,8 @@ pub struct PeBuilder {
     functions: Vec<(u32, u32)>,
     /// Chunks chained to a primary function, by their begins.
     chains: Vec<(u32, u32)>,
+    /// Prologue lengths of functions, by their begins.
+    prologues: Vec<(u32, u8)>,
 }
 
 impl Default for PeBuilder {
@@ -31,6 +33,7 @@ impl Default for PeBuilder {
             sections: Vec::new(),
             functions: Vec::new(),
             chains: Vec::new(),
+            prologues: Vec::new(),
         }
     }
 }
@@ -75,6 +78,14 @@ impl PeBuilder {
     #[must_use]
     pub fn chained(mut self, chunk: u32, parent: u32) -> Self {
         self.chains.push((chunk, parent));
+        self
+    }
+
+    /// Gives the function that begins at `start` unwind information whose
+    /// prologue is `len` bytes long.
+    #[must_use]
+    pub fn prologue(mut self, start: u32, len: u8) -> Self {
+        self.prologues.push((start, len));
         self
     }
 
@@ -129,7 +140,9 @@ impl PeBuilder {
         let mut sections = self.sections.clone();
         if !self.functions.is_empty() {
             // The table, then the unwind information of chained chunks:
-            // version 1 with the chain flag, no codes, and the parent entry.
+            // version 1 with the chain flag, no codes, and the parent entry;
+            // and of functions with a prologue: version 1, the prologue's
+            // length, no codes.
             let table_len = 12 * u32::try_from(self.functions.len()).expect("few functions");
             let mut unwind = Vec::new();
             let mut data = Vec::new();
@@ -150,7 +163,16 @@ impl PeBuilder {
                         }
                         at
                     }
-                    None => 0,
+                    None => match self.prologues.iter().find(|&&(start, _)| start == begin) {
+                        Some(&(_, len)) => {
+                            let at = self.pdata_rva()
+                                + table_len
+                                + u32::try_from(unwind.len()).expect("small");
+                            unwind.extend([0x01, len, 0, 0]);
+                            at
+                        }
+                        None => 0,
+                    },
                 };
                 for word in [begin, end, info] {
                     data.extend(word.to_le_bytes());

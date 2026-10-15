@@ -87,7 +87,9 @@ pub struct Image<'a> {
     /// Begin and end RVAs of the exception directory's entries, by begin,
     /// and the begin of the function each belongs to: its own, or for a
     /// chunk the compiler split off, its chained primary entry's.
-    functions: Vec<(u32, u32, u32)>,
+    /// Exception directory entries by begin: begin, end, the begin of the
+    /// function they belong to, and their unwind information.
+    functions: Vec<(u32, u32, u32, u32)>,
 }
 
 impl<'a> Image<'a> {
@@ -172,10 +174,15 @@ impl<'a> Image<'a> {
                 .iter()
                 .map(|&(begin, _, unwind)| (begin, unwind))
                 .collect();
-            let mut functions: Vec<(u32, u32, u32)> = entries
+            let mut functions: Vec<(u32, u32, u32, u32)> = entries
                 .iter()
                 .map(|&(begin, end, unwind)| {
-                    (begin, end, image.chain_root(begin, unwind, &unwinds))
+                    (
+                        begin,
+                        end,
+                        image.chain_root(begin, unwind, &unwinds),
+                        unwind,
+                    )
                 })
                 .collect();
             functions.sort_unstable();
@@ -262,11 +269,38 @@ impl<'a> Image<'a> {
     /// the RVA: for a function start, the function's primary range.
     #[must_use]
     pub fn function_at(&self, rva: u32) -> Option<std::ops::Range<u32>> {
-        let index = self
-            .functions
-            .partition_point(|&(begin, _, _)| begin <= rva);
-        let &(begin, end, _) = self.functions.get(index.checked_sub(1)?)?;
+        let index = self.functions.partition_point(|&(begin, ..)| begin <= rva);
+        let &(begin, end, ..) = self.functions.get(index.checked_sub(1)?)?;
         (rva < end).then_some(begin..end)
+    }
+
+    /// The start of the function whose code holds the RVA: the begin of the
+    /// exception directory entry that contains it, or of the function that
+    /// entry is chained to.
+    #[must_use]
+    pub fn function_root(&self, rva: u32) -> Option<u32> {
+        let index = self.functions.partition_point(|&(begin, ..)| begin <= rva);
+        let &(_, end, root, _) = self.functions.get(index.checked_sub(1)?)?;
+        (rva < end).then_some(root)
+    }
+
+    /// The length of the prologue of the function that starts at `start`,
+    /// from its unwind information. The prologue runs only when the
+    /// function is entered, so no code of the function branches into it.
+    #[must_use]
+    pub fn prologue_len(&self, start: u32) -> Option<u32> {
+        const CHAIN_INFO: u8 = 0x4;
+        let index = self.functions.partition_point(|&(begin, ..)| begin < start);
+        let &(begin, _, root, unwind) = self.functions.get(index)?;
+        if begin != start || root != start || unwind == 0 {
+            return None;
+        }
+        let header = self.bytes_at(unwind, 4)?;
+        let version = header[0] & 0x7;
+        if !(1..=2).contains(&version) || (header[0] >> 3) & CHAIN_INFO != 0 {
+            return None;
+        }
+        Some(u32::from(header[1]))
     }
 
     /// Every range of code of the function that starts at `start`: its
@@ -282,8 +316,8 @@ impl<'a> Image<'a> {
         }
         self.functions
             .iter()
-            .filter(|&&(_, _, root)| root == start)
-            .map(|&(begin, end, _)| begin..end)
+            .filter(|&&(_, _, root, _)| root == start)
+            .map(|&(begin, end, ..)| begin..end)
             .collect()
     }
 
@@ -328,10 +362,8 @@ impl<'a> Image<'a> {
     /// The begin RVA of the first exception directory entry after the RVA.
     #[must_use]
     pub fn next_function_after(&self, rva: u32) -> Option<u32> {
-        let index = self
-            .functions
-            .partition_point(|&(begin, _, _)| begin <= rva);
-        self.functions.get(index).map(|&(begin, _, _)| begin)
+        let index = self.functions.partition_point(|&(begin, ..)| begin <= rva);
+        self.functions.get(index).map(|&(begin, ..)| begin)
     }
 
     /// The target of a 32-bit relative operand at `rva`, as a call, a jump,
