@@ -161,6 +161,41 @@ impl Game for WindowsGame {
         }
         (written, missed)
     }
+
+    fn preferred_image_base(&self) -> Option<u64> {
+        preferred_image_base()
+    }
+}
+
+/// `ImageBase` of a PE32+ file from its first bytes. It is read from the
+/// file on disk: the loader writes the base it chose into the headers in
+/// memory.
+fn file_image_base(header: &[u8]) -> Option<u64> {
+    let bytes = |at: usize, size: usize| header.get(at..at.checked_add(size)?);
+    let offset = usize::try_from(u32::from_le_bytes(bytes(0x3C, 4)?.try_into().ok()?)).ok()?;
+    // The optional header follows the 4-byte signature and the 20-byte file
+    // header; a PE32+ header has the magic 0x20B and `ImageBase` at 24.
+    let optional = offset.checked_add(4 + 20)?;
+    let magic = u16::from_le_bytes(bytes(optional, 2)?.try_into().ok()?);
+    (magic == 0x20B)
+        .then(|| {
+            bytes(optional + 24, 8)?
+                .try_into()
+                .ok()
+                .map(u64::from_le_bytes)
+        })
+        .flatten()
+}
+
+/// `ImageBase` of the game's executable file.
+fn preferred_image_base() -> Option<u64> {
+    use std::io::Read as _;
+    let mut header = vec![0u8; 4096];
+    let read = std::fs::File::open(std::env::current_exe().ok()?)
+        .and_then(|mut file| file.read(&mut header))
+        .ok()?;
+    header.truncate(read);
+    file_image_base(&header)
 }
 
 /// `SizeOfImage` of the module at `base`, from its PE headers in memory.
@@ -175,4 +210,26 @@ fn image_size(base: usize) -> Option<usize> {
     // The optional header follows the 4-byte signature and the 20-byte
     // file header; `SizeOfImage` is at offset 56 in it.
     usize::try_from(read_u32(headers.checked_add(4 + 20 + 56)?)?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_image_base_comes_from_the_file_headers() {
+        let file = angelica_pe::testing::PeBuilder::new()
+            .section(".text", angelica_pe::testing::CODE, &[0xC3])
+            .build_file();
+        let image = angelica_pe::Image::parse(&file, angelica_pe::Layout::File).unwrap();
+        assert_eq!(super::file_image_base(&file), Some(image.image_base()));
+        assert_eq!(super::file_image_base(&file[..0x40]), None, "cut short");
+        assert!(
+            super::preferred_image_base().is_some(),
+            "this test's own executable"
+        );
+        // SAFETY: a null name asks for the module of this process.
+        let base = unsafe {
+            windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null())
+        } as usize;
+        assert!(super::image_size(base).is_some_and(|size| size > 0));
+    }
 }

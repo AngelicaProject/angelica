@@ -74,6 +74,11 @@ pub struct SignatureArgs {
     /// own displacement, which the locator reads.
     #[arg(long)]
     within: bool,
+    /// With `--within`: the start of the function, as the `in` locator's
+    /// function entry resolves; needed for a leaf function, which the
+    /// exception directory does not record.
+    #[arg(long, value_parser = parse_rva, requires = "within")]
+    function: Option<u32>,
     #[command(flatten)]
     output: Output,
 }
@@ -278,12 +283,27 @@ fn signature(args: &SignatureArgs) -> Result<(String, Json), String> {
     let bytes = executable(&args.target.game)?;
     let image = image(&bytes)?;
     let rva = address(&args.target, &image)?;
+    // The code an `in` locator searches: the function's code as the map
+    // reads it, every chunk of an exception directory entry or a leaf
+    // function's flow.
     let scope = if args.within {
-        Some(
-            image
-                .function_at(rva)
-                .ok_or_else(|| format!("0x{rva:X} is not inside a function entry"))?,
-        )
+        let code = match args.function {
+            Some(start) => angelica_map::function_code(&image, start).ok_or_else(|| {
+                format!("no function code starts at 0x{start:X}, as an `in` locator reads it")
+            })?,
+            None => angelica_map::function_holding(&image, rva).ok_or_else(|| {
+                format!(
+                    "0x{rva:X} is in no function of the exception directory; for a leaf function, give its start with --function"
+                )
+            })?,
+        };
+        if !code.ranges.iter().any(|range| range.contains(&rva)) {
+            return Err(format!(
+                "0x{rva:X} is not in the code of the function at 0x{:X}",
+                code.start
+            ));
+        }
+        Some(code)
     } else {
         None
     };
@@ -309,16 +329,20 @@ fn signature(args: &SignatureArgs) -> Result<(String, Json), String> {
         let matches: Vec<u32> = image
             .scan_code(&signature)
             .into_iter()
-            .filter(|found| scope.as_ref().is_none_or(|range| range.contains(found)))
+            .filter(|found| {
+                scope
+                    .as_ref()
+                    .is_none_or(|code| code.ranges.iter().any(|range| range.contains(found)))
+            })
             .collect();
         if matches == [rva] {
             let scope_text = scope.as_ref().map_or_else(
                 || "the code sections".to_owned(),
-                |range| format!("function 0x{:X}", range.start),
+                |code| format!("function 0x{:X}", code.start),
             );
             return Ok((
                 format!("{text}\nunique in {scope_text}, {} bytes\n", pattern.len()),
-                json!({ "signature": text, "bytes": pattern.len(), "within": scope.map(|range| range.start) }),
+                json!({ "signature": text, "bytes": pattern.len(), "within": scope.map(|code| code.start) }),
             ));
         }
     }

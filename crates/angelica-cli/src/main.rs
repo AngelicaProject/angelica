@@ -7,6 +7,7 @@ mod compile;
 mod dev;
 mod excel;
 mod exe;
+mod labels;
 mod lens;
 mod map_try;
 mod new;
@@ -79,6 +80,9 @@ enum MapCommand {
     Check(check::CheckArgs),
     /// Check a map and use it in an installation while dev mode is on.
     Try(map_try::TryArgs),
+    /// Write a Ghidra script that names the map's entries in a program of
+    /// the game's executable.
+    Labels(labels::LabelsArgs),
 }
 
 /// Output options shared by every command.
@@ -95,6 +99,7 @@ fn main() -> ExitCode {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
         Command::Map(MapCommand::Check(args)) => check::run(&args),
         Command::Map(MapCommand::Try(args)) => map_try::run(&args),
+        Command::Map(MapCommand::Labels(args)) => labels::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
         Command::Plugin(PluginCommand::New(args)) => new::run(&args),
         Command::Plugin(PluginCommand::Key(args)) => author::key(&args),

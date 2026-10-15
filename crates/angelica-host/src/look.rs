@@ -155,6 +155,10 @@ pub struct Response {
     /// Writes from places past the ones `writes` tells apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missed: Option<u64>,
+    /// The image base the executable asks for, where a disassembler places
+    /// it: an offset of `writes` is at this base plus the offset there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<Failure>,
 }
@@ -599,6 +603,7 @@ impl Look {
                     watched: Some(address),
                     writes: Some(writes),
                     missed: Some(missed),
+                    image_base: services.game.preferred_image_base(),
                     ..Response::new(&request.id)
                 };
                 Some(self.respond(&request, &response))
