@@ -350,6 +350,23 @@ pub fn write_package(
     files: &BTreeMap<String, Vec<u8>>,
     key: &SigningKey,
 ) -> Result<(), String> {
+    let list = write_files(folder, files)?;
+    write(&folder.join("files.json.sig"), &key.sign(&list).to_bytes())?;
+    write(&folder.join("files.json"), &list)
+}
+
+/// Replaces `folder` with `files` and their `files.json` without a
+/// signature, written last: the local map of dev mode.
+///
+/// # Errors
+/// An invalid package path, or a failure to write.
+pub fn write_unsigned(folder: &Path, files: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    let list = write_files(folder, files)?;
+    write(&folder.join("files.json"), &list)
+}
+
+/// Replaces `folder` with `files`; returns their file list to write last.
+fn write_files(folder: &Path, files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, String> {
     if folder.exists() {
         std::fs::remove_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
     }
@@ -361,10 +378,8 @@ pub fn write_package(
         hashes.insert(name.clone(), hex(&Sha256::digest(bytes)).into());
         write(&folder.join(name), bytes)?;
     }
-    let list = serde_json::to_vec(&serde_json::json!({"format": 1, "files": hashes}))
-        .map_err(|e| e.to_string())?;
-    write(&folder.join("files.json.sig"), &key.sign(&list).to_bytes())?;
-    write(&folder.join("files.json"), &list)
+    serde_json::to_vec(&serde_json::json!({"format": 1, "files": hashes}))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

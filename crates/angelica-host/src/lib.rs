@@ -12,6 +12,7 @@ pub mod chat;
 pub mod clipboard;
 pub mod commands;
 pub mod config;
+pub mod dev;
 pub mod draw;
 pub mod error;
 pub mod excel_text;

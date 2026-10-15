@@ -168,6 +168,10 @@ strings! {
     checked_minutes: "checked {n} min ago", "проверено {n} мин назад";
     checked_hours: "checked {n} h ago", "проверено {n} ч назад";
     check_note: "Updates are checked at the game's start and every 6 hours and installed automatically. A version that needs new permissions waits for your approval.", "Обновления проверяются при запуске игры и каждые 6 часов и ставятся автоматически. Версия, которой нужны новые разрешения, ждёт вашего согласия.";
+    dev_mode: "Dev mode", "Режим разработки";
+    dev_mode_note: "For work on the game map: angelica look reads the running game, and a map from angelica map try takes the signed map's place. Plugins can do nothing more than before.", "Для работы над картой игры: angelica look читает запущенную игру, а карта из angelica map try заменяет подписанную. Плагины не получают ничего сверх того, что могли.";
+    note_dev: "Dev mode is on", "Включён режим разработки";
+    note_dev_local: "Dev mode is on · local map", "Включён режим разработки · локальная карта";
     dev_map: "Game map", "Карта игры";
     dev_installer: "Plugin installer", "Установщик плагинов";
     dev_diagnostics: "Diagnostics", "Диагностика";

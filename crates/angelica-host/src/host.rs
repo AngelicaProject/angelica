@@ -197,8 +197,13 @@ pub struct Host {
     self_update: std::sync::OnceLock<Arc<crate::self_update::SelfUpdate>>,
     /// The catalog's index; none in tests and without a release key.
     catalog: std::sync::OnceLock<crate::catalog_index::Source>,
-    /// Lens queries from `angelica look`; only in a development build.
+    /// Lens queries from `angelica look`: in a development build always,
+    /// in a release build only in dev mode.
     look: Mutex<Option<crate::look::Look>>,
+    /// Whether `look` is answered only in dev mode.
+    look_in_dev_mode: std::sync::atomic::AtomicBool,
+    /// Dev mode; none in tests.
+    dev: std::sync::OnceLock<Arc<crate::dev::DevMode>>,
 }
 
 impl Host {
@@ -229,6 +234,8 @@ impl Host {
             self_update: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
             look: Mutex::new(None),
+            look_in_dev_mode: std::sync::atomic::AtomicBool::new(false),
+            dev: std::sync::OnceLock::new(),
         }
     }
 
@@ -273,10 +280,36 @@ impl Host {
         self.self_update.get()
     }
 
-    /// Answers `angelica look` from `folder`; a development build only.
+    /// Answers `angelica look` from `folder`, always: a development build.
     pub fn serve_look(&self, folder: std::path::PathBuf) {
         *self.look.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(crate::look::Look::new(folder));
+    }
+
+    /// Answers `angelica look` from `folder` while dev mode is on: a
+    /// release build.
+    pub fn serve_look_in_dev_mode(&self, folder: std::path::PathBuf) {
+        self.look_in_dev_mode
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.serve_look(folder);
+    }
+
+    pub fn set_dev(&self, dev: Arc<crate::dev::DevMode>) {
+        let _ = self.dev.set(dev);
+    }
+
+    /// Dev mode; none in tests.
+    #[must_use]
+    pub fn dev(&self) -> Option<&Arc<crate::dev::DevMode>> {
+        self.dev.get()
+    }
+
+    /// Whether `look` is answered now.
+    fn look_open(&self) -> bool {
+        !self
+            .look_in_dev_mode
+            .load(std::sync::atomic::Ordering::Acquire)
+            || self.dev().is_some_and(|dev| dev.on())
     }
 
     pub fn set_catalog(&self, source: crate::catalog_index::Source) {
@@ -714,11 +747,15 @@ impl Host {
             Some(Err(reason)) => self.diagnostic(format!("game map not reloaded: {reason}")),
             None => {}
         }
+        if let Some(note) = self.dev().and_then(|dev| dev.poll()) {
+            self.diagnostic(note);
+        }
         let looked = self
             .look
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_mut()
+            .filter(|_| self.look_open())
             .and_then(|look| look.poll(&self.services));
         if let Some(note) = looked {
             self.diagnostic(note);

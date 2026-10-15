@@ -52,7 +52,7 @@ The installation key keeps packages from being swapped or damaged; it does not p
 
 ## Lens requests
 
-A development build of the runtime answers `angelica look` through the `look` folder of the installation: the command writes `look/request.json`, `{"format": 1, "id": "<random>", "query": "<query>"}`, and the host, between two frames, removes it, runs the [query](./plugin-api-v1.md#lens) with every domain readable, and writes `look/response.json` with the same `id` and either `columns` (each with `name`, `field`, `doc`, `domain`) and `rows` (each with `indexes` and `values` as JSON: numbers, booleans, plain text, `{"sheet", "row"}`, names, `{"names", "bits"}`, or `null`), or `error` with `kind` and `message`. Fields no plugin reads stay unread. A release build has no `look` folder and never reads one.
+A development build of the runtime, and any build in [dev mode](#dev-mode), answers `angelica look` through the `look` folder of the installation: the command writes `look/request.json`, `{"format": 1, "id": "<random>", "query": "<query>"}`, and the host, between two frames, removes it, runs the [query](./plugin-api-v1.md#lens) with every domain readable, and writes `look/response.json` with the same `id` and either `columns` (each with `name`, `field`, `doc`, `domain`) and `rows` (each with `indexes` and `values` as JSON: numbers, booleans, plain text, `{"sheet", "row"}`, names, `{"names", "bits"}`, or `null`), or `error` with `kind` and `message`. Fields no plugin reads stay unread. A release build outside dev mode never reads the `look` folder.
 
 A request may also have `mode`, `rows` by default:
 
@@ -61,6 +61,14 @@ A request may also have `mode`, `rows` by default:
 - `trace`: `entries` lists up to 64 `function` and `location` entries and `seconds` (1 to 60) how long to count; the response has `calls`, the count of each entry.
 
 The host answers a `watch` or a `trace` when its seconds are over.
+
+## Dev mode
+
+Dev mode is for work on the game map on the player's own Angelica: it lets `angelica look` read the running game and lets a local, unsigned game map take the signed map's place. It never changes what a plugin may do: plugins keep their grants and domains, and no plugin can reach the `dev` folder.
+
+`dev/mode.json` holds `{"format": 1, "on": true}` while dev mode is on; without the file, or with anything else in it, dev mode is off. The **Dev mode** switch under **For developers** and `angelica dev mode on|off --installation <folder>` write it through a temporary file and a rename. The host reads it at start and every second after, and logs each change. While dev mode is on, a note on the screen says so ([interface](../architecture/ui.md)).
+
+`dev/map/` holds a local game map, written by `angelica map try`: the map's files and `files.json` with the SHA-256 of each, as a [file set](#authenticated-file-sets) without `files.json.sig`. While dev mode is on and `dev/map/files.json` exists, the host loads the local map instead of the signed one, every file checked against its hash, and its build records are used as a signed map's are; **For developers** names the map as local. When dev mode turns off, or the local map is removed, the signed map is loaded again. Signed map updates keep installing into the map folder meanwhile.
 
 ## Plugin settings
 

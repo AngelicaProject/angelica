@@ -8,6 +8,7 @@ mod dev;
 mod excel;
 mod exe;
 mod lens;
+mod map_try;
 mod new;
 mod release;
 mod verify;
@@ -76,6 +77,8 @@ enum MapCommand {
     Verify(verify::VerifyArgs),
     /// Check a map and its build records without the game's executable.
     Check(check::CheckArgs),
+    /// Check a map and use it in an installation while dev mode is on.
+    Try(map_try::TryArgs),
 }
 
 /// Output options shared by every command.
@@ -91,6 +94,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
         Command::Map(MapCommand::Check(args)) => check::run(&args),
+        Command::Map(MapCommand::Try(args)) => map_try::run(&args),
         Command::Plugin(PluginCommand::Compile(args)) => compile::run(&args),
         Command::Plugin(PluginCommand::New(args)) => new::run(&args),
         Command::Plugin(PluginCommand::Key(args)) => author::key(&args),
