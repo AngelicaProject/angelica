@@ -1,11 +1,14 @@
 name: Pages
 
-# Publishes the website (site/) to GitHub Pages after a push to main.
+# Publishes the website (site/) to GitHub Pages after a push to main, and
+# every hour, so the home page states what the release feeds give now.
 # docs/development/website.md describes the site.
 on:
   push:
     branches: [main]
     paths: [site/**, .github/workflows/pages.yml]
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:

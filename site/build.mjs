@@ -1,4 +1,4 @@
-// Builds the website into dist/: the home page, a page for every Markdown file in pages/,
+// Builds the website into dist/: the home page with the facts of the release feeds, a page for every Markdown file in pages/,
 // the same pages as Markdown, and llms.txt. Then checks that every link inside the site
 // leads to a file and, with a #, to an element of that file.
 // Usage: node build.mjs
@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { page, read } from "./docs.mjs";
+import { status } from "./status.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "dist");
@@ -15,7 +16,8 @@ const raw = "https://raw.githubusercontent.com/AngelicaProject/angelica/main/";
 
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist);
-execFileSync(process.execPath, [join(here, "home.mjs"), join(here, "art"), join(dist, "index.html")], { stdio: "inherit" });
+// The home page states what the release feeds give at build time; pages.yml rebuilds hourly.
+execFileSync(process.execPath, [join(here, "home.mjs"), join(here, "art"), join(dist, "index.html"), JSON.stringify(await status())], { stdio: "inherit" });
 
 const sources = readdirSync(join(here, "pages")).filter((f) => f.endsWith(".md")).sort();
 const docs = sources.map((f) => ({ file: f.replace(/\.md$/, ".html"), ...read(readFileSync(join(here, "pages", f), "utf8")) }))

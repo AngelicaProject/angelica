@@ -1,13 +1,14 @@
 # Website
 
-The website at `https://angelicaproject.github.io/angelica/` is the home page for players and the documentation written for people. It is built from `site/` and published to GitHub Pages by `.github/workflows/pages.yml` after every push to `main` that changes `site/`.
+The website at `https://angelicaproject.github.io/angelica/` is the home page for players and the documentation written for people. It is built from `site/` and published to GitHub Pages by `.github/workflows/pages.yml` after every push to `main` that changes `site/`, and every hour.
 
 ## What it holds
 
 - `site/home.mjs` builds the home page; `site/plates.mjs` holds the drawings of its engine section.
+- `site/status.mjs` reads the release feeds for the home page's status: Angelica's nightly version (`channel.json` of the nightly release), the latest map's version and date (`map.json` of the latest `angelica-gamemap` release), and the newest game version a build record in that map's `map.pack` is for, after checking the pack's size and SHA-256 against its feed. The build reads them because release assets cannot be fetched by a browser, and fails when a feed cannot be read. The status says what the feeds gave; the feeds do not say which game version is live, so it never claims that Angelica is up to date with the game.
 - `site/pages/` holds the documentation pages, one Markdown file each. `site/docs.mjs` turns a page into HTML.
 - `site/art/` holds the lily: `lily-photo.png` is the generated photograph it comes from, and `tones.png`, `detail.png`, and `ground.png` are the masks the home page prints it with. `site/tools/` makes the masks from the photograph.
-- `site/build.mjs` builds everything into `site/dist/`: `index.html`, an HTML and a Markdown copy of every page, and `llms.txt`, which lists every page as Markdown and the canonical documents a plugin author needs.
+- `site/build.mjs` builds everything into `site/dist/` and needs the network for the feeds: `index.html`, an HTML and a Markdown copy of every page, and `llms.txt`, which lists every page as Markdown and the canonical documents a plugin author needs.
 
 ```text
 cd site
