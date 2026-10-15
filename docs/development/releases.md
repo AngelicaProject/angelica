@@ -52,7 +52,7 @@ The host updates itself; the player never has to act ([loading](../architecture/
 
 ## Map updates
 
-The game map changes with game patches, not with Angelica, so it has its own releases and feed in `angelica-gamemap`: a stable release per map version and no nightly. A map version is `<year>.<month>.<number>` without leading zeros (`2026.10.1`), a valid SemVer version that sorts by release. Its `map.json` feed has the same format and key as `channel.json` and names one file, `map.pack`, with the signed file set ([format](../formats/update-feed-v1.md#map-pack)). The host reads it 20 seconds after the game starts and every hour, installs a newer map at once (map data reloads while the game runs; entries that hooks use change at the next start), and never installs an older one.
+The game map changes with game patches, not with Angelica, so it has its own releases and feed in `angelica-gamemap`: a stable release per map version and no nightly. A map version is `<year>.<month>.<number>` without leading zeros (`2026.10.1`), a valid SemVer version that sorts by release. Its `map.json` feed has the same format and key as `channel.json` and names one file, `map.pack`, with the signed file set ([format](../formats/update-feed-v1.md#map-pack)). The host reads it 20 seconds after the game starts and every hour, installs a newer map at once (map data reloads while the game runs; entries that hooks use change at the next start), and never installs an older one. A newer map this host cannot read, because it uses what only a newer host reads, is not installed: the installed map stays until the host updates. A map release that uses a new map feature therefore waits until the hosts players run read it.
 
 ## Release workflow
 

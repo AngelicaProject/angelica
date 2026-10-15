@@ -408,7 +408,16 @@ pub fn update_map(
         }
         std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    crate::package::FileSet::load(&partial, Some(key)).map_err(|e| e.to_string())?;
+    let signed = crate::package::FileSet::load(&partial, Some(key)).map_err(|e| e.to_string())?;
+    // A map this host cannot read never takes the place of one it can: a
+    // newer map may use what only a newer host reads.
+    if let Err(error) = crate::catalog::Catalog::map_from_files(&signed) {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(format!(
+            "map {} needs a newer Angelica, and the installed map stays: {error}",
+            feed.version
+        ));
+    }
     std::fs::write(
         partial.join("release.json"),
         serde_json::json!({"format": 1, "version": feed.version.to_string()}).to_string(),
@@ -625,16 +634,16 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_map_takes_the_place_of_the_old_one_and_an_unsigned_one_does_not() {
+    fn a_newer_map_takes_the_place_of_the_old_one_and_an_unsigned_or_unreadable_one_does_not() {
         let folder = tempfile::tempdir().unwrap();
         let map = folder.path().join("map");
         std::fs::create_dir_all(&map).unwrap();
         std::fs::write(map.join("map.toml"), b"old").unwrap();
         let key = SigningKey::from_bytes(&KEY);
         let releases = Releases(Mutex::default());
-        let publish_map = |version: &str, signer: &SigningKey| {
+        let publish_map = |version: &str, signer: &SigningKey, map_toml: &[u8]| {
             let staging = folder.path().join("staging");
-            let files = BTreeMap::from([("map.toml".to_owned(), b"format = 1\n".to_vec())]);
+            let files = BTreeMap::from([("map.toml".to_owned(), map_toml.to_vec())]);
             crate::installer::write_package(&staging, &files, signer).unwrap();
             let mut packed = files.clone();
             for name in ["files.json", "files.json.sig"] {
@@ -661,12 +670,12 @@ mod tests {
         };
         let public = key.verifying_key().to_bytes();
 
-        publish_map("2026.10.20", &key);
+        publish_map("2026.10.20", &key, b"format = 2\n");
         let status = update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap();
         assert_eq!(status, Status::Ready("2026.10.20".into()));
         assert_eq!(
             std::fs::read(map.join("map.toml")).unwrap(),
-            b"format = 1\n"
+            b"format = 2\n"
         );
         assert_eq!(map_version(&map).unwrap().to_string(), "2026.10.20");
         assert_eq!(
@@ -675,10 +684,21 @@ mod tests {
         );
 
         // A file list signed by another key never replaces the map.
-        publish_map("2026.10.21", &SigningKey::from_bytes(&[6; 32]));
+        publish_map(
+            "2026.10.21",
+            &SigningKey::from_bytes(&[6; 32]),
+            b"format = 2\n",
+        );
         let error = update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap_err();
         assert!(error.contains("signature"), "{error}");
         assert_eq!(map_version(&map).unwrap().to_string(), "2026.10.20");
+
+        // A map this host cannot read never replaces the map either.
+        publish_map("2026.10.22", &key, b"format = 3\n");
+        let error = update_map(&map, MAP_REPOSITORY, &public, &releases).unwrap_err();
+        assert!(error.contains("needs a newer Angelica"), "{error}");
+        assert_eq!(map_version(&map).unwrap().to_string(), "2026.10.20");
+        assert!(!folder.path().join(".map.partial").exists());
     }
 
     #[test]
