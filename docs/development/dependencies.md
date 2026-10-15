@@ -16,7 +16,7 @@ Everything that runs in the game is Rust or WebAssembly. A dependency is added w
 
 `angelica-pe` uses `memchr` (Unlicense OR MIT) to find the fixed bytes of a signature, and `thiserror` (MIT OR Apache-2.0) for its error types.
 
-`angelica-map` uses `toml` and `serde` (MIT OR Apache-2.0) to read map files, `iced-x86` (MIT) with only `std` and `decoder` to decode the instructions of code-anchored offsets and leaf functions, and `sha2` (MIT OR Apache-2.0) for `entries_sha256`.
+`angelica-map` uses `toml` and `serde` (MIT OR Apache-2.0) to read map files, `iced-x86` (MIT) with `std`, `decoder`, and `instr_info` to decode the instructions of code-anchored offsets and to follow the control flow of leaf functions, and `sha2` (MIT OR Apache-2.0) for `entries_sha256`.
 
 `angelica-hook` uses `iced-x86` with `encoder`, `block_encoder`, and `instr_info` to move instructions into trampolines, and `windows-sys` (MIT OR Apache-2.0) for memory protection, executable memory, and thread suspension.
 

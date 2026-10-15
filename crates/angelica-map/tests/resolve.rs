@@ -404,3 +404,73 @@ fn a_contains_check_searches_the_whole_function() {
         Some(Ok(Value::Address(0x1040)))
     );
 }
+
+#[test]
+fn a_leaf_function_ends_where_its_control_flow_ends() {
+    let mut code = vec![0xCC; 0x80];
+    let mut put = |at: usize, bytes: &[u8]| code[at..at + bytes.len()].copy_from_slice(bytes);
+    // 0x1000: test rcx, rcx; je +4; mov rax, [rcx+0x18]; ret; xor eax, eax;
+    // ret. 0x100D, with no padding: the next leaf function, mov rax,
+    // [rcx+0x20]; ret.
+    put(
+        0x00,
+        &[0x48, 0x85, 0xC9, 0x74, 0x05, 0x48, 0x8B, 0x41, 0x18, 0xC3],
+    );
+    put(0x0A, &[0x31, 0xC0, 0xC3]);
+    put(0x0D, &[0x48, 0x8B, 0x41, 0x20, 0xC3]);
+    // 0x1020: jmp +0x20, a tail call beyond the function.
+    put(0x20, &[0xEB, 0x1E]);
+    // 0x1030: jmp rax, an indirect jump.
+    put(0x30, &[0xFF, 0xE0]);
+    // 0x1040: jmp [rip+0], a tail call through a pointer.
+    put(0x40, &[0xFF, 0x25, 0, 0, 0, 0]);
+    let file = PeBuilder::new()
+        .section(".text", CODE, &code)
+        .functions(&[(0x1060, 0x1070)])
+        .build_file();
+    let image = Image::parse(&file, Layout::File).unwrap();
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1000),
+        Some(0x1000..0x100D),
+        "the branch's target is part of the function; the next function is not"
+    );
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1020),
+        Some(0x1020..0x1022)
+    );
+    assert_eq!(angelica_map::leaf_function(&image, 0x1030), None);
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1040),
+        Some(0x1040..0x1046)
+    );
+    assert_eq!(
+        angelica_map::leaf_function(&image, 0x1062),
+        None,
+        "inside a function of the exception directory"
+    );
+
+    let map = Map::from_sources(
+        "format = 2\n",
+        &[(
+            "entries/game.toml".to_owned(),
+            r#"
+[function."game.leaf"]
+locator = { signature = "48 85 C9 74 05" }
+abi = { args = ["ptr"], ret = "ptr" }
+thread = "any"
+
+[field."game.thing.next"]
+of = "game.thing"
+type = "u64"
+locator = { in = "game.leaf", signature = "48 8B 41 20", operand = "disp" }
+"#
+            .to_owned(),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        map.resolve(&image, BASE).get("game.thing.next"),
+        Some(&Err(Absence::NoMatch)),
+        "an `in` locator never searches the next function"
+    );
+}

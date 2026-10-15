@@ -59,7 +59,7 @@ A field that does not belong to the entry's kind, a table other than the six kin
 
 A signature is hexadecimal bytes with `??` for any byte; it is searched in every code section. A locator that matches zero or more than one address makes the entry absent. Overlapping matches count as separate matches.
 
-The code an `in` locator searches is the function's entry in the executable's exception directory. A leaf function has no entry; its code is the instructions from its start up to the first `int3`, the start of the next function in the exception directory, or the end of the section, at most 64 KiB. The memory operand must have a base register other than RIP and a non-negative displacement.
+The code an `in` locator searches is the function's entry in the executable's exception directory. A leaf function has no entry; its code runs from its start to the end of the farthest instruction its control flow reaches: each instruction to the next, conditional branches, and unconditional jumps to code it already spans, ending at a return, `int3`, `ud2`, or a jump through a RIP-relative pointer. A jump beyond what the flow spans is a tail call to another function, unless other flow reaches its target. A leaf function has no code, and every search in it fails, when its flow reaches an invalid instruction, a jump through a register or a computed address, an address before its start, the code of a function in the exception directory, or more than 64 KiB from its start. The memory operand must have a base register other than RIP and a non-negative displacement.
 
 ## Function ABI and thread
 
