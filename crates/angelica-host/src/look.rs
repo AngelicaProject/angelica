@@ -8,7 +8,9 @@
 //! - `dump`: the bytes of the objects a path reaches, to compare the game's
 //!   memory before and after something happens in the game;
 //! - `trace`: how many times the game's code reached map entries during some
-//!   seconds, to find the function an action of the player calls.
+//!   seconds, to find the function an action of the player calls;
+//! - `writes`: which instructions wrote a field during some seconds, in dev
+//!   mode, to find the code that changes memory the map does not describe.
 //!
 //! Every domain is readable, as the player's own tool on their own game;
 //! fields no plugin reads stay unread by `rows` and `watch`. A release build
@@ -45,6 +47,7 @@ pub enum Mode {
     Watch,
     Dump,
     Trace,
+    Writes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +75,23 @@ pub struct Request {
     /// does not describe yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub follow: Vec<u32>,
+    /// For `writes`: the field's offset in the object reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
+    /// For `writes`: the field's size, 1, 2, 4, or 8 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u8>,
+}
+
+/// Where writes `writes` watched came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Write {
+    /// The address where the writing instruction ended.
+    pub after: u64,
+    /// Its offset in the game's executable, for `angelica exe disasm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,6 +146,15 @@ pub struct Response {
     /// The calls `trace` counted, by entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<BTreeMap<String, u64>>,
+    /// The address `writes` watched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watched: Option<u64>,
+    /// Where writes came from, most first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<Vec<Write>>,
+    /// Writes from places past the ones `writes` tells apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missed: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<Failure>,
 }
@@ -209,6 +238,34 @@ fn rows(rows: Vec<crate::lens::Row>) -> Vec<Row> {
         .collect()
 }
 
+/// The field `writes` watches: the one object the path and the pointers
+/// followed reach, at the request's offset.
+fn watched_address(services: &Services, request: &Request) -> crate::error::Result<u64> {
+    let (schema, _) = services.lens.schema();
+    let memory = services.game.memory();
+    if request.follow.len() > MOST_FOLLOWS {
+        return Err(crate::error::Error::invalid(format!(
+            "a watch follows at most {MOST_FOLLOWS} pointers"
+        )));
+    }
+    let prepared = prepare_objects(&schema, &request.query)?;
+    let found = crate::lens::objects(memory, &prepared, 0)?;
+    let [(_, object, _)] = found.as_slice() else {
+        return Err(crate::error::Error::invalid(format!(
+            "a watch of writes needs exactly one object; the path reaches {}",
+            found.len()
+        )));
+    };
+    follow(memory, *object, &request.follow)
+        .and_then(|at| at.checked_add(u64::from(request.offset.unwrap_or(0))))
+        .ok_or_else(|| {
+            crate::error::Error::new(
+                crate::error::Kind::Unavailable,
+                "a pointer on the way is null or unreadable",
+            )
+        })
+}
+
 /// The address reached from `address` by reading a pointer at each offset
 /// in turn; none when a pointer cannot be read or is null.
 fn follow(memory: &dyn crate::lens::Memory, address: u64, offsets: &[u32]) -> Option<u64> {
@@ -289,7 +346,7 @@ pub fn answer(services: &Services, request: &Request) -> Response {
                 Err(error) => Response::failed(&request.id, &error),
             }
         }
-        Mode::Watch | Mode::Trace => Response::failed(
+        Mode::Watch | Mode::Trace | Mode::Writes => Response::failed(
             &request.id,
             &crate::error::Error::invalid("a watch or a trace lasts: it is answered later"),
         ),
@@ -318,6 +375,10 @@ enum Lasting {
     Trace {
         request: Request,
         points: Vec<(String, usize)>,
+    },
+    Writes {
+        request: Request,
+        address: u64,
     },
 }
 
@@ -376,6 +437,7 @@ impl Look {
             }
             Mode::Watch => self.start_watch(services, request),
             Mode::Trace => self.start_trace(services, request),
+            Mode::Writes => self.start_writes(services, request),
         }
     }
 
@@ -462,6 +524,23 @@ impl Look {
         None
     }
 
+    fn start_writes(&mut self, services: &Services, request: Request) -> Option<String> {
+        match watched_address(services, &request).and_then(|address| {
+            services
+                .game
+                .watch_writes(address, request.size.unwrap_or(4))
+                .map(|()| address)
+                .map_err(|reason| crate::error::Error::new(crate::error::Kind::Unavailable, reason))
+        }) {
+            Ok(address) => {
+                let until = Self::until(&request);
+                self.lasting = Some((Lasting::Writes { request, address }, until));
+                None
+            }
+            Err(error) => Some(self.respond(&request, &Response::failed(&request.id, &error))),
+        }
+    }
+
     fn go_on(&mut self, services: &Services) -> Option<String> {
         let (mut lasting, until) = self.lasting.take()?;
         if let Lasting::Watch {
@@ -505,6 +584,25 @@ impl Look {
                 };
                 Some(self.respond(&request, &response))
             }
+            Lasting::Writes { request, address } => {
+                let (written, missed) = services.game.take_writes();
+                let mut writes: Vec<Write> = written
+                    .into_iter()
+                    .map(|place| Write {
+                        after: place.after,
+                        offset: place.offset,
+                        count: place.count,
+                    })
+                    .collect();
+                writes.sort_by(|a, b| b.count.cmp(&a.count).then(a.after.cmp(&b.after)));
+                let response = Response {
+                    watched: Some(address),
+                    writes: Some(writes),
+                    missed: Some(missed),
+                    ..Response::new(&request.id)
+                };
+                Some(self.respond(&request, &response))
+            }
         }
     }
 
@@ -521,6 +619,10 @@ impl Look {
             (None, Mode::Trace) => format!(
                 "{} entries counted",
                 response.calls.as_ref().map_or(0, BTreeMap::len)
+            ),
+            (None, Mode::Writes) => format!(
+                "writes from {} places",
+                response.writes.as_ref().map_or(0, Vec::len)
             ),
         };
         let bytes = serde_json::to_vec(response).unwrap_or_default();

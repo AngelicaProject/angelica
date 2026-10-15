@@ -59,8 +59,9 @@ A request may also have `mode`, `rows` by default:
 - `watch`: `query` is a [watch](./plugin-api-v1.md#lens) and `seconds` (1 to 60) how long it lasts; the response has `columns`, `firings` (the rows of each firing), and `dropped`.
 - `dump`: `query` is a path to objects and `bytes` (1 to 4096) how much of each object to read; with `follow`, up to 8 offsets, the host first follows from each object the pointer at each offset in turn, for memory the map does not describe yet. The response has `objects`, each with `indexes`, `address` (where the bytes were read, or 0 when a followed pointer was null or unreadable), and `bytes` as lowercase hexadecimal, or `null` where the memory cannot be read.
 - `trace`: `entries` lists up to 64 `function` and `location` entries and `seconds` (1 to 60) how long to count; the response has `calls`, the count of each entry.
+- `writes`: `query` is a path that reaches exactly one object, `follow` as for `dump`, `offset` the field's offset in the object reached, `size` its size (1, 2, 4, or 8 bytes; the address a multiple of it), and `seconds` (1 to 60) how long to watch. The host sets a hardware data breakpoint on the field in every thread the game has, counts where each writing instruction ended, and removes the breakpoint when the seconds are over; a thread started meanwhile is not watched. The response has `watched` (the address), `writes` (each with `after`, the address where the instruction ended, `offset` in the game's executable when it is there, and `count`, most first), and `missed`, the writes from places past the first 64. It is refused while another `writes` runs, while a debugger is attached, or when every debug register is in use.
 
-The host answers a `watch` or a `trace` when its seconds are over.
+The host answers a `watch`, a `trace`, or a `writes` when its seconds are over.
 
 ## Dev mode
 

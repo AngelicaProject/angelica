@@ -18,6 +18,7 @@ mod sound;
 mod startup;
 mod text_case;
 mod watch;
+mod writes;
 
 pub(super) fn guard<T>(fallback: T, work: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
