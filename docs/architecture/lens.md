@@ -61,7 +61,7 @@ A field of a variant, such as a text element's text, is read and changed only in
 
 ## Actions
 
-An action is a function of the game that the game's own interface calls, described in the map with how each argument is given: a parameter the plugin names, a constant, a global, or an object a path reaches. `act` checks the plugin's parameters against the map, then, in order: that the player has not stopped plugins acting, the action's rate for the plugin, and its conditions, each a path that must reach an object now, read like any query. Only then does the host call the function, on the game's main thread between frames, and compare its return value with the map's `ok`.
+An action is a function of the game that the game's own interface calls, described in the map with how each argument is given: a parameter the plugin names, a constant, a global, or an object a path reaches. `act` checks the plugin's parameters against the map, then, in order: that the player has not stopped plugins acting, the action's rate for the plugin, and its conditions, each a path that must reach an object now, read like any query. An object argument's path must reach exactly one object. Only then does the host call the function, on the game's main thread between frames, and compare its return value with the map's `ok`.
 
 The call passes every argument as 64 bits in both its general and its `xmm` register and on the stack past the fourth, so one routine calls every function the map describes; the function reads the register its own type uses. The game checks the action as it checks the player's own press, so a plugin can do only what the player could do at that moment, and the server never receives a request the game would not send.
 

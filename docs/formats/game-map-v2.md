@@ -328,7 +328,7 @@ default = 0
   - a parameter the plugin gives, with `doc`: a number or a `bool`, never a pointer, with `sheet`, `enum`, `flags`, and `unit` as for a field, an optional `default` used when the plugin gives none, and an optional `range = [least, most]`;
   - `value`: always this number or boolean;
   - `global = "<entry>"`: a `global` entry of type `struct`, passed as its address, or `ptr`, passed as the pointer it holds; the kind is `ptr`;
-  - `object = "<path>"`: the address of the first object a path through the object model reaches; the kind is `ptr`.
+  - `object = "<path>"`: the address of the object a path through the object model reaches; the kind is `ptr`. The path must reach exactly one object: when it reaches none or several, the action is not taken.
 
 ### Rules and resolution
 

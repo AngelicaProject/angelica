@@ -409,14 +409,26 @@ impl Acting {
                     }
                     u64::from_le_bytes(bytes)
                 }
-                Slot::Object(plan) => match objects(memory, plan, 0)?.first() {
-                    Some((_, address, _)) => *address,
-                    None => {
+                // The action acts on one object: a path that reaches several
+                // does not say which.
+                Slot::Object(plan) => match objects(memory, plan, 0)?.as_slice() {
+                    [(_, address, _)] => *address,
+                    [] => {
                         return Err(Error::new(
                             Kind::Unavailable,
                             format!(
                                 "action {}: the game has not made what it acts on yet",
                                 ready.action
+                            ),
+                        ));
+                    }
+                    several => {
+                        return Err(Error::new(
+                            Kind::Unavailable,
+                            format!(
+                                "action {}: the game has {} of what it acts on, not one",
+                                ready.action,
+                                several.len()
                             ),
                         ));
                     }

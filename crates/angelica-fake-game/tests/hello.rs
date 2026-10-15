@@ -1637,6 +1637,20 @@ fn a_dialog_is_read_and_answered() {
     assert_eq!(acted[0].0, "test.fire_callback_int");
     assert_eq!(acted[0].1[1], 0, "yes");
     assert_ne!(acted[0].1[0], 0, "the dialog's address");
+
+    // A second dialog of the same name: the action does not pick one.
+    test.game.set(
+        "windows.unit_manager.windows[1]",
+        &[("name", Set::Text("SelectYesno".into()))],
+    );
+    // Past the action's rate of 2 a second.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    click(&test, "yes");
+    assert_eq!(
+        message(&test),
+        "cannot say yes: action answer_yes_no: the game has 2 of what it acts on, not one"
+    );
+    assert_eq!(test.game.acted.lock().unwrap().len(), 1);
 }
 
 #[test]
