@@ -14,6 +14,7 @@ name = "angelica-setup"
 path = "src/main.rs"
 
 [dependencies]
+angelica-games.workspace = true
 angelica-update.workspace = true
 ed25519-dalek.workspace = true
 egui.workspace = true

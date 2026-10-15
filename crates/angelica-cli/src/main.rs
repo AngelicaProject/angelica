@@ -11,6 +11,7 @@ mod labels;
 mod lens;
 mod map_try;
 mod new;
+mod places;
 mod release;
 mod verify;
 
@@ -49,6 +50,9 @@ enum Command {
     /// A signed local installation for development.
     #[command(subcommand)]
     Dev(dev::DevCommand),
+    /// The game folders on this computer and the Angelica installation
+    /// each one loads.
+    Where(places::WhereArgs),
     /// Release signing and update feeds, for the release workflows.
     #[command(subcommand)]
     Release(release::ReleaseCommand),
@@ -111,6 +115,7 @@ fn main() -> ExitCode {
         Command::Schema(command) => lens::run_schema(&command),
         Command::Query(args) => lens::run_query(&args),
         Command::Look(args) => lens::run_look(&args),
+        Command::Where(args) => places::run(&args),
         Command::Release(command) => release::run(&command),
         Command::Excel(command) => excel::run(&command),
         Command::Exe(command) => exe::run(&command),

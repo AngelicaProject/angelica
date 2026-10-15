@@ -27,6 +27,8 @@ The project depends on `angelica-sdk` and `angelica-fake-game` from the Angelica
 
 Describe what the plugin does in terms of the game: what it reads (sheets, the game's objects such as the player's character or bags, chat messages), what it changes (text, files, the chat log), and how the player drives it (windows, commands). Then find each piece in the [interface cards](./interfaces.md). Each card names the permission, the instance the calls work in, and the SDK entry point.
 
+`angelica where` prints each game folder on this computer and the Angelica installation it loads, the one its `angelica.json` names: the `<game folder>`, `<installation>`, and `<map>` (its `map.folder`) of the commands below.
+
 Explore the game's data from the command line before writing code:
 
 ```text
@@ -82,7 +84,9 @@ Rules that keep a plugin within its limits:
 | the game to restart | `let test = test.restart()?`: the same folders and packages; grants, settings, and storage carry over |
 | a chat message to arrive | `test.chat_message(kind, sender, text)` |
 | a sheet in the installed game | `game_files::FakeGame::new(version).with_text(sheet, &TextSheet::new(columns, &[text columns]).row(id, &[(column, text)]))` written to `test.game_folder()`, then `test.name_columns(sheet, &[(name, column)])`; `FakeSheet` with `ColumnKind` and `Language` for other column kinds |
-| the game's objects | `test.use_map(&files, &absent)` with the object model of a map (entries with constant offsets, types, enums, domains, roots), before the plugin is approved; `angelica_fake_game::maps::EXAMPLE` is a small map shaped like the released one, with its root and field names; then `test.game.set("<path>", &[("field", value.into())])` and `test.game.clear("<root>")` |
+| the game's objects | `test.use_map(&files, &absent)` with the object model of a map (entries with constant offsets, types, enums, domains, roots), before the plugin is approved; `angelica_fake_game::maps::EXAMPLE` is a small map shaped like the released one, with its root and field names; then `test.game.set("<path>", &[("field", value.into())])` |
+| the player not logged in yet | `test.game.clear("<root>")`: the game has no object at the root now |
+| a map entry the game build lacks | its name in `absent`: a field's entry (`test.character_data.health`) or a root's global (`test.local_player`), and the queries that need it fail as on a build the map does not cover |
 | what the plugin's rules decide | a decision point (an event with outcomes) in the map given to `test.use_map`; then `test.decide("<event>", &[("<argument>", Fire::…)])` returns the value the rules make the function return, or `None` when it runs |
 | what the plugin changed | a changeable field in the map given to `test.use_map`; read it back with `runtime::lens::prepare` and `test.game.query`, and stop the plugin to see the original put back |
 | what the plugin did in the game | an action in the map given to `test.use_map`, with its function and globals; then `test.game.acted` lists each call's function entry and arguments, `test.game.act_returns` sets what the game answers (`1` by default), and `test.host.services().lens.acting.set_stopped(true)` plays the player's stop key |
@@ -102,7 +106,7 @@ cargo fmt --check
 
 ## 5. Run it in the game
 
-Build the component, sign it with your author key, and install the file into the installation the game runs with (`%LOCALAPPDATA%\Angelica` for an installed Angelica):
+Build the component, sign it with your author key, and install the file into the installation the game loads, the `installation` that `angelica where` prints:
 
 ```text
 cargo build --release --target wasm32-wasip2

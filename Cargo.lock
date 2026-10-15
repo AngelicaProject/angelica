@@ -73,6 +73,7 @@ checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
 name = "angelica-cli"
 version = "0.1.0"
 dependencies = [
+ "angelica-games",
  "angelica-host",
  "angelica-map",
  "angelica-pe",
@@ -104,6 +105,14 @@ dependencies = [
  "tempfile",
  "tungstenite",
  "wasmtime",
+]
+
+[[package]]
+name = "angelica-games"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -225,6 +234,7 @@ dependencies = [
 name = "angelica-setup"
 version = "0.1.0"
 dependencies = [
+ "angelica-games",
  "angelica-update",
  "ed25519-dalek",
  "eframe",

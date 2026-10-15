@@ -1,5 +1,9 @@
-//! Where the game is installed (`docs/architecture/installer.md`).
+//! Where the game is installed (`docs/architecture/installer.md`), for
+//! the installer and the `angelica` command.
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as _;
 
 /// The game's executable, relative to its `game` folder.
 const EXECUTABLE: &str = "ffxiv_dx11.exe";
@@ -27,7 +31,7 @@ pub fn resolve(path: &Path) -> Option<PathBuf> {
 #[must_use]
 pub fn find() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(steam) = crate::system::steam_path() {
+    if let Some(steam) = steam_path() {
         let steam = PathBuf::from(steam);
         let libraries = std::fs::read_to_string(steam.join("steamapps/libraryfolders.vdf"))
             .map(|text| library_folders(&text))
@@ -53,10 +57,32 @@ pub fn find() -> Vec<PathBuf> {
                 .iter()
                 .any(|seen| std::fs::canonicalize(seen).unwrap_or(seen.clone()) == normal)
         {
-            found.push(candidate);
+            // Steam names its folder with forward slashes.
+            found.push(candidate.components().collect());
         }
     }
     found
+}
+
+/// Steam's folder, from the registry through the system's `reg.exe`.
+fn steam_path() -> Option<String> {
+    let name = "SteamPath";
+    let mut command = std::process::Command::new("reg");
+    command.args(["query", r"HKCU\Software\Valve\Steam", "/v", name]);
+    // CREATE_NO_WINDOW: the installer's window never flashes a console.
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim().strip_prefix(name)?.trim_start();
+            let (_, value) = rest.split_once("REG_SZ")?;
+            Some(value.trim().to_owned())
+        })
 }
 
 /// The library folders `libraryfolders.vdf` lists: its `"path"` values.
