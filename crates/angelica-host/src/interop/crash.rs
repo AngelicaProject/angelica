@@ -130,16 +130,44 @@ unsafe extern "system" fn filter(exception: *const EXCEPTION_POINTERS) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Set for the child process that writes the dump, to the folder it
+    /// writes into.
+    const CHILD: &str = "ANGELICA_CRASH_TEST_DIRECTORY";
+    /// This test, as the test binary filters it.
+    const NAME: &str =
+        "interop::crash::tests::writes_a_real_minidump_and_structured_report_without_crashing";
+
+    /// The dump is written by a child process that runs this test alone: a
+    /// minidump of the process writing it suspends its other threads, and
+    /// a suspended test thread that holds a lock the dump needs, such as the
+    /// heap's, would stop the whole test binary.
     #[test]
     fn writes_a_real_minidump_and_structured_report_without_crashing() {
+        if let Some(directory) = std::env::var_os(CHILD) {
+            let writer = Writer {
+                directory: directory.into(),
+                host: None,
+                catalog: Arc::new(Catalog::default()),
+                captured: AtomicBool::new(false),
+            };
+            writer.capture(std::ptr::null()).unwrap();
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
-        let writer = Writer {
-            directory: directory.path().into(),
-            host: None,
-            catalog: Arc::new(Catalog::default()),
-            captured: AtomicBool::new(false),
-        };
-        writer.capture(std::ptr::null()).unwrap();
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([NAME, "--exact", "--test-threads=1", "--quiet"])
+            .env(CHILD, directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "the child process failed: {}
+{}{}",
+            child.status,
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
         let files: Vec<_> = std::fs::read_dir(directory.path())
             .unwrap()
             .map(|item| item.unwrap().path())
