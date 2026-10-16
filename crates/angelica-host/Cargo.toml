@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 angelica-text.workspace = true
+angelica-view.workspace = true
 angelica-sqpack.workspace = true
 angelica-map.workspace = true
 angelica-pe.workspace = true
@@ -42,6 +43,7 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Di
 
 [dev-dependencies]
 tempfile.workspace = true
+png.workspace = true
 angelica-sqpack = { workspace = true, features = ["testing"] }
 angelica-hook = { workspace = true, features = ["testing"] }
 angelica-pe = { workspace = true, features = ["testing"] }

@@ -156,6 +156,14 @@ const ROW: f32 = 36.0;
 const VISIBLE_ROWS: f32 = 9.0;
 /// The height of the columns' header over the list.
 const COLUMNS: f32 = 18.0;
+/// The narrowest and widest the player can make the menu: its tabs are
+/// laid out for the normal width, so it only grows.
+const MIN_WIDTH: f32 = WIDTH;
+const MAX_WIDTH: f32 = 1200.0;
+/// The height of the tabs' content before the player resizes the menu.
+const BODY: f32 = COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST;
+/// The least height of the tabs' content: four lines of the list.
+const MIN_BODY: f32 = COLUMNS + ROW * 4.0 + AROUND_LIST;
 /// The height of Installed around the list: the search, the link field,
 /// and the footer. Settings take the same height as Installed.
 const AROUND_LIST: f32 = 44.0 + 44.0 + 28.0;
@@ -217,6 +225,41 @@ pub struct Menu {
     withdrawn: std::collections::BTreeSet<String>,
     notes: Vec<Note>,
     seen: u64,
+    /// The player chose **Arrange panels**.
+    arrange: bool,
+    /// Where Angelica's notes ended last frame, for popups under them.
+    notes_bottom: f32,
+    /// The menu's size the player chose, in points at the normal size.
+    size: MenuSize,
+}
+
+/// The menu's width and the height of its tabs' content, in points at the
+/// normal size; where the player put the menu; and what changed for
+/// `state/_layout.json`.
+struct MenuSize {
+    width: f32,
+    body: f32,
+    /// The place to restore, until the first frame knows the screen and
+    /// measures the title bar and the tabs around the body.
+    restore: Option<MenuPlace>,
+    /// Where to put the menu next frame.
+    pos: Option<Pos2>,
+    /// The menu's rectangle last frame.
+    rect: Option<Rect>,
+    /// The player is moving the menu.
+    moving: bool,
+    /// The player stopped moving or resizing the menu.
+    changed: bool,
+}
+
+/// The menu's place in `state/_layout.json`: its top left corner as
+/// fractions of the screen, and its width and height in points.
+#[derive(Clone, Copy)]
+pub(crate) struct MenuPlace {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 /// What one frame of the menu works with.
@@ -266,6 +309,11 @@ impl Menu {
     /// `system` is the language of the system.
     #[must_use]
     pub fn new(host: &Host, system: Language) -> Self {
+        Self::placed(host, system, None)
+    }
+
+    /// The menu, where and as large as the player left it.
+    pub(crate) fn placed(host: &Host, system: Language, place: Option<MenuPlace>) -> Self {
         let settings_path = Settings::path(host.state_directory());
         let settings = Settings::load(&settings_path);
         let language = settings.language.unwrap_or(system);
@@ -292,7 +340,39 @@ impl Menu {
             withdrawn: std::collections::BTreeSet::new(),
             notes: Vec::new(),
             seen: 0,
+            arrange: false,
+            notes_bottom: 0.0,
+            size: MenuSize {
+                width: place.map_or(WIDTH, |place| place.width.clamp(MIN_WIDTH, MAX_WIDTH)),
+                body: BODY,
+                restore: place,
+                pos: None,
+                rect: None,
+                moving: false,
+                changed: false,
+            },
         }
+    }
+
+    /// Where the player left the menu and how large, once they moved or
+    /// resized it since the last call.
+    pub(crate) fn take_place(&mut self, screen: Rect) -> Option<MenuPlace> {
+        let size = &mut self.size;
+        if !std::mem::take(&mut size.changed) {
+            return None;
+        }
+        let rect = size.rect?;
+        let k = self
+            .settings
+            .size
+            .unwrap_or_default()
+            .scale(screen.height());
+        Some(MenuPlace {
+            x: (rect.left() - screen.left()) / screen.width().max(1.0),
+            y: (rect.top() - screen.top()) / screen.height().max(1.0),
+            width: size.width,
+            height: rect.height() / k,
+        })
     }
 
     /// The look of this frame's windows and the interface strings.
@@ -431,30 +511,55 @@ impl Menu {
     fn draw_menu(&mut self, context: &egui::Context, view: &View<'_>) -> bool {
         let typing = context.memory(|memory| memory.focused().is_some());
         let mut keep = typing || !context.input(|input| input.key_pressed(egui::Key::Escape));
-        let width = view.at(WIDTH);
-        egui::Window::new("angelica")
+        let look = view.look();
+        if let Some(place) = self.size.restore.filter(|_| self.size.rect.is_none()) {
+            self.size.pos = Some(pos2(
+                view.screen.left() + place.x * view.screen.width(),
+                view.screen.top() + place.y * view.screen.height(),
+            ));
+        }
+        let width = view.at(self.size.width);
+        let grab = crate::places::grab_margin(look);
+        let mut window = egui::Window::new("angelica")
             .id(Id::new("angelica-menu"))
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
-            .frame(window_frame(context, view.p))
+            .frame(window_frame(context, view.p).outer_margin(crate::places::grab_outer(look)))
             .default_pos(pos2(
-                view.screen.center().x - width / 2.0,
-                view.screen.top() + view.screen.height() * 0.12,
-            ))
-            .show(context, |ui| {
-                ui.set_width(width);
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if self.menu_bar(ui, view) {
-                    keep = false;
-                }
-                self.draw_tabs(ui, view);
-                match self.tab {
-                    Tab::Installed => self.draw_installed(ui, view),
-                    Tab::Catalog => self.draw_catalog(ui, view),
-                    Tab::Settings => self.draw_settings(ui, view),
-                }
-            });
+                view.screen.center().x - width / 2.0 - grab,
+                view.screen.top() + view.screen.height() * 0.12 - grab,
+            ));
+        if let Some(pos) = self.size.pos.take() {
+            window = window.current_pos(pos - egui::Vec2::splat(grab));
+        }
+        let mut resized = None;
+        let mut stopped = false;
+        let shown = window.show(context, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            if self.menu_bar(ui, view) {
+                keep = false;
+            }
+            self.draw_tabs(ui, view);
+            match self.tab {
+                Tab::Installed => self.draw_installed(ui, view),
+                Tab::Catalog => self.draw_catalog(ui, view),
+                Tab::Settings => self.draw_settings(ui, view),
+            }
+            let frame = ui.min_rect();
+            (resized, stopped) =
+                crate::places::resize_edges(ui, Id::new("angelica-menu"), frame, look);
+        });
+        if let Some(shown) = shown {
+            self.resize(
+                view,
+                shown.response.rect.shrink(grab),
+                resized,
+                stopped,
+                context,
+            );
+        }
         self.apply_withdrawals(view);
         if self.tab != Tab::Settings || self.section != Section::General {
             self.choosing = None;
@@ -466,6 +571,56 @@ impl Menu {
             self.draw_removal(context, view);
         }
         keep
+    }
+
+    /// Applies what the player did to the menu's frame this frame: `rect`
+    /// is where it was drawn, `resized` the edge dragged and by how much.
+    fn resize(
+        &mut self,
+        view: &View<'_>,
+        rect: Rect,
+        resized: Option<(&'static str, egui::Vec2)>,
+        stopped: bool,
+        context: &egui::Context,
+    ) {
+        let k = view.k;
+        let size = &mut self.size;
+        let chrome = rect.height() - view.at(size.body);
+        let most_body = ((view.screen.height() * 0.9 - chrome) / k).max(MIN_BODY);
+        let most_width = (view.screen.width() * 0.9 / k).clamp(MIN_WIDTH, MAX_WIDTH);
+        if let Some(place) = size.restore.take() {
+            size.body = ((place.height * k - chrome) / k).clamp(MIN_BODY, most_body);
+        }
+        if size.rect.is_some_and(|old| old.min != rect.min) {
+            size.moving = true;
+        }
+        size.rect = Some(rect);
+        if let Some((edge, delta)) = resized {
+            let mut pos = rect.min;
+            if edge.contains('e') {
+                size.width = (size.width + delta.x / k).clamp(MIN_WIDTH, most_width);
+            }
+            if edge.contains('w') {
+                let width = (size.width - delta.x / k).clamp(MIN_WIDTH, most_width);
+                pos.x += (size.width - width) * k;
+                size.width = width;
+            }
+            if edge.contains('s') {
+                size.body = (size.body + delta.y / k).clamp(MIN_BODY, most_body);
+            }
+            if edge.contains('n') {
+                let body = (size.body - delta.y / k).clamp(MIN_BODY, most_body);
+                pos.y += (size.body - body) * k;
+                size.body = body;
+            }
+            if pos != rect.min {
+                size.pos = Some(pos);
+            }
+        }
+        if stopped || (size.moving && !context.input(|input| input.pointer.any_down())) {
+            size.moving = false;
+            size.changed = true;
+        }
     }
 
     /// The menu's title bar: the word `angelica`, how many plugins wait and
@@ -506,6 +661,9 @@ impl Menu {
                     && menu_item(ui, view, None, s.menu_check_updates, view.p.text)
                 {
                     installer.check_updates();
+                }
+                if menu_item(ui, view, None, s.arrange_panels, view.p.text) {
+                    self.arrange = true;
                 }
                 if menu_item(ui, view, None, s.tab_settings, view.p.text) {
                     self.tab = Tab::Settings;
@@ -610,7 +768,7 @@ impl Menu {
         use crate::catalog_index::State;
         let s = self.strings();
         let p = view.p;
-        let height = view.at(COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST);
+        let height = view.at(self.size.body);
         let Some(source) = view.host.catalog() else {
             return;
         };
@@ -826,7 +984,7 @@ impl Menu {
         {
             self.selected = None;
         }
-        let list_height = view.at(COLUMNS + ROW * VISIBLE_ROWS);
+        let list_height = view.at(self.size.body - AROUND_LIST);
         if lines.is_empty() {
             let top = ui.cursor().top();
             let text = if self.query.trim().is_empty() && self.filter.is_none() {
@@ -855,7 +1013,7 @@ impl Menu {
         egui::ScrollArea::vertical()
             .id_salt("angelica-installed")
             .auto_shrink([false, false])
-            .max_height(height * VISIBLE_ROWS)
+            .max_height(view.at(self.size.body - AROUND_LIST - COLUMNS))
             .show(ui, |ui| {
                 for line in lines {
                     match *line {
@@ -1071,6 +1229,17 @@ impl Menu {
     /// to the front.
     pub fn take_raised(&mut self) -> Option<String> {
         self.raised.take()
+    }
+
+    /// Whether the player chose **Arrange panels** since the last call.
+    pub fn take_arrange(&mut self) -> bool {
+        std::mem::take(&mut self.arrange)
+    }
+
+    /// Where Angelica's notes ended last frame.
+    #[must_use]
+    pub fn notes_bottom(&self) -> f32 {
+        self.notes_bottom
     }
 
     /// Puts a report the player asked for on the clipboard.
@@ -1619,7 +1788,7 @@ impl Menu {
     /// Settings: the sections on the left, the chosen one on the right.
     fn draw_settings(&mut self, ui: &mut Ui, view: &View<'_>) {
         let p = view.p;
-        let height = view.at(COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST);
+        let height = view.at(self.size.body);
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
         let column = Rect::from_min_size(area.min, vec2(view.at(180.0), height));
         let painter = ui.painter().clone();
@@ -2223,13 +2392,13 @@ impl Menu {
     /// The notes at the top right while the menu is closed: how Angelica
     /// is for the first seconds of the game and while a plugin needs the
     /// player, then what the plugin installer did. They take no input.
-    fn draw_notes(&self, context: &egui::Context, view: &View<'_>) {
+    fn draw_notes(&mut self, context: &egui::Context, view: &View<'_>) {
         let waiting = view
             .statuses
             .iter()
             .filter(|status| Group::of(status) == Group::Attention)
             .count();
-        let hint = fill(self.strings().hint, &[("key", self.key().name())]);
+        let hint = self.key().name().to_owned();
         let mut notes: Vec<(String, Tone, f32, String)> = Vec::new();
         let mut heads: Vec<Option<String>> = Vec::new();
         let acting = &view.host.services().lens.acting;
@@ -2287,39 +2456,66 @@ impl Menu {
             ));
         }
         heads.resize(notes.len(), None);
-        let now = std::time::Instant::now();
-        for shown in view.host.services().notifications.current(now) {
-            let age = now.duration_since(shown.at).as_secs_f64();
-            let shown_for = crate::notifications::SHOWN.as_secs_f64();
-            notes.push((
-                shown.text,
-                if shown.attention {
-                    Tone::Attention
-                } else {
-                    Tone::Good
-                },
-                fraction((age / 0.25).min((shown_for - age) / 0.5)),
-                String::new(),
-            ));
-            heads.push(Some(
-                view.host
-                    .plugin(&shown.plugin)
-                    .map_or(shown.plugin, |plugin| plugin.manifest.plugin.name.clone()),
-            ));
-        }
+        plugin_notes(view, &mut notes, &mut heads);
         let mut top = view.screen.top() + view.at(24.0);
+        if !notes.is_empty() {
+            context.request_repaint();
+        }
         for (index, ((text, tone, fade, hint), head)) in notes.into_iter().zip(heads).enumerate() {
+            // Notes sway a little, each a moment after the one above.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+            let sway = (1.0
+                - (std::f64::consts::TAU * (view.time - index as f64 * 0.6) / 5.0).cos())
+                as f32
+                * view.at(2.0);
             let area = egui::Area::new(Id::new(("angelica-note", index)))
                 .order(egui::Order::Foreground)
                 .interactable(false)
                 .pivot(Align2::RIGHT_TOP)
-                .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
+                .fixed_pos(pos2(view.screen.right() - view.at(24.0), top + sway))
                 .show(context, |ui| {
                     ui.multiply_opacity(fade);
                     note(ui, view, head.as_deref(), &text, tone, &hint);
                 });
-            top = area.response.rect.bottom() + view.at(8.0);
+            top = area.response.rect.bottom() - sway + view.at(8.0);
         }
+        self.notes_bottom = top;
+    }
+}
+
+/// The notifications plugins show, after Angelica's own notes, each
+/// under its plugin's name; popups are drawn with the plugins' places.
+fn plugin_notes(
+    view: &View<'_>,
+    notes: &mut Vec<(String, Tone, f32, String)>,
+    heads: &mut Vec<Option<String>>,
+) {
+    let now = std::time::Instant::now();
+    for shown in view
+        .host
+        .services()
+        .notifications
+        .current(now)
+        .into_iter()
+        .filter(|shown| shown.popup.is_none())
+    {
+        let age = now.duration_since(shown.at).as_secs_f64();
+        let shown_for = shown.shown.as_secs_f64();
+        notes.push((
+            shown.text,
+            if shown.attention {
+                Tone::Attention
+            } else {
+                Tone::Good
+            },
+            fraction((age / 0.25).min((shown_for - age) / 0.5)),
+            String::new(),
+        ));
+        heads.push(Some(
+            view.host
+                .plugin(&shown.plugin)
+                .map_or(shown.plugin, |plugin| plugin.manifest.plugin.name.clone()),
+        ));
     }
 }
 
@@ -2977,12 +3173,24 @@ fn setting(ui: &mut Ui, view: &View<'_>, name: &str, value: impl FnOnce(&mut Ui)
     let p = view.p;
     ui.horizontal(|ui| {
         ui.set_min_height(view.at(34.0));
-        let (rect, _) = ui.allocate_exact_size(vec2(view.at(180.0), view.at(34.0)), Sense::hover());
-        ui.painter().text(
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            name,
-            sans(view.at(13.5)),
+        // The names' column is as wide as the longest name shown, so a
+        // long one never runs into its value.
+        let galley = ui
+            .painter()
+            .layout_no_wrap(name.to_owned(), sans(view.at(13.5)), p.text);
+        let widest = ui.ctx().data_mut(|data| {
+            let widest = data.get_temp_mut_or_default::<f32>(Id::new((
+                "angelica-setting-names",
+                view.k.to_bits(),
+            )));
+            *widest = widest.max(galley.size().x);
+            *widest
+        });
+        let column = view.at(180.0).max(widest + view.at(20.0));
+        let (rect, _) = ui.allocate_exact_size(vec2(column, view.at(34.0)), Sense::hover());
+        ui.painter().galley(
+            pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+            galley,
             p.text,
         );
         value(ui);
@@ -2997,41 +3205,57 @@ fn note(ui: &mut Ui, view: &View<'_>, plugin: Option<&str>, text: &str, tone: To
         .fill(p.window)
         .stroke(Stroke::new(1.0, p.border))
         .corner_radius(CornerRadius::same(6))
-        .shadow(ui.style().visuals.popup_shadow)
+        .shadow(egui::Shadow {
+            offset: [0, num_u8(view.at(8.0))],
+            blur: num_u8(view.at(20.0)).cast_unsigned(),
+            spread: 0,
+            color: egui::Color32::from_rgba_unmultiplied(22, 32, 47, 31),
+        })
         .inner_margin(egui::Margin::symmetric(
-            num_u8(view.at(12.0)),
             num_u8(view.at(10.0)),
+            num_u8(view.at(6.0)),
         ))
         .show(ui, |ui| {
-            ui.set_max_width(view.at(320.0));
-            ui.spacing_mut().item_spacing.y = view.at(5.0);
-            ui.label(match plugin {
-                Some(name) => RichText::new(name)
-                    .font(strong(view.at(12.0)))
-                    .color(p.secondary),
-                None => RichText::new("angelica")
-                    .font(wordmark(view.at(12.0)))
-                    .color(p.secondary),
-            });
+            ui.set_max_width(view.at(360.0));
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = view.at(8.0);
+                ui.label(match plugin {
+                    Some(name) => RichText::new(name)
+                        .font(strong(view.at(12.5)))
+                        .color(p.secondary),
+                    None => RichText::new("angelica")
+                        .font(wordmark(view.at(13.0)))
+                        .color(p.secondary),
+                });
                 let (rect, _) =
-                    ui.allocate_exact_size(vec2(view.at(14.0), view.at(16.0)), Sense::hover());
+                    ui.allocate_exact_size(vec2(view.at(7.0), view.at(16.0)), Sense::hover());
                 let mark = rect.center();
                 match tone {
-                    Tone::Good => theme::running(ui.painter(), mark, view.k, p),
-                    Tone::Attention => theme::attention(ui.painter(), mark, view.k * 0.85, p),
+                    Tone::Good => theme::running(ui.painter(), mark, view.k * 7.0 / 6.0, p),
+                    // Blinks: on for 0.8 s, off for 0.8 s.
+                    Tone::Attention => {
+                        if view.time % 1.6 < 0.8 {
+                            ui.painter().circle_filled(mark, view.at(3.5), p.attention);
+                        }
+                    }
                     Tone::Failed => {
-                        ui.painter().circle_filled(mark, view.at(3.0), p.danger);
+                        ui.painter().circle_filled(mark, view.at(3.5), p.danger);
                     }
                 }
+                let line = if hint.is_empty() {
+                    text.to_owned()
+                } else {
+                    format!("{text} · {hint}")
+                };
                 ui.add(
-                    egui::Label::new(RichText::new(text).font(sans(view.at(13.0))).color(p.text))
-                        .wrap(),
+                    egui::Label::new(
+                        RichText::new(line)
+                            .font(theme::medium(view.at(12.5)))
+                            .color(p.secondary),
+                    )
+                    .wrap(),
                 );
             });
-            if !hint.is_empty() {
-                ui.label(RichText::new(hint).font(sans(view.at(12.0))).color(p.muted));
-            }
         });
 }
 

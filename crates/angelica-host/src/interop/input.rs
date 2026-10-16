@@ -8,10 +8,11 @@ use windows_sys::Win32::{
     UI::{
         Input::KeyboardAndMouse::GetKeyState,
         WindowsAndMessaging::{
-            CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetWindowLongPtrW, SetWindowLongPtrW,
-            WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
-            WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-            WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDPROC,
+            CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetWindowLongPtrW, HTCLIENT,
+            LoadCursorW, SetCursor, SetWindowLongPtrW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+            WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS,
+            WM_SYSKEYDOWN, WM_SYSKEYUP, WNDPROC,
         },
     },
 };
@@ -32,6 +33,9 @@ pub struct Input {
     pub stop_pressed: AtomicBool,
     pub mouse: AtomicBool,
     pub keyboard: AtomicBool,
+    /// The system cursor Angelica shows under the pointer, as its `IDC_`
+    /// resource number; 0 leaves the cursor to the game.
+    cursor: AtomicU32,
     window: AtomicUsize,
     original: AtomicUsize,
 }
@@ -47,6 +51,7 @@ impl Default for Input {
             stop_pressed: AtomicBool::new(false),
             mouse: AtomicBool::new(false),
             keyboard: AtomicBool::new(false),
+            cursor: AtomicU32::new(0),
             window: AtomicUsize::new(0),
             original: AtomicUsize::new(0),
         }
@@ -91,6 +96,73 @@ impl Input {
     /// The game window the overlay draws over; null before it is attached.
     pub fn window(&self) -> HWND {
         self.window.load(Ordering::Acquire) as HWND
+    }
+
+    /// Shows `icon`, the cursor Angelica's interface asks for, while the
+    /// pointer is over it; the game's own cursor everywhere else.
+    pub fn set_cursor(&self, icon: egui::CursorIcon) {
+        use egui::CursorIcon as C;
+        let id = if self.mouse.load(Ordering::Acquire) {
+            match icon {
+                C::PointingHand => 32649,
+                C::Text | C::VerticalText => 32513,
+                C::ResizeHorizontal | C::ResizeEast | C::ResizeWest | C::ResizeColumn => 32644,
+                C::ResizeVertical | C::ResizeNorth | C::ResizeSouth | C::ResizeRow => 32645,
+                C::ResizeNwSe | C::ResizeNorthWest | C::ResizeSouthEast => 32642,
+                C::ResizeNeSw | C::ResizeNorthEast | C::ResizeSouthWest => 32643,
+                C::Grab | C::Grabbing | C::Move | C::AllScroll => 32646,
+                C::NotAllowed | C::NoDrop => 32648,
+                _ => 0,
+            }
+        } else {
+            0
+        };
+        self.cursor.store(id, Ordering::Release);
+    }
+
+    /// Whether Angelica shows its cursor now, which the game's own
+    /// `SetCursor` calls then keep.
+    pub fn keeps_cursor(&self) -> bool {
+        self.cursor.load(Ordering::Acquire) != 0
+    }
+
+    /// Puts up Angelica's cursor at the end of a frame when the frame is
+    /// drawn on the window's thread; another thread cannot set it.
+    pub fn show_frame_cursor(&self) {
+        use windows_sys::Win32::{
+            System::Threading::GetCurrentThreadId,
+            UI::WindowsAndMessaging::GetWindowThreadProcessId,
+        };
+        let window = self.window();
+        if window.is_null() {
+            return;
+        }
+        // SAFETY: the window is the game's live window this input is
+        // attached to; a null process pointer is allowed.
+        let same = unsafe {
+            GetWindowThreadProcessId(window, std::ptr::null_mut()) == GetCurrentThreadId()
+        };
+        if same {
+            self.show_cursor();
+        }
+    }
+
+    /// Puts up Angelica's cursor; false when the game's cursor stays.
+    fn show_cursor(&self) -> bool {
+        let id = self.cursor.load(Ordering::Acquire);
+        if id == 0 {
+            return false;
+        }
+        // SAFETY: a system cursor is loaded by its resource number with no
+        // module; SetCursor takes the shared handle LoadCursorW returns.
+        unsafe {
+            let cursor = LoadCursorW(std::ptr::null_mut(), id as usize as *const u16);
+            if cursor.is_null() {
+                return false;
+            }
+            SetCursor(cursor);
+        }
+        true
     }
 
     pub fn release(&self) {
@@ -308,11 +380,21 @@ unsafe extern "system" fn procedure(
         // SAFETY: Windows supplied valid message arguments; fallback has the same ABI.
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     };
+    // Over Angelica's interface its cursor replaces the game's.
+    if message == WM_SETCURSOR
+        && lparam.cast_unsigned() & 0xffff == HTCLIENT as usize
+        && super::guard(false, || overlay.input.show_cursor())
+    {
+        return 1;
+    }
     let handled = super::guard(false, || {
         overlay.window_frame(message)
             || (overlay.accepts_input() && overlay.input.event(message, wparam, lparam))
     });
     if handled {
+        if message == WM_MOUSEMOVE {
+            super::guard(false, || overlay.input.show_cursor());
+        }
         return 0;
     }
     let original = overlay.input.original.load(Ordering::Acquire);

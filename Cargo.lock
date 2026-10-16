@@ -101,6 +101,7 @@ dependencies = [
  "angelica-map",
  "angelica-sqpack",
  "angelica-text",
+ "angelica-view",
  "serde_json",
  "tempfile",
  "tungstenite",
@@ -142,11 +143,13 @@ dependencies = [
  "angelica-sqpack",
  "angelica-text",
  "angelica-update",
+ "angelica-view",
  "ed25519-dalek",
  "egui",
  "getrandom",
  "native-tls",
  "num-traits",
+ "png",
  "semver",
  "serde",
  "serde_json",
@@ -225,6 +228,7 @@ name = "angelica-sdk"
 version = "0.1.0"
 dependencies = [
  "angelica-text",
+ "angelica-view",
  "serde",
  "serde_json",
  "wit-bindgen",
@@ -275,6 +279,10 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "angelica-view"
+version = "0.1.0"
 
 [[package]]
 name = "anstream"

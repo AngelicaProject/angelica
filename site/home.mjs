@@ -360,7 +360,7 @@ footer .big span:hover { color: var(--red); }
   <p class="lede" data-r style="--d:2">You are the architect. Say what should happen in the game, and let your agent do the writing.</p>
   <div class="turns">
     <div><span>01</span><h3>Describe</h3><p>Write what the plugin does, in your own words. What it reads, what it changes, how you use it.</p></div>
-    <div><span>02</span><h3>Build</h3><p>The agent finds the interfaces, writes the plugin, and tests it against a scripted game. No game client needed.</p></div>
+    <div><span>02</span><h3>Build</h3><p>The agent finds the interfaces, writes the plugin, and tests it against a scripted game.</p></div>
     <div class="yours"><span>03</span><h3>Approve</h3><p>The plugin loads into the running game. It starts only after you approve what it asked for.</p>
       <a class="more" href="agent.html">Build a plugin with an agent →</a></div>
   </div>

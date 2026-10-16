@@ -23,6 +23,8 @@ pub struct PeBuilder {
     chains: Vec<(u32, u32)>,
     /// Prologue lengths of functions, by their begins.
     prologues: Vec<(u32, u8)>,
+    /// Data directories by index: RVA and size.
+    directories: Vec<(usize, u32, u32)>,
 }
 
 impl Default for PeBuilder {
@@ -34,6 +36,7 @@ impl Default for PeBuilder {
             functions: Vec::new(),
             chains: Vec::new(),
             prologues: Vec::new(),
+            directories: Vec::new(),
         }
     }
 }
@@ -86,6 +89,14 @@ impl PeBuilder {
     #[must_use]
     pub fn prologue(mut self, start: u32, len: u8) -> Self {
         self.prologues.push((start, len));
+        self
+    }
+
+    /// Sets the data directory at `index` (1 is the import directory) to
+    /// `size` bytes at `rva`.
+    #[must_use]
+    pub fn directory(mut self, index: usize, rva: u32, size: u32) -> Self {
+        self.directories.push((index, rva, size));
         self
     }
 
@@ -242,6 +253,10 @@ impl PeBuilder {
                 optional + 112 + 28,
                 12 * u32::try_from(self.functions.len()).expect("few functions"),
             );
+        }
+        for &(index, rva, size) in &self.directories {
+            put32(bytes, optional + 112 + index * 8, rva);
+            put32(bytes, optional + 112 + index * 8 + 4, size);
         }
         let table = optional + usize::from(OPTIONAL_HEADER_LEN);
         for (index, ((name, characteristics, data), &(rva, raw_offset, raw_size))) in

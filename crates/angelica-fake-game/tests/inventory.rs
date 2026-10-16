@@ -2,13 +2,14 @@
 //! as the game map describes them, under the `inventory` domain the player
 //! approved, and the window lists and searches the items by name. Also
 //! `angelica look`'s side in the host.
+use angelica_fake_game::ui::Widget;
 use angelica_fake_game::{
     ColumnKind, Language, TestHost, build_component,
     game_files::{FakeGame, FakeRow, FakeSheet, FakeValue},
 };
 use runtime::{
     host::{Action, Event, Status},
-    sandbox::{Limits, bindings::angelica::plugin::ui::Widget},
+    sandbox::Limits,
 };
 use std::sync::OnceLock;
 

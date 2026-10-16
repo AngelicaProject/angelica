@@ -1,6 +1,6 @@
 # Hooks and code patches
 
-`angelica-hook` installs every modification of game code. The host's adapters install hooks at verified game map entries only; plugins never install hooks or name addresses, they use the [host services](./services.md) the adapters implement.
+`angelica-hook` installs every modification of game code. The host's adapters install hooks at verified game map entries only, and in the import slots of system functions the executable imports by name ([import slots](#import-slots)); plugins never install hooks or name addresses, they use the [host services](./services.md) the adapters implement.
 
 ## Kinds
 
@@ -10,6 +10,7 @@
 | Mid-function hook | location inside a function | the register context; it may change registers before execution continues |
 | Code patch | patch with expected original bytes | nothing; the bytes are replaced while the patch is active |
 | Vtable slot | vtable and index | as an entry detour, for that object type only |
+| Import slot | none: a DLL and function the executable's import directory names | as an entry detour, for the executable's own calls through its import only |
 
 ## Entry detours
 
@@ -54,6 +55,12 @@ A code patch is prepared only when the bytes at the address equal the expected o
 ## Vtable slots
 
 A vtable slot is one aligned pointer, replaced with a single store; no thread is suspended. The slot is restored only while it still holds the replacement.
+
+## Import slots
+
+An import slot is the entry of the executable's import address table that the loader fills with the address of a function the executable imports from a system DLL. It is found by the DLL's and the function's names in the import directory of the executable's file (`angelica-pe` `Image::import_slots`), never by an address or a signature, so a game update that keeps importing the function keeps the slot findable; the slot is replaced as a vtable slot, with one aligned store. Installation is refused, and the feature that needs it works without it, when the executable does not import the function by name exactly once, or the slot does not hold a function. A slot that another tool already replaced keeps that tool's function as the original, which Angelica calls through. The executable's calls through other means, such as an address from `GetProcAddress`, and every other module's calls are not affected.
+
+The overlay replaces the slot of `USER32.dll!SetCursor`: the game sets its cursor every frame, so while the pointer is over Angelica's interface and Angelica shows a cursor of its own (a hand, a resize or text cursor), the game's call leaves Angelica's cursor in place; otherwise it passes on unchanged. Without the slot, the game's cursor shows through Angelica's for part of every frame.
 
 ## Chaining
 

@@ -79,6 +79,10 @@ Dev mode is for work on the game map on the player's own Angelica: it lets `ange
 
 `state/_angelica.json` holds the player's choices for Angelica itself: `{"format": 1, "language": "ru", "theme": "dark", "size": "small", "key": "F9", "stop_key": "End"}`, where `language` is `en` or `ru`, `theme` is `light` or `dark`, `size` is `small`, `normal`, or `large`, `key` is the menu key (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`, `Pause`, `Scroll Lock`, or `F1` to `F12`), `stop_key` the key that stops plugins acting, one of the same keys and not the menu key, and `channel` is the [update channel](../development/releases.md#channels), `stable` or `nightly`, which the installer writes; each is left out when nobody has chosen one. No plugin id begins with `_`, so the file never meets a plugin's settings. The menu writes it through a temporary file and a rename; a missing, unreadable, or other-format file means the defaults.
 
+## Layout
+
+`state/_layout.json` keeps where the player put windows and panels across game starts: `{"format": 1, "windows": {"<plugin id>/<window id>": {"x": 0.62, "y": 0.1, "width": 360, "height": 420, "collapsed": false}}, "panels": {"<plugin id>/<panel id>": {"x": 0.02, "y": 0.78, "shown": "in-combat"}}}`. `x` and `y` are the top left corner as fractions of the screen's width and height, so a place survives another resolution; `width` and `height` are in points, and `height` is present only when the player resized the window; `shown` is present only when the player chose otherwise than the plugin, as `always`, `in-combat`, `out-of-combat`, or `hidden`. Angelica's own windows use `angelica` in place of a plugin id: `angelica/menu` is the menu, whose `height` is always present. The host writes it through a temporary file and a rename when the player stops moving or resizing; a missing, unreadable, or other-format file means no saved places, and entries for plugins that are not installed are dropped.
+
 ## Storage
 
 `storage/<plugin-id>/` is the plugin's folder ([storage](./plugin-api-v1.md#storage)).

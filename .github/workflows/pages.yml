@@ -1,12 +1,19 @@
 name: Pages
 
-# Publishes the website (site/) to GitHub Pages after a push to main, and
+# Publishes the website (site/) to GitHub Pages after a push to main that
+# changes it, the documents it shows, or the interface its gallery draws, and
 # every hour, so the home page states what the release feeds give now.
 # docs/development/website.md describes the site.
 on:
   push:
     branches: [main]
-    paths: [site/**, .github/workflows/pages.yml]
+    paths:
+      - site/**
+      - docs/**
+      - crates/angelica-view/**
+      - crates/angelica-host/**
+      - crates/angelica-sdk/**
+      - .github/workflows/pages.yml
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
@@ -21,7 +28,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The Interface parts page's pictures, drawn by the host's own renderer,
+  # which needs Direct3D's software renderer on Windows.
+  gallery:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+      - run: cargo test --locked -p angelica-host --lib gallery -- --ignored --exact interop::gallery::gallery
+        env:
+          GALLERY_OUT: ${{ github.workspace }}/site/gallery
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gallery
+          path: site/gallery
+          if-no-files-found: error
+
   build:
+    needs: gallery
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,6 +67,10 @@ jobs:
         with:
           toolchain: 1.98.1
           targets: wasm32-wasip2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gallery
+          path: site/gallery
       - run: npm ci
       - run: node build.mjs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

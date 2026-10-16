@@ -118,6 +118,34 @@ pub const LIGHT: Palette = Palette {
 };
 
 /// Lycoris at night: warm black, the flower's red for what can be pressed.
+/// Parts straight over the game, on a bare panel or a popup above the
+/// middle of the screen: light text and marks on a soft dark backdrop, in
+/// either theme.
+pub const BARE: Palette = Palette {
+    window: rgba(0, 0, 0, 56),
+    title: rgba(0, 0, 0, 0),
+    popup: rgba(0x1e, 0x1b, 0x19, 240),
+    column: rgba(0, 0, 0, 0),
+    chosen: rgba(255, 255, 255, 40),
+    selection: rgba(255, 255, 255, 36),
+    hover: rgba(255, 255, 255, 22),
+    field: rgba(0, 0, 0, 90),
+    tile: rgba(0, 0, 0, 90),
+    development: rgba(0xe4, 0xdf, 0xf3, 255),
+    on_development: rgba(0x4a, 0x3f, 0x7a, 255),
+    text: rgba(255, 255, 255, 255),
+    secondary: rgba(255, 255, 255, 217),
+    muted: rgba(255, 255, 255, 150),
+    line: rgba(0, 0, 0, 80),
+    border: rgba(255, 255, 255, 40),
+    action: rgba(255, 255, 255, 255),
+    attention: rgba(0xf2, 0xc6, 0x7a, 255),
+    on_attention: rgba(0x24, 0x21, 0x1c, 255),
+    on: rgba(0x9f, 0xe0, 0xb0, 255),
+    danger: rgba(0xef, 0x8f, 0xa8, 255),
+    shadow: 120,
+};
+
 pub const DARK: Palette = Palette {
     window: rgba(0x1e, 0x1b, 0x19, 247),
     title: rgba(0, 0, 0, 36),
@@ -328,22 +356,33 @@ pub fn word(ui: &mut Ui, text: &str, kind: Word, enabled: bool, k: f32) -> egui:
     let (rect, response) = ui.allocate_exact_size(galley.size() + 2.0 * padding, sense);
     if ui.is_rect_visible(rect) {
         let hovered = enabled && response.hovered();
+        // Pressed, the word sinks a point and dims, as a key does.
+        let pressed = enabled && response.is_pointer_button_down_on();
         let color = if !enabled {
             alpha(color, 0.45)
+        } else if pressed {
+            alpha(color, 0.7)
         } else if hovered && kind == Word::Secondary {
             p.text
         } else {
             color
         };
-        let at = rect.center() - galley.size() / 2.0;
+        let sink = if pressed { k } else { 0.0 };
+        let at = rect.center() - galley.size() / 2.0 + vec2(0.0, sink);
         let width = galley.size().x;
         let bottom = at.y + galley.size().y;
         ui.painter()
             .galley_with_override_text_color(at, galley, color);
-        if hovered {
+        // The underline grows from the middle under the pointer.
+        let under = ui
+            .ctx()
+            .animate_bool_with_time(response.id.with("under"), hovered, 0.12);
+        if under > 0.0 {
+            let middle = at.x + width / 2.0;
+            let half = width / 2.0 * under;
             ui.painter().line_segment(
-                [pos2(at.x, bottom), pos2(at.x + width, bottom)],
-                Stroke::new(1.0, alpha(color, 0.6)),
+                [pos2(middle - half, bottom), pos2(middle + half, bottom)],
+                Stroke::new(1.0, alpha(color, 0.6 * under)),
             );
         }
     }
@@ -666,9 +705,16 @@ pub fn attention(painter: &egui::Painter, center: Pos2, k: f32, p: &Palette) {
     );
 }
 
-/// The mark of a running plugin: a small dot in the "on" color.
+/// The mark of something running: a small dot in the "on" color that
+/// breathes slowly.
 pub fn running(painter: &egui::Painter, center: Pos2, k: f32, p: &Palette) {
-    painter.circle_filled(center, 3.0 * k, p.on);
+    let time = painter.ctx().input(|input| input.time);
+    #[allow(clippy::cast_possible_truncation)]
+    let breath = (0.775 + 0.225 * (std::f64::consts::TAU * time / 2.6).cos()) as f32;
+    painter.circle_filled(center, 3.0 * k, alpha(p.on, breath));
+    painter
+        .ctx()
+        .request_repaint_after(std::time::Duration::from_millis(50));
 }
 
 /// The mark of a plugin that is off: a hollow ring.

@@ -21,6 +21,8 @@ Thumbs.db
 # Website build
 /site/dist/
 /site/node_modules/
+# Pictures the host's gallery test draws (docs/development/website.md)
+/site/gallery/
 # Intermediate prints of the lily (docs/development/website.md)
 /site/art/*.png
 /site/art/*.json

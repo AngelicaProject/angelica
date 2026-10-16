@@ -1,6 +1,7 @@
 //! The example plugin in a host with a scripted game: approval, windows and
 //! events, storage, jobs, text tables, letter case, chat commands and
 //! messages, permissions, and disabling.
+use angelica_fake_game::ui::{Edited, Widget, WidgetRef};
 use angelica_fake_game::{
     TestHost, build_component,
     game_files::{FakeGame, TextSheet},
@@ -10,10 +11,7 @@ use angelica_text::table::{Column, Variant};
 use runtime::{
     excel_text::SheetInfo,
     host::{Action, Event, Status},
-    sandbox::{
-        Limits,
-        bindings::angelica::plugin::ui::{Edited, Widget, WidgetRef},
-    },
+    sandbox::Limits,
 };
 use std::sync::OnceLock;
 
@@ -1750,4 +1748,127 @@ fn a_failure_of_angelica_in_one_plugins_call_stops_only_that_plugin() {
     assert_eq!(test.host.plugin("other").unwrap().status(), Status::Running);
     assert!(!test.host.plugin("other").unwrap().windows().is_empty());
     assert!(test.host.plugin("hello").unwrap().windows().is_empty());
+}
+
+#[test]
+fn panels_popups_and_value_parts_reach_the_host() {
+    use angelica_fake_game::ui::{Backing, Chosen, PopupAt};
+    let test = approved(MANIFEST);
+    test.event(
+        "hello",
+        Event::Chosen(Chosen {
+            window: "main".into(),
+            id: "tabs".into(),
+            index: 2,
+        }),
+    );
+    test.frames(1);
+    let windows = test.host.plugin("hello").unwrap().windows();
+    let kinds: Vec<&Widget> = windows[0].widgets.iter().collect();
+    for wanted in [
+        "meter",
+        "ring",
+        "readout",
+        "countdown",
+        "sparkline",
+        "grid",
+        "column",
+        "spacer",
+        "tile",
+    ] {
+        let found = kinds.iter().any(|widget| {
+            matches!(
+                (wanted, widget),
+                ("meter", Widget::Meter(_))
+                    | ("ring", Widget::Ring(_))
+                    | ("readout", Widget::Readout(_))
+                    | ("countdown", Widget::Countdown(_))
+                    | ("sparkline", Widget::Sparkline(_))
+                    | ("grid", Widget::BeginGrid(3))
+                    | ("column", Widget::BeginColumn)
+                    | ("spacer", Widget::Spacer)
+                    | ("tile", Widget::Tile(_))
+            )
+        });
+        assert!(found, "no {wanted} in the parts tab");
+    }
+
+    click(&test, "panel");
+    test.frames(1);
+    let panels = test.host.plugin("hello").unwrap().panels();
+    assert_eq!(panels.len(), 1);
+    assert_eq!(panels[0].id, "clicks");
+    assert_eq!(panels[0].backing, Backing::Bare);
+    assert!(
+        panels[0]
+            .widgets
+            .iter()
+            .any(|w| matches!(w, Widget::Meter(m) if m.segments == 10))
+    );
+
+    click(&test, "pop");
+    test.frames(1);
+    let shown = test
+        .host
+        .services()
+        .notifications
+        .current(std::time::Instant::now());
+    let popup = shown
+        .iter()
+        .find_map(|shown| shown.popup.as_ref())
+        .expect("a popup");
+    assert_eq!(popup.at, PopupAt::Panel("clicks".into()));
+    assert_eq!(popup.seconds, 3);
+
+    click(&test, "panel");
+    test.frames(1);
+    assert!(test.host.plugin("hello").unwrap().panels().is_empty());
+}
+
+#[test]
+fn a_window_asks_with_a_dialog_and_hears_the_answer() {
+    let test = approved(MANIFEST);
+    test.event("hello", Event::OpenRequested);
+    test.frames(1);
+    let asked = |test: &TestHost| {
+        test.host.plugin("hello").unwrap().windows()[0]
+            .dialog
+            .as_ref()
+            .map(|dialog| dialog.id.clone())
+    };
+    let click = |test: &TestHost, window: &str, id: &str| {
+        test.event(
+            "hello",
+            Event::Clicked(WidgetRef {
+                window: window.into(),
+                id: id.into(),
+            }),
+        );
+        test.frames(1);
+    };
+    click(&test, "main", "click");
+    click(&test, "main", "reset");
+    assert_eq!(asked(&test).as_deref(), Some("reset"));
+    let dialog = test.host.plugin("hello").unwrap().windows()[0]
+        .dialog
+        .clone()
+        .unwrap();
+    assert!(
+        dialog
+            .widgets
+            .iter()
+            .any(|w| matches!(w, Widget::Button(b) if b.id == "yes"))
+    );
+
+    // Closed without an answer: the question goes, the window stays.
+    test.event("hello", Event::Closed("reset".into()));
+    test.frames(1);
+    assert_eq!(asked(&test), None);
+    assert!(!test.host.plugin("hello").unwrap().windows().is_empty());
+
+    // Answered: the clicks go back to 0.
+    click(&test, "main", "reset");
+    click(&test, "reset", "yes");
+    assert_eq!(asked(&test), None);
+    assert!(test.texts("hello").iter().any(|text| text == "0 clicks"));
 }

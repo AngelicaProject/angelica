@@ -1,13 +1,11 @@
 //! A plugin that tries to break the host's boundaries, next to the example
 //! plugin: each attack faults the hostile plugin or is refused, and the
 //! frame and the example go on.
+use angelica_fake_game::ui::{Widget, WidgetRef};
 use angelica_fake_game::{TestHost, build_component};
 use runtime::{
     host::{Action, Event, Status},
-    sandbox::{
-        Limits,
-        bindings::angelica::plugin::ui::{Widget, WidgetRef},
-    },
+    sandbox::Limits,
 };
 use std::{sync::OnceLock, time::Duration};
 
@@ -183,10 +181,10 @@ fn memory_stack_and_panics_fault_only_the_plugin() {
 }
 
 #[test]
-fn invalid_windows_fault_the_plugin() {
+fn an_invalid_view_faults_the_plugin() {
     let test = started(Limits::default());
     click(&test, "huge-ui");
-    assert!(faulted(&test).starts_with("invalid windows: "));
+    assert!(faulted(&test).starts_with("invalid view: "));
 }
 
 #[test]

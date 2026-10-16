@@ -44,6 +44,7 @@ Each crate owns one boundary:
 - `angelica-host`: `runtime.dll`: start-up, the plugin runtime, permissions, host services, and the overlay. `unsafe` only in its `interop` module.
 - `angelica-sqpack`: read-only access to the installed game's archives and Excel sheets. No `unsafe`.
 - `angelica-text`: the game's encoded strings and the [text table](../formats/text-table-v1.md) format, shared by the host and plugins. No `unsafe`.
+- `angelica-view`: what plugins show: places and parts as typed values, their encoding as the plugin API's data, and the host's checks of them. Shared by the host and the SDK. No `unsafe`.
 - `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, and helpers.
 - `angelica-fake-game`: runs plugins in the real host against a scripted game.
 - `angelica-games`: where the game is installed, for the installer and the `angelica` command. No `unsafe`.

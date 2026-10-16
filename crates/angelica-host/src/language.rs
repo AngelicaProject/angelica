@@ -56,9 +56,15 @@ strings! {
     bar_expand: "Expand", "Развернуть";
     bar_menu: "Menu", "Меню";
     menu_check_updates: "Check for updates", "Проверить обновления";
+    arrange_panels: "Arrange panels", "Расставить панели";
+    arrange_hint: "Drag panels where you want them. Right-click one to choose when it shows.", "Перетащите панели, куда удобно. Правый клик — когда показывать.";
+    arrange_done: "Done", "Готово";
+    shown_always: "Always", "Всегда";
+    shown_in_combat: "In combat", "В бою";
+    shown_out_of_combat: "Out of combat", "Вне боя";
+    shown_hidden: "Hidden", "Скрыта";
     word_off: "Off", "Выкл";
     esc_closes: "Esc closes", "Esc — закрыть";
-    hint: "{key} opens Angelica", "{key} — открыть Angelica";
     nothing_yet: "No plugins yet", "Плагинов пока нет";
     waiting_one: "{n} waiting for you", "{n} ждёт вас";
     waiting_few: "{n} waiting for you", "{n} ждут вас";
@@ -142,7 +148,7 @@ strings! {
     setting_theme: "Theme", "Тема";
     theme_light: "light", "светлая";
     theme_dark: "dark", "тёмная";
-    setting_size: "Window size", "Размер окна";
+    setting_size: "Interface size", "Размер интерфейса";
     size_small: "small", "маленький";
     size_normal: "normal", "обычный";
     size_large: "large", "крупный";

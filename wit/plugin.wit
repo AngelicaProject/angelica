@@ -3,7 +3,7 @@ package angelica:plugin@1.0.0;
 /// What every plugin exports. The host calls the main instance on the game's
 /// main thread and `run-job` in job instances on host threads.
 interface guest {
-    use ui.{window, event};
+    use ui.{place, event};
     use commands.{invocation};
     use events.{game-event};
 
@@ -19,8 +19,8 @@ interface guest {
     /// Called every frame with the seconds since the previous call.
     tick: func(elapsed: f64) -> result<_, string>;
 
-    /// The plugin's windows for this frame.
-    ui: func() -> list<window>;
+    /// The plugin's windows, each followed by its dialog, and panels for this frame.
+    ui: func() -> list<place>;
 
     /// A player action in one of the plugin's windows or the Angelica menu.
     ui-event: func(event: event);

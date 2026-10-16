@@ -1,270 +1,68 @@
 package angelica:plugin@1.0.0;
 
-/// Windows a plugin describes and the host draws.
+/// What a plugin shows: places the host offers, holding parts the host
+/// draws.
 ///
-/// Every frame the host calls the guest's `ui` export and draws the windows
-/// it returns; a window that is not returned is not shown. Widgets are
-/// controlled: they show the value the plugin passes, and a change by the
-/// player arrives as an `event` before the next frame. Widget ids are
-/// unique within a window.
+/// Places and parts are data: each has a `kind` and named properties, and
+/// the kinds, their properties, and the API version that added each are
+/// listed in the plugin API (`docs/formats/plugin-api-v1.md`, "Places and
+/// parts"). New kinds and properties are added there without changing
+/// these types; a kind or a property never changes its meaning and is never
+/// removed. The host checks every place and part against that list: an
+/// unknown kind or property, a value of another shape, or a kind newer than
+/// the manifest's `plugin.api` faults the plugin.
 ///
-/// Layout is a flat list. `begin-row` ... `end-row` places the widgets
-/// between them side by side; `begin-section` ... `end-section` puts them
-/// under a heading the player can collapse; `begin-table` ... `end-table`
-/// fills a table's cells left to right, row by row, one widget or one row
-/// per cell. They nest, except that a table holds no sections or tables;
-/// every `begin` needs its `end`. A `tooltip` shows its text when the player
-/// points at the widget right before it.
+/// Every frame the host calls the guest's `ui` export and shows the places
+/// it returns; one that is not returned is not shown. Parts are controlled:
+/// they show the value the plugin passes, and a change by the player
+/// arrives as an `event` before the next frame. Part ids are unique within
+/// a place, and place ids unique per plugin.
+///
+/// Parts are a flat list: a part of a container kind (`row`, `column`,
+/// `grid`, `section`, `table`, `entry`) holds the parts after it up to its
+/// `end` part.
 interface ui {
-    enum tone {
-        normal,
-        muted,
-        good,
-        warning,
-        bad,
+    /// The value of a property.
+    variant value {
+        text(string),
+        number(f64),
+        integer(s64),
+        flag(bool),
+        texts(list<string>),
+        numbers(list<f64>),
     }
 
-    record text {
-        text: string,
-        tone: tone,
-    }
-
-    /// How an action looks. Actions are words, not boxes.
-    enum action-kind {
-        /// The action color.
-        normal,
-        /// The main action of a window or a dialog: bold, with an arrow.
-        main,
-        /// A side action, in the secondary text color.
-        quiet,
-        /// What cannot be undone, in the danger color.
-        danger,
-    }
-
-    record button {
-        id: string,
-        label: string,
-        enabled: bool,
-        kind: action-kind,
-    }
-
-    /// A name and its value on one line, such as `Version` and `1.2`.
-    record fact {
+    record property {
         name: string,
-        value: string,
+        value: value,
     }
 
-    /// The mark at the end of an entry.
-    enum mark {
-        none,
-        /// In use or running: a dot in the "on" color.
-        on,
-        /// Not in use: a hollow ring; the entry is drawn muted.
-        off,
-        /// Needs the player.
-        attention,
-    }
-
-    /// An action of an entry; pressing it arrives as `clicked` with its id.
-    record action {
+    record part {
+        kind: string,
+        /// For a part that takes input or keeps a state between frames;
+        /// empty otherwise.
         id: string,
-        label: string,
-        kind: action-kind,
-        enabled: bool,
+        properties: list<property>,
     }
 
-    /// A row of a list: a tile with the first letter of its title, the
-    /// title, a note after it, a value at the right, and a mark. A click on
-    /// the row arrives as `clicked` with the entry's id; the plugin decides
-    /// what is chosen.
-    record entry {
+    /// A window, a dialog, a panel, or a popup, with the parts it holds.
+    record place {
+        kind: string,
         id: string,
-        title: string,
-        /// A few words after the title.
-        note: string,
-        /// A short value before the mark, such as a version.
-        value: string,
-        mark: mark,
-        /// The chosen entry is highlighted and shows its `facts` and `more`
-        /// under the row.
-        chosen: bool,
-        /// From 0 to 1: a thin line in place of the note.
-        progress: option<f32>,
-        /// Up to 4 actions shown in the row under the pointer, in place
-        /// of the note and the value.
-        actions: list<action>,
-        /// Up to 16 facts under the chosen row.
-        facts: list<fact>,
-        /// Up to 8 actions under the facts.
-        more: list<action>,
+        properties: list<property>,
+        parts: list<part>,
     }
 
-    record checkbox {
-        id: string,
-        label: string,
-        checked: bool,
-    }
-
-    record text-input {
-        id: string,
-        label: string,
-        value: string,
-        hint: string,
-    }
-
-    record choice {
-        id: string,
-        label: string,
-        options: list<string>,
-        /// Index into `options`; `none` shows no selection.
-        selected: option<u32>,
-    }
-
-    record progress {
-        /// From 0 to 1.
-        fraction: f32,
-        label: string,
-    }
-
-    record section {
-        id: string,
-        title: string,
-        open-by-default: bool,
-    }
-
-    /// A number the player sets, between `min` and `max`.
-    record number {
-        id: string,
-        label: string,
-        value: f64,
-        min: f64,
-        max: f64,
-        /// The smallest change; 0 for any.
-        step: f64,
-        /// Digits shown after the decimal point, at most 6.
-        decimals: u8,
-        /// A slider; otherwise a field the player drags or types into.
-        slider: bool,
-    }
-
-    /// A row of tabs; the plugin shows the selected tab's widgets after it.
-    record tabs {
-        id: string,
-        labels: list<string>,
-        /// Index into `labels`.
-        selected: u32,
-    }
-
-    /// A table with column headings, 1 to 16 columns.
-    record table {
-        id: string,
-        columns: list<string>,
-    }
-
-    /// One of the game's icons, by its number (the numbers game sheets
-    /// such as `Item` hold). An icon the game does not have shows as an
-    /// empty frame.
-    record icon {
-        icon: u32,
-        /// The side of the square it is drawn in, 1 to 256.
-        size: u16,
-    }
-
-    variant widget {
-        heading(string),
-        text(text),
-        button(button),
-        checkbox(checkbox),
-        text-input(text-input),
-        choice(choice),
-        progress(progress),
-        separator,
-        begin-row,
-        end-row,
-        begin-section(section),
-        end-section,
-        number(number),
-        tabs(tabs),
-        begin-table(table),
-        end-table,
-        tooltip(string),
-        icon(icon),
-        fact(fact),
-        entry(entry),
-    }
-
-    /// One short line in a window's title bar about what the window is
-    /// for, such as what is in use or what waits for the player.
-    record status {
-        text: string,
-        /// `good` shows the mark of something running, `warning` and `bad`
-        /// the mark of something that needs the player.
-        tone: tone,
-    }
-
-    record window {
-        id: string,
-        /// The window's name in its title bar; usually the plugin's name.
-        title: string,
-        /// Where the player is below the window's top level, outermost
-        /// first, at most 4 parts. The title bar shows it after the title
-        /// with a way back; see `navigated`.
-        path: list<string>,
-        status: option<status>,
-        widgets: list<widget>,
-    }
-
-    variant event {
-        /// A button was pressed.
-        clicked(widget-ref),
-        /// A checkbox was toggled.
-        toggled(toggled),
-        /// The text of a text input changed.
-        edited(edited),
-        /// An option of a choice or a tab was selected.
-        chosen(chosen),
-        /// The player set a number.
-        set(number-set),
-        /// The player closed the window with its close button.
-        closed(string),
-        /// The player went back in a window's path.
-        navigated(navigated),
-        /// The player asked to open the plugin from the Angelica menu.
-        open-requested,
-    }
-
-    record navigated {
-        window: string,
-        /// How many parts of the path stay; 0 is the window's top level.
-        depth: u32,
-    }
-
-    record widget-ref {
-        window: string,
-        id: string,
-    }
-
-    record toggled {
-        window: string,
-        id: string,
-        checked: bool,
-    }
-
-    record edited {
-        window: string,
-        id: string,
-        value: string,
-    }
-
-    record chosen {
-        window: string,
-        id: string,
-        index: u32,
-    }
-
-    record number-set {
-        window: string,
-        id: string,
-        value: f64,
+    /// What the player did, by its kind: `clicked`, `toggled` (a flag),
+    /// `edited` (a text), `chosen` (an integer), `set` (a number),
+    /// `navigated` (an integer), `closed`, or `open-requested`; later API
+    /// versions may add kinds.
+    record event {
+        kind: string,
+        /// The place's id; empty for `open-requested`.
+        place: string,
+        /// The part's id; empty for an event of the place itself.
+        part: string,
+        value: option<value>,
     }
 }

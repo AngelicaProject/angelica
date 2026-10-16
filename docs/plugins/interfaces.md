@@ -8,11 +8,14 @@ A task the cards do not cover is not available to plugins yet: file an [API requ
 
 Show the plugin's own windows and react to the player.
 
-- SDK: `ui::Window` built in `Plugin::ui`: headings and texts, buttons, checkboxes, text inputs, choices, numbers (`number`, `slider`), `tabs`, `table`, progress, game icons (`icon(number, size)`, the number from a sheet such as `Item`), `row`, `section`, and a `tooltip` for the widget before it. Actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option or a tab, by index), `Set` (a number), `Closed`, and `OpenRequested`; each names the window and widget.
+- SDK: `ui::Window` built in `Plugin::ui` from parts: texts (`heading`, `text`, `muted`, `toned`, `styled`, `fact`, `tile`), buttons (`button`, `action` with a style), `entry` rows, checkboxes, text inputs, choices, numbers (`number`, `slider`), values (`meter`, `ring`, `readout`, `countdown`, `sparkline`, `progress`), game icons (`icon(number, size)`, the number from a sheet such as `Item`), layout (`row`, `column`, `grid`, `section`, `tabs`, `table`, `separator`, `spacer`), and a `tooltip` for the part before it. `path` and `status` fill the title bar. Actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button or an entry), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option or a tab, by index), `Set` (a number), `Navigated` (the player went back along the path), `Closed`, and `OpenRequested`; each names the window and part.
 - Permission: none. Instance: main.
 - Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, choice, number, and selected tab in the plugin and update it from the event. Tabs only draw the tab row: add the selected tab's widgets after it. An icon needs no permission; one the game does not have shows as an empty frame.
 - `Event::OpenRequested` comes from the plugin's Open button in the Angelica menu; open the main window on it.
-- Contract: [windows](../formats/plugin-api-v1.md#windows).
+- Ask the player before something that matters, such as trusting a publisher or removing data, with a dialog over the window: `window.dialog(Dialog::new("trust", "Trust this publisher?").fact("Key", key).row(|row| row.action("yes", "Trust", ActionKind::Main, true).action("no", "Cancel", ActionKind::Quiet, true)))`. Its clicks name the dialog's id as `window`; `Event::Closed("trust")` means the player closed it without an answer. Return it every frame until then; only buttons take input in it.
+- The host sizes a window to its parts and moves values to their new figures itself: return the new value, never animate it.
+- Every place and part, drawn as in the game with the code that builds it: [Interface parts](https://angelicaproject.github.io/angelica/reference-interface-parts.html).
+- Contract: [places and parts](../formats/plugin-api-v1.md#places-and-parts).
 
 ```rust
 Window::new("main", "Timers")
@@ -27,6 +30,16 @@ Window::new("main", "Timers")
     .input("name", "Name", &self.name, "a timer name")
     .row(|row| row.button("add", "Add").button_enabled("clear", "Clear", !self.timers.is_empty()))
 ```
+
+## Panels
+
+Keep a few figures in view while the player plays: a gauge, a cooldown, a counter.
+
+- SDK: `ui::Panel` built in `Plugin::panels` from the same parts as a window: `Panel::new("gauge", "Gauge").meter(Meter::new(value, max).label("Gauge"))`. `.bare()` draws the parts straight over the game instead of on a plate, `.anchor(Anchor::Right)` says where the panel starts, and `.shown(Shown::InCombat)` when it is shown.
+- Permission: none. Instance: main.
+- Return the panels every frame, at most 8; a panel not returned is not shown. The player moves panels and chooses when each is shown in the layout mode (**Arrange panels** in the Angelica menu); the plugin never places them.
+- Clicks pass to the game except on parts that take input; keep a panel to values and a button or two.
+- Contract: [places and parts](../formats/plugin-api-v1.md#places-and-parts).
 
 ## Commands
 
@@ -263,6 +276,7 @@ Tell the player something happened: a duty is ready, a timer ran out.
 - SDK: `notifications::show("The duty is ready")?`, or `notifications::alert(...)` to also flash the game on the taskbar while the player is in another window.
 - Permission: `notifications`. Instance: main.
 - One line of at most 200 characters, at most one every 2 seconds; the host draws it under the plugin's name for 7 seconds.
+- `notifications::pop_up(&Popup::corner().text("Pull in 10").countdown(Countdown::new(at)))?` shows a popup built from parts for 2–10 seconds: in the corner, large above the middle of the screen (`Popup::center()`), or beside one of the plugin's panels (`Popup::beside("gauge")`). Only text, layout, and value parts; it shares `show`'s limits.
 - Contract: [notifications](../formats/plugin-api-v1.md#notifications).
 
 ## Playing a sound

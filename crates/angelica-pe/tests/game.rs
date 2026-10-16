@@ -53,3 +53,15 @@ fn file_and_mapped_layouts_find_the_same_code() {
     assert!(found.contains(&on_disk.entry_point()));
     assert_eq!(found, in_memory.scan_code(&signature));
 }
+
+#[test]
+#[ignore = "needs the installed game"]
+fn the_game_imports_set_cursor_once_in_both_layouts() {
+    let file = executable();
+    let mapped = map_file(&file);
+    let on_disk = Image::parse(&file, Layout::File).unwrap();
+    let in_memory = Image::parse(&mapped, Layout::Mapped).unwrap();
+    let slots = on_disk.import_slots("USER32.dll", "SetCursor");
+    assert_eq!(slots.len(), 1, "{slots:x?}");
+    assert_eq!(in_memory.import_slots("USER32.dll", "SetCursor"), slots);
+}

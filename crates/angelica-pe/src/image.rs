@@ -10,6 +10,11 @@ const SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 /// directories follow it.
 const DATA_DIRECTORY_COUNT: usize = 108;
 const EXCEPTION_DIRECTORY: usize = 3;
+const IMPORT_DIRECTORY: usize = 1;
+const IMPORT_DESCRIPTOR_LEN: usize = 20;
+/// The most functions read from one DLL's import lookup table, so damaged
+/// bytes never make a reader walk the whole image.
+const MOST_IMPORTS: usize = 65_536;
 const RUNTIME_FUNCTION_LEN: usize = 12;
 
 /// How the bytes of an image are laid out.
@@ -90,6 +95,8 @@ pub struct Image<'a> {
     /// Exception directory entries by begin: begin, end, the begin of the
     /// function they belong to, and their unwind information.
     functions: Vec<(u32, u32, u32, u32)>,
+    /// The RVA and size of the import directory, when the image has one.
+    imports: Option<(u32, u32)>,
 }
 
 impl<'a> Image<'a> {
@@ -150,6 +157,7 @@ impl<'a> Image<'a> {
             mapped_size: size_of_image,
             sections,
             functions: Vec::new(),
+            imports: data_directory(optional, IMPORT_DIRECTORY).filter(|&(rva, _)| rva != 0),
         };
         for section in &image.sections {
             let (start, len) = image.section_span(section);
@@ -189,6 +197,81 @@ impl<'a> Image<'a> {
             image.functions = functions;
         }
         Ok(image)
+    }
+
+    /// The RVAs of the import address table slots through which the image
+    /// calls `function` of `dll`, imported by name; the names compare
+    /// without regard to ASCII case. The loader writes the function's
+    /// address into each slot. Empty when the image does not import it by
+    /// name, or when the import directory cannot be read: in the mapped
+    /// layout, a DLL whose descriptor has no lookup table separate from its
+    /// address table, which holds addresses by then.
+    #[must_use]
+    pub fn import_slots(&self, dll: &str, function: &str) -> Vec<u32> {
+        let Some((directory, size)) = self.imports else {
+            return Vec::new();
+        };
+        let mut slots = Vec::new();
+        let count = size as usize / IMPORT_DESCRIPTOR_LEN;
+        for index in 0..count {
+            let at = directory
+                .saturating_add(u32::try_from(index * IMPORT_DESCRIPTOR_LEN).unwrap_or(u32::MAX));
+            let Some(descriptor) = self.bytes_at(at, IMPORT_DESCRIPTOR_LEN) else {
+                break;
+            };
+            let (lookup, name, addresses) = (
+                u32_at(descriptor, 0),
+                u32_at(descriptor, 12),
+                u32_at(descriptor, 16),
+            );
+            if name == 0 && addresses == 0 {
+                break;
+            }
+            if !self
+                .c_string(name)
+                .is_some_and(|found| found.eq_ignore_ascii_case(dll.as_bytes()))
+            {
+                continue;
+            }
+            let lookup = match (lookup, self.layout) {
+                (0, Layout::Mapped) => continue,
+                (0, Layout::File) => addresses,
+                (lookup, _) => lookup,
+            };
+            for entry in 0..MOST_IMPORTS {
+                let offset = u32::try_from(entry * 8).unwrap_or(u32::MAX);
+                let Some(value) = self.read_u64(lookup.saturating_add(offset)) else {
+                    break;
+                };
+                if value == 0 {
+                    break;
+                }
+                // By ordinal: no name to compare.
+                if value & (1 << 63) != 0 {
+                    continue;
+                }
+                let Ok(hint_name) = u32::try_from(value) else {
+                    continue;
+                };
+                if self
+                    .c_string(hint_name.saturating_add(2))
+                    .is_some_and(|found| found == function.as_bytes())
+                {
+                    slots.push(addresses.saturating_add(offset));
+                }
+            }
+        }
+        slots
+    }
+
+    /// The bytes of the NUL-terminated string at `rva`, at most 256 long.
+    fn c_string(&self, rva: u32) -> Option<&'a [u8]> {
+        let section = self.section_at(rva)?;
+        let data = self.section_data(section);
+        let start = (rva - section.virtual_address) as usize;
+        let rest = data.get(start..)?;
+        let end = rest.iter().take(256).position(|&byte| byte == 0)?;
+        Some(&rest[..end])
     }
 
     #[must_use]

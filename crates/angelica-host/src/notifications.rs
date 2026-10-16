@@ -1,5 +1,5 @@
-//! Notifications of plugins, shown as notes at the top right of the screen
-//! under the plugin's name.
+//! Notifications and popups of plugins, shown as notes at the top right of
+//! the screen under the plugin's name, or as popups where the plugin asked.
 #![forbid(unsafe_code)]
 
 use std::{
@@ -20,13 +20,18 @@ pub const SPACING: Duration = Duration::from_secs(2);
 pub const MOST_SHOWN: usize = 3;
 
 /// A notification on the screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Notification {
     pub plugin: String,
+    /// The line of a notification; empty for a popup.
     pub text: String,
+    /// The parts of a popup and where it is.
+    pub popup: Option<angelica_view::Popup>,
     /// Whether it asks for the player's attention.
     pub attention: bool,
     pub at: Instant,
+    /// How long it stays.
+    pub shown: Duration,
 }
 
 #[derive(Default)]
@@ -58,6 +63,35 @@ impl Notifications {
                 format!("a notification is one line of 1 to {MOST_CHARS} characters"),
             ));
         }
+        self.add(Notification {
+            plugin: plugin.to_owned(),
+            text: text.to_owned(),
+            popup: None,
+            attention,
+            at: now,
+            shown: SHOWN,
+        })
+    }
+
+    /// Shows a popup the plugin built, already checked, for its seconds.
+    ///
+    /// # Errors
+    /// A second notification or popup of the plugin within [`SPACING`].
+    pub fn pop_up(&self, plugin: &str, popup: angelica_view::Popup, now: Instant) -> Result<()> {
+        self.add(Notification {
+            plugin: plugin.to_owned(),
+            text: String::new(),
+            attention: popup.attention,
+            shown: Duration::from_secs(u64::from(popup.seconds)),
+            popup: Some(popup),
+            at: now,
+        })
+    }
+
+    fn add(&self, notification: Notification) -> Result<()> {
+        let plugin = notification.plugin.as_str();
+        let now = notification.at;
+        let attention = notification.attention;
         let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
         if shown
             .last
@@ -74,12 +108,7 @@ impl Notifications {
         }
         shown.last.insert(plugin.to_owned(), now);
         shown.attention |= attention;
-        shown.notifications.push_back(Notification {
-            plugin: plugin.to_owned(),
-            text: text.to_owned(),
-            attention,
-            at: now,
-        });
+        shown.notifications.push_back(notification);
         while shown.notifications.len() > MOST_SHOWN {
             shown.notifications.pop_front();
         }
@@ -91,7 +120,7 @@ impl Notifications {
         let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
         shown
             .notifications
-            .retain(|notification| now.duration_since(notification.at) < SHOWN);
+            .retain(|notification| now.duration_since(notification.at) < notification.shown);
         shown.notifications.iter().rev().cloned().collect()
     }
 
