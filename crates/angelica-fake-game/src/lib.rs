@@ -46,6 +46,9 @@ pub struct ScriptedGame {
     pub chat_available: AtomicBool,
     /// Every message printed in the chat log, as the game's text.
     pub printed: Mutex<Vec<Vec<u8>>>,
+    /// When set, the next message printed panics, as a failure of
+    /// Angelica's own code in a plugin's call would.
+    pub print_panics: AtomicBool,
     /// The game's objects, laid out as the game map a test named
     /// describes them ([`TestHost::use_map`]).
     objects: Mutex<objects::Objects>,
@@ -89,6 +92,7 @@ impl Default for ScriptedGame {
             commands_available: AtomicBool::new(true),
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
+            print_panics: AtomicBool::new(false),
             objects: Mutex::new(objects::Objects::default()),
             watch_available: AtomicBool::new(true),
             watched: Mutex::new(Vec::new()),
@@ -271,6 +275,10 @@ impl Game for ScriptedGame {
         if !self.chat_available.load(Ordering::Acquire) {
             return Err("the chat log does not exist yet".into());
         }
+        assert!(
+            !self.print_panics.swap(false, Ordering::AcqRel),
+            "the scripted chat log failed"
+        );
         self.printed
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

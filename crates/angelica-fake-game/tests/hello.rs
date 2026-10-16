@@ -1720,3 +1720,34 @@ fn look_finds_the_instructions_that_write_a_field() {
         "the watch ended"
     );
 }
+
+#[test]
+fn a_failure_of_angelica_in_one_plugins_call_stops_only_that_plugin() {
+    let mut test = with_commands(MANIFEST, |_| {});
+    let other = MANIFEST.replace("id = \"hello\"", "id = \"other\"");
+    test.install(&other, component()).unwrap();
+    test.host.queue(Action::Approve("other".into()));
+    test.frames(1);
+    assert_eq!(test.host.plugin("other").unwrap().status(), Status::Running);
+
+    test.game
+        .print_panics
+        .store(true, std::sync::atomic::Ordering::Release);
+    test.command("/hello");
+    test.frames(1);
+    match test.host.plugin("hello").unwrap().status() {
+        Status::Faulted(reason) => assert!(
+            reason.contains("Angelica failed during the plugin's calls")
+                && reason.contains("the scripted chat log failed"),
+            "{reason}"
+        ),
+        status => panic!("hello is {status:?}"),
+    }
+
+    // The other plugin's frames go on: it still draws its window.
+    test.event("other", Event::OpenRequested);
+    test.frames(3);
+    assert_eq!(test.host.plugin("other").unwrap().status(), Status::Running);
+    assert!(!test.host.plugin("other").unwrap().windows().is_empty());
+    assert!(test.host.plugin("hello").unwrap().windows().is_empty());
+}
