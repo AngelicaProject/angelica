@@ -1,0 +1,14 @@
+{
+  "name": "angelica",
+  "displayName": "Angelica",
+  "description": "Sets up and builds plugins for FINAL FANTASY XIV (FFXIV) with Angelica, a plugin platform for the game.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AngelicaProject",
+    "url": "https://github.com/AngelicaProject"
+  },
+  "homepage": "https://angelicaproject.github.io/angelica/",
+  "repository": "https://github.com/AngelicaProject/angelica",
+  "license": "MIT",
+  "keywords": ["ffxiv", "final-fantasy-xiv", "ffxiv-plugin", "game-plugins", "webassembly", "rust", "sandbox"]
+}

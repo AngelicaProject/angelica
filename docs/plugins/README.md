@@ -5,3 +5,4 @@ Guidance for writing plugins against the plugin API. The contracts themselves li
 - [`authoring.md`](./authoring.md) — the work loop: create the project, find the interfaces, write, test without the game, run in the game, publish.
 - [`interfaces.md`](./interfaces.md) — one card per task: SDK entry point, permission, instance, and what to remember.
 - [`api-requests.md`](./api-requests.md) — what to file when the API lacks a capability.
+- [`agent-plugin.md`](./agent-plugin.md) — the plugin that brings Angelica to coding agents: the skill, where it is installed from, and how it is released.
