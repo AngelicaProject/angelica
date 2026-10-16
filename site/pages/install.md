@@ -22,6 +22,7 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 
 ## Install
 
+1. Close the game, if it is running.
 1. Download [`angelica-setup.exe`](https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe) and run it.
 
    The first time, Windows might say **Windows protected your PC**. Select **More info**, then **Run anyway**.
@@ -49,8 +50,6 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 
 1. To close it, press <kbd>Insert</kbd> again or <kbd>Esc</kbd>.
 
-If the game was running while you installed, Angelica appears the next time you start the game.
-
 ## What the installer changes
 
 - Angelica goes to `%LOCALAPPDATA%\Angelica`, for your Windows user only.
@@ -70,6 +69,11 @@ After a game patch, Angelica gets what it needs for the new version of the game 
 
 Another mod or overlay uses the same file to start with the game, and Angelica never replaces another program's file.
 To install Angelica, remove that program or move its `dinput8.dll` out of the game folder, then run the installer again.
+
+### The installer says that the game is running
+
+Close the game, then select **Try again**.
+If the game is already closed, wait a few seconds until it has fully exited, then try again.
 
 ### The installer does not find the game
 

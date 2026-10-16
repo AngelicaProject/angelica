@@ -1,7 +1,7 @@
 //! What the installer asks of Windows. The registry is written
 //! with the system's `reg.exe`; the only `unsafe` code starts a copy of the
-//! installer with administrator rights, reads the interface language, and
-//! opens Windows' folder dialog.
+//! installer with administrator rights, reads the interface language, opens
+//! Windows' folder dialog, and lists the running programs' names.
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -158,6 +158,66 @@ pub fn pick_folder(_owner: isize, _start: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
+/// The game's program, as Windows names its process.
+const GAME_PROGRAM: &str = "ffxiv_dx11.exe";
+
+/// Whether `name`, a running program's file name, is the game's.
+fn is_game(name: &str) -> bool {
+    name.eq_ignore_ascii_case(GAME_PROGRAM)
+}
+
+/// Whether the game is running, from any folder.
+///
+/// # Errors
+/// When Windows does not list the running programs.
+#[cfg(windows)]
+pub fn game_running() -> Result<bool, String> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    // SAFETY: CreateToolhelp32Snapshot takes plain values and returns a
+    // handle or INVALID_HANDLE_VALUE.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("Windows did not list the running programs".into());
+    }
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap_or(0),
+        // SAFETY: the rest of PROCESSENTRY32W is plain data that the calls
+        // below fill in.
+        ..unsafe { std::mem::zeroed() }
+    };
+    let mut running = false;
+    // SAFETY: `snapshot` is a live snapshot handle and `entry` a
+    // PROCESSENTRY32W whose dwSize is set, as both calls require.
+    let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) } != 0;
+    while more {
+        let length = entry
+            .szExeFile
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(entry.szExeFile.len());
+        if is_game(&String::from_utf16_lossy(&entry.szExeFile[..length])) {
+            running = true;
+            break;
+        }
+        // SAFETY: as for Process32FirstW above.
+        more = unsafe { Process32NextW(snapshot, &raw mut entry) } != 0;
+    }
+    // SAFETY: `snapshot` is a live handle, closed once.
+    unsafe { CloseHandle(snapshot) };
+    Ok(running)
+}
+
+#[cfg(not(windows))]
+pub fn game_running() -> Result<bool, String> {
+    Ok(false)
+}
+
 /// Whether Windows shows its interface in Russian.
 #[must_use]
 pub fn russian() -> bool {
@@ -230,4 +290,40 @@ pub fn run_elevated(args: &str) -> Result<u32, String> {
 #[cfg(not(windows))]
 pub fn run_elevated(_args: &str) -> Result<u32, String> {
     Err("administrator rights are asked for only on Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_game_is_known_by_its_program_in_any_case() {
+        assert!(is_game("ffxiv_dx11.exe"));
+        assert!(is_game("FFXIV_DX11.EXE"));
+        assert!(!is_game("ffxiv.exe"));
+        assert!(!is_game("ffxivboot.exe"));
+        assert!(!is_game("XIVLauncher.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_running_program_named_as_the_game_is_found() {
+        let folder = tempfile::tempdir().unwrap();
+        let program = folder.path().join(GAME_PROGRAM);
+        let system = std::env::var_os("SystemRoot").unwrap();
+        std::fs::copy(
+            std::path::Path::new(&system).join(r"System32\PING.EXE"),
+            &program,
+        )
+        .unwrap();
+        let mut child = std::process::Command::new(&program)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let found = game_running();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(found, Ok(true));
+    }
 }
