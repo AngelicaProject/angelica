@@ -222,3 +222,41 @@ fn an_invalid_map_is_a_structured_error() {
     assert_eq!(error["entry"], "other.thing");
     assert!(error["path"].as_str().unwrap().ends_with("game.toml"));
 }
+
+#[test]
+fn every_event_and_root_says_whose_objects_it_reaches() {
+    let directory = tempfile::tempdir().unwrap();
+    let map = fixture(directory.path());
+    std::fs::create_dir_all(map.join("types")).unwrap();
+    std::fs::write(
+        map.join("domains.toml"),
+        "[domains.things]\ndoc = \"Things.\"\nclass = \"you\"\nread = { en = \"Sees your things\", ru = \"Видит ваши вещи\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        map.join("types/game.toml"),
+        "[types.\"game.thing\"]\ndoc = \"A thing.\"\ndomain = \"things\"\n\n[types.\"game.thing\".fields.name]\ndoc = \"Its name.\"\ntext = 16\n",
+    )
+    .unwrap();
+    let event = "[events.thing_updated]\ndoc = \"A thing is updated.\"\nat = \"game.thing.update\"\ndomain = \"things\"\n\n[events.thing_updated.args.thing]\ndoc = \"The thing.\"\narg = 0\nref = \"game.thing\"\n";
+    std::fs::write(map.join("events.toml"), event).unwrap();
+    let refused = error(&map);
+    assert_eq!(refused["code"], "whose");
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .contains("event `thing_updated`"),
+        "{refused}"
+    );
+
+    std::fs::write(
+        map.join("events.toml"),
+        event.replace(
+            "domain = \"things\"\n",
+            "domain = \"things\"\nwhose = \"you\"\n",
+        ),
+    )
+    .unwrap();
+    assert_eq!(check(&map).status.code(), Some(0));
+}

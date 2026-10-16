@@ -67,7 +67,7 @@ The call passes every argument as 64 bits in both its general and its `xmm` regi
 
 ## Domains
 
-Each field belongs to a domain of the map, by its type or its own `domain`. A query reads only the domains the plugin's manifest lists and the player approved ([permissions](./permissions.md#domains-of-the-game-map)). The root itself needs no domain: reading anything of it is reading one of its fields.
+Each field belongs to a domain of the map, by its type or its own `domain`, renamed by the `as` of the root, references, and arrays the path went through ([whose objects](../formats/game-map-v2.md#whose-objects)): the player's own character and their target are one type, read in `character` from the root `player` and in `target` from the root `target`. A query reads only the domains the plugin's manifest lists and the player approved ([permissions](./permissions.md#domains-of-the-game-map)). The root itself needs no domain: reading anything of it is reading one of its fields.
 
 An array whose elements belong to different domains has a partition: the value of a field of the element decides each element's domain, as the kind of an item container does for the bags, the armoury chest, the saddlebags, and the retainers. The planner adds the partition as a condition on the elements: only elements of permitted domains with a named value are read, and the fields below them count under those domains. A condition on that field with `=` or `in` names the elements the query wants, and each must be permitted.
 

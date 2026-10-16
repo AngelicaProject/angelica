@@ -156,6 +156,9 @@ pub struct Field {
     /// as a game string: the `field` entry of that pointer within the
     /// structure at the field's entry.
     pub pointer: Option<String>,
+    /// For a reference or an array: whose objects it reaches, and the
+    /// domains renamed below it.
+    pub entering: crate::whose::Entering,
 }
 
 /// One bit of an integer entry, read as a `bool`.
@@ -215,6 +218,8 @@ pub struct Root {
     /// (`ptr`).
     pub global: String,
     pub r#type: String,
+    /// Whose objects it holds, and the domains renamed below it.
+    pub entering: crate::whose::Entering,
 }
 
 /// The whole object model of a map.
@@ -380,6 +385,8 @@ struct RawField {
     #[serde(default)]
     forbidden: bool,
     set: Option<toml::Value>,
+    whose: Option<String>,
+    r#as: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,6 +423,8 @@ struct RawRoot {
     doc: String,
     global: String,
     r#type: String,
+    whose: Option<String>,
+    r#as: Option<BTreeMap<String, String>>,
 }
 
 /// The most elements an array is read with.
@@ -545,6 +554,8 @@ pub(crate) fn parse_roots(text: &str) -> Result<BTreeMap<String, Root>, String> 
             return Err(format!("`{name}` is not a valid root name"));
         }
         not_blank(&format!("the doc of root `{name}`"), &root.doc)?;
+        let entering = crate::whose::Entering::parse(root.whose, root.r#as)
+            .map_err(|message| format!("root `{name}`: {message}"))?;
         roots.insert(
             name.clone(),
             Root {
@@ -552,6 +563,7 @@ pub(crate) fn parse_roots(text: &str) -> Result<BTreeMap<String, Root>, String> 
                 doc: root.doc,
                 global: root.global,
                 r#type: root.r#type,
+                entering,
             },
         );
     }
@@ -681,6 +693,10 @@ fn parse_field(type_name: &str, name: &str, raw: RawField, domain: &str) -> Resu
     if set.is_some() && raw.forbidden {
         return Err("a forbidden field is never set".into());
     }
+    let entering = crate::whose::Entering::parse(raw.whose, raw.r#as)?;
+    if !entering.is_empty() && !matches!(shape, Shape::Ref(_) | Shape::Array { .. }) {
+        return Err("`whose` and `as` belong to references and arrays".into());
+    }
     Ok(Field {
         name: name.to_owned(),
         doc: raw.doc,
@@ -694,6 +710,7 @@ fn parse_field(type_name: &str, name: &str, raw: RawField, domain: &str) -> Resu
             kind: ValueKind::Void,
         }),
         pointer: raw.pointer,
+        entering,
     })
 }
 

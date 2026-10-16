@@ -29,6 +29,8 @@ pub(crate) enum CheckError {
     Record { path: PathBuf, message: String },
     #[error("{path}: an entry has an `origin`, and the map has no {NOTICES}")]
     Notices { path: PathBuf },
+    #[error("{} have no `whose`: say whether each reaches the player's objects (`you`) or others' (`others`)", .missing.join(", "))]
+    Whose { missing: Vec<String> },
 }
 
 impl CheckError {
@@ -38,6 +40,7 @@ impl CheckError {
             Self::Io { path, .. } => ("io", Some(path.as_path()), None),
             Self::Record { path, .. } => ("build-record", Some(path.as_path()), None),
             Self::Notices { path } => ("notices", Some(path.as_path()), None),
+            Self::Whose { .. } => ("whose", None, None),
         };
         json!({
             "error": {
@@ -80,6 +83,10 @@ pub fn run(args: &CheckArgs) -> ExitCode {
 
 pub(crate) fn check(directory: &Path) -> Result<Checked, CheckError> {
     let map = Map::load(directory)?;
+    let missing = map.objects().without_whose();
+    if !missing.is_empty() {
+        return Err(CheckError::Whose { missing });
+    }
     let notices = directory.join(NOTICES);
     if map.entries().any(|entry| entry.origin.is_some()) && !notices.is_file() {
         return Err(CheckError::Notices { path: notices });

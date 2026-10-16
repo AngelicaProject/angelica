@@ -394,6 +394,7 @@ impl Objects {
                         set: None,
                         bit: None,
                         pointer: None,
+                        entering: angelica_map::Entering::default(),
                     };
                     let bytes = encode(&map, &field, value)?;
                     let mut wide = [0u8; 8];

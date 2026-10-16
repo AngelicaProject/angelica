@@ -5,7 +5,7 @@
 use super::query::{self, Filter, Literal, Op, Query, Test};
 use super::schema::{RootAt, Schema};
 use crate::error::{Error, Kind, Result};
-use angelica_map::{Event, Field, Length, Meaning, Objects, Shape, ValueKind};
+use angelica_map::{Event, Field, Length, Meaning, Objects, Renames, Shape, ValueKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -218,6 +218,9 @@ struct Planner<'a> {
     /// The text a condition on the path fixed for a text field, by the
     /// field's `<type>.<field>`: the window whose elements are named.
     fixed: BTreeMap<String, String>,
+    /// The domains the path renamed on its way to the object it reached
+    /// (`whose` and `as` in the map).
+    renames: Renames,
 }
 
 fn not_found(message: String) -> Error {
@@ -257,7 +260,8 @@ impl<'a> Planner<'a> {
         let partitioned =
             matches!(&field.shape, Shape::Array { array, .. } if array.partition.is_some());
         if !partitioned {
-            self.domain(&field.domain)?;
+            let domain = self.renames.domain(&field.domain).to_owned();
+            self.domain(&domain)?;
         }
         let offset = self.schema.offset(&field.at).map_err(|reason| {
             Error::new(
@@ -345,6 +349,14 @@ impl<'a> Planner<'a> {
     /// A value reached from `type_name` by `path`: references and embedded
     /// objects, then a value or text.
     fn value(&mut self, type_name: &str, path: &[String]) -> Result<(Read, Described)> {
+        // References on the way rename domains only for this value.
+        let renames = self.renames.clone();
+        let value = self.value_through(type_name, path);
+        self.renames = renames;
+        value
+    }
+
+    fn value_through(&mut self, type_name: &str, path: &[String]) -> Result<(Read, Described)> {
         let mut current = type_name.to_owned();
         let mut hops = Vec::new();
         let mut guards = Vec::new();
@@ -371,7 +383,7 @@ impl<'a> Planner<'a> {
                             stored,
                             guards,
                         },
-                        described(field, format!("{owner}.{name}")),
+                        described(field, format!("{owner}.{name}"), &self.renames),
                     ));
                 }
                 (Shape::Text(length), true) => {
@@ -384,7 +396,7 @@ impl<'a> Planner<'a> {
                             stored: Stored::Text(*length),
                             guards,
                         },
-                        described(field, format!("{owner}.{name}")),
+                        described(field, format!("{owner}.{name}"), &self.renames),
                     ));
                 }
                 (Shape::Ref(to), false) => {
@@ -392,6 +404,7 @@ impl<'a> Planner<'a> {
                         offset,
                         pointer: true,
                     });
+                    self.renames.enter(&field.entering);
                     current.clone_from(to);
                 }
                 (Shape::Embed(of), false) => {
@@ -581,13 +594,14 @@ impl<'a> Planner<'a> {
                 format!("{}.{first} is never read by a plugin", event.name),
             ));
         }
-        self.domain(&arg.domain)?;
+        let domain = self.renames.domain(&arg.domain).to_owned();
+        self.domain(&domain)?;
         let at = arg_at(arg);
         let name = format!("{}.{first}", event.name);
         let own = || Described {
             shape: arg.shape.clone(),
             doc: arg.doc.clone(),
-            domain: arg.domain.clone(),
+            domain: domain.clone(),
             name: name.clone(),
         };
         match (&arg.shape, rest.is_empty()) {
@@ -615,7 +629,11 @@ impl<'a> Planner<'a> {
                 own(),
             )),
             (Shape::Ref(to), false) => {
-                let (mut read, described) = self.value(to, rest)?;
+                let renames = self.renames.clone();
+                self.renames.enter(&arg.entering);
+                let value = self.value(to, rest);
+                self.renames = renames;
+                let (mut read, described) = value?;
                 read.rebase(Base::Pointer(at));
                 Ok((read, described))
             }
@@ -705,21 +723,23 @@ impl<'a> Planner<'a> {
         Ok((root, at))
     }
 
-    /// An array on the path, held by an object of `holder`.
+    /// The array `field` on the path, held by an object of `holder`.
     fn array(
         &mut self,
         holder: &str,
         segment: &query::Segment,
         offset: u32,
-        array: &angelica_map::Array,
-        behind_pointer: bool,
-        domain: &str,
+        field: &Field,
     ) -> Result<ArrayStep> {
-        let partition = array
-            .partition
-            .as_ref()
-            .map(|partition| self.partition(segment, array, partition, domain))
-            .transpose()?;
+        let Shape::Array {
+            array,
+            behind_pointer,
+        } = &field.shape
+        else {
+            unreachable!("segment() passes arrays");
+        };
+        // The count is a field of the object holding the array, read
+        // before the path enters the elements.
         let count = match &array.length {
             Length::Fixed(length) => Count::Fixed(*length),
             Length::Field { field, most } => {
@@ -727,6 +747,12 @@ impl<'a> Planner<'a> {
                 Count::Field { read, most: *most }
             }
         };
+        self.renames.enter(&field.entering);
+        let partition = array
+            .partition
+            .as_ref()
+            .map(|partition| self.partition(segment, array, partition, &field.domain))
+            .transpose()?;
         let present = array
             .present
             .as_ref()
@@ -754,7 +780,7 @@ impl<'a> Planner<'a> {
         let conditions = partition.into_iter().chain(conditions).collect();
         Ok(ArrayStep {
             offset,
-            behind_pointer,
+            behind_pointer: *behind_pointer,
             stride: array.stride,
             pointers: array.pointers,
             count,
@@ -805,11 +831,10 @@ impl<'a> Planner<'a> {
             guards: Vec::new(),
         };
         let values = &objects.enums[enum_name].values;
+        let renames = self.renames.clone();
         let domain_of = |value: &str| {
-            partition
-                .domains
-                .get(value)
-                .map_or(default, String::as_str)
+            renames
+                .domain(partition.domains.get(value).map_or(default, String::as_str))
                 .to_owned()
         };
         let named = |literal: &Literal| -> Result<String> {
@@ -868,7 +893,7 @@ impl<'a> Planner<'a> {
         for value in &allowed {
             self.domain(&domain_of(value))?;
         }
-        self.covered.insert(default.to_owned());
+        self.covered.insert(self.renames.domain(default).to_owned());
         Ok(Condition {
             read,
             check: Check::NumberIn(
@@ -896,7 +921,10 @@ impl<'a> Planner<'a> {
                 event.name
             )));
         }
-        self.domain(&event.domain)?;
+        self.renames = Renames::default();
+        self.renames.enter(&event.entering);
+        let domain = self.renames.domain(&event.domain).to_owned();
+        self.domain(&domain)?;
         if let Err(reason) = self
             .schema
             .events
@@ -953,7 +981,9 @@ impl<'a> Planner<'a> {
             unreachable!("filtered above");
         };
         self.depth += 1;
-        self.domain(&arg.domain)?;
+        let domain = self.renames.domain(&arg.domain).to_owned();
+        self.domain(&domain)?;
+        self.renames.enter(&arg.entering);
         steps.push(Step::FromArg(arg_at(arg)));
         let name = format!("{}.{}", event.name, segment.field);
         self.one_object_filter(&name, segment.filter.as_ref(), to, steps)?;
@@ -1022,6 +1052,7 @@ impl<'a> Planner<'a> {
             return Err(not_found(message));
         }
         let (root, at) = self.root(&query.root)?;
+        self.renames.enter(&root.entering);
         self.one_object_filter(&root.name, query.filter.as_ref(), &root.r#type, steps)?;
         Ok((Start::Root(at), Some(root.r#type.clone()), 0))
     }
@@ -1070,22 +1101,13 @@ impl<'a> Planner<'a> {
                     offset,
                     pointer: matches!(field.shape, Shape::Ref(_)),
                 }));
+                self.renames.enter(&field.entering);
                 let name = format!("{holder}.{}", segment.field);
                 self.one_object_filter(&name, segment.filter.as_ref(), to, steps)?;
                 Ok(to.clone())
             }
-            Shape::Array {
-                array,
-                behind_pointer,
-            } => {
-                let step = self.array(
-                    holder,
-                    segment,
-                    offset,
-                    array,
-                    *behind_pointer,
-                    &field.domain,
-                )?;
+            Shape::Array { array, .. } => {
+                let step = self.array(holder, segment, offset, field)?;
                 steps.push(Step::Array(step));
                 Ok(array.of.clone())
             }
@@ -1173,11 +1195,11 @@ enum Scope<'s> {
     Event(&'s Event),
 }
 
-fn described(field: &Field, name: String) -> Described {
+fn described(field: &Field, name: String, renames: &Renames) -> Described {
     Described {
         shape: field.shape.clone(),
         doc: field.doc.clone(),
-        domain: field.domain.clone(),
+        domain: renames.domain(&field.domain).to_owned(),
         name,
     }
 }
@@ -1267,6 +1289,7 @@ pub fn prepare_objects(schema: &Schema, text: &str) -> Result<Prepared> {
         objects_only: true,
         reached: None,
         fixed: BTreeMap::new(),
+        renames: Renames::default(),
     }
     .plan(&query)
 }
@@ -1293,6 +1316,7 @@ pub fn prepare_rule(
         objects_only: true,
         reached: None,
         fixed: BTreeMap::new(),
+        renames: Renames::default(),
     }
     .plan(&query)
 }
@@ -1303,6 +1327,8 @@ pub struct Target {
     /// The type that holds the field.
     pub owner: String,
     pub field: Field,
+    /// The field's domain, as the path renamed it.
+    pub domain: String,
     pub offset: u32,
     /// How its value is read from each object the plan reaches.
     pub read: Read,
@@ -1349,6 +1375,7 @@ pub fn prepare_set(
         objects_only: true,
         reached: None,
         fixed: BTreeMap::new(),
+        renames: Renames::default(),
     };
     let mut prepared = planner.plan(&query)?;
     let reached = planner
@@ -1365,6 +1392,7 @@ pub fn prepare_set(
         prepared,
         Target {
             owner,
+            domain: planner.renames.domain(&field.domain).to_owned(),
             field: field.clone(),
             offset,
             read,
@@ -1390,6 +1418,7 @@ fn plan(
         objects_only: false,
         reached: None,
         fixed: BTreeMap::new(),
+        renames: Renames::default(),
     }
     .plan(&query)
 }

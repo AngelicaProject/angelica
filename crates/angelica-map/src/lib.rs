@@ -15,6 +15,7 @@ mod objects;
 mod record;
 mod resolve;
 mod sheets;
+mod whose;
 mod windows;
 
 pub use actions::{
@@ -35,6 +36,7 @@ pub use objects::{
 pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};
 pub use sheets::{ColumnType, KnownLayout, NamedColumn, SheetLayout, SheetSchema};
+pub use whose::{Entering, Renames, Whose};
 pub use windows::{
     ElementKind, KnownWindowLayout, NamedElement, WindowSchema, window_layout_fingerprint,
 };
