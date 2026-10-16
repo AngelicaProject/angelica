@@ -75,7 +75,10 @@ text = 65535
 
 /// Both plugins approved, after `setup` prepared the host.
 fn started_over(limits: Limits, setup: impl FnOnce(&TestHost)) -> TestHost {
-    let mut test = TestHost::new(limits);
+    started_in(TestHost::new(limits), setup)
+}
+
+fn started_in(mut test: TestHost, setup: impl FnOnce(&TestHost)) -> TestHost {
     setup(&test);
     test.install(HOSTILE, component("angelica-hostile"))
         .unwrap();
@@ -127,7 +130,7 @@ fn faulted(test: &TestHost) -> String {
 
 #[test]
 fn a_guest_loop_runs_out_of_time() {
-    let test = started(Limits::default());
+    let test = started_in(TestHost::exact(Limits::default()), |_| {});
     click(&test, "spin");
     test.frames(1);
     assert_eq!(faulted(&test), "tick trapped: the call ran out of time");

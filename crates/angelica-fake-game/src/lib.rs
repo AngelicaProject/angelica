@@ -420,7 +420,28 @@ pub struct TestHost {
 /// One frame at 60 frames a second.
 const FRAME: f64 = 1.0 / 60.0;
 
+/// The guest time of a frame in tests that keep the game's limit: a test
+/// machine under load stops a thread for longer than a frame, which the
+/// game's 20 ms would count against the plugin. Fuel still bounds the
+/// calls.
+pub const TEST_CALL_TIME: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// `limits` with [`TEST_CALL_TIME`] when they keep the game's guest time.
+fn roomy(limits: Limits) -> Limits {
+    if limits.call_time == Limits::default().call_time {
+        Limits {
+            call_time: TEST_CALL_TIME,
+            ..limits
+        }
+    } else {
+        limits
+    }
+}
+
 impl TestHost {
+    /// A host with `limits`, except that the game's guest time of a frame
+    /// becomes [`TEST_CALL_TIME`]; [`TestHost::exact`] keeps it.
+    ///
     /// # Panics
     /// When the sandbox cannot be created.
     #[must_use]
@@ -428,12 +449,26 @@ impl TestHost {
         Self::in_folder(tempfile::tempdir().expect("temporary folder"), limits)
     }
 
-    /// A host over the folders of an earlier one, as at the next game start.
+    /// A host with exactly `limits`, for a test of the guest time limit.
+    ///
+    /// # Panics
+    /// When the sandbox cannot be created.
+    #[must_use]
+    pub fn exact(limits: Limits) -> Self {
+        Self::create(tempfile::tempdir().expect("temporary folder"), limits)
+    }
+
+    /// A host over the folders of an earlier one, as at the next game
+    /// start, with `limits` as [`TestHost::new`] takes them.
     ///
     /// # Panics
     /// When the sandbox cannot be created.
     #[must_use]
     pub fn in_folder(folder: tempfile::TempDir, limits: Limits) -> Self {
+        Self::create(folder, roomy(limits))
+    }
+
+    fn create(folder: tempfile::TempDir, limits: Limits) -> Self {
         let game = Arc::new(ScriptedGame::default());
         let services = Arc::new(Services {
             data: Arc::new(runtime::game_data::GameData::new(Some(
@@ -520,7 +555,7 @@ impl TestHost {
     /// # Errors
     /// When a package is refused.
     pub fn restart(self) -> Result<Self, String> {
-        let mut test = Self::in_folder(self.folder, self.limits);
+        let mut test = Self::create(self.folder, self.limits);
         for (manifest, component) in self.installed {
             test.install(&manifest, &component)?;
         }

@@ -70,7 +70,7 @@ Rules that keep a plugin within its limits:
 
 ## 4. Test without the game
 
-`cargo test` builds the component and runs `tests/`. `angelica_fake_game::TestHost` installs the component in the real host with temporary folders and a scripted game, and the test plays the game's part:
+`cargo test` builds the component and runs `tests/`. `angelica_fake_game::TestHost` installs the component in the real host with temporary folders and a scripted game. It allows 1 s of guest time per frame instead of the game's 20 ms, so a busy CI machine does not fault the plugin; fuel limits the calls as in the game, and in the game 20 ms stays the limit. The test plays the game's part:
 
 | The test wants | Use |
 | --- | --- |
