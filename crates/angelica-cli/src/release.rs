@@ -43,6 +43,10 @@ pub struct ReviewArgs {
     /// The plugin file the catalog publishes now.
     #[arg(long, requires = "previous_entry")]
     previous_file: Option<PathBuf>,
+    /// The released game map's folder, whose domains decide whether a new
+    /// plugin merges by itself; without it, a new plugin waits.
+    #[arg(long)]
+    map: Option<PathBuf>,
     #[command(flatten)]
     reporting: Output,
 }
@@ -300,10 +304,21 @@ fn review(args: &ReviewArgs) -> Result<serde_json::Value, String> {
         }
         _ => None,
     };
+    let domains = match &args.map {
+        Some(folder) => Some(
+            angelica_map::Map::load(folder)
+                .map_err(|e| format!("{}: {e}", folder.display()))?
+                .objects()
+                .domains
+                .clone(),
+        ),
+        None => None,
+    };
     let review = crate::catalog::review(
         &entry,
         &author_file,
         previous.as_ref().map(|(entry, manifest)| (entry, manifest)),
+        domains.as_ref(),
     )?;
     serde_json::to_value(review).map_err(|e| e.to_string())
 }

@@ -2,9 +2,12 @@
 //! (`docs/architecture/catalog.md`, `docs/formats/catalog-v1.md`): a review
 //! of an entry's pull request, which says whether it merges by itself, and
 //! the signed index of the catalog.
-use runtime::manifest::Manifest;
+use runtime::manifest::{Class, Manifest, domain_class};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The domains of the released game map, by name.
+pub type Domains = BTreeMap<String, angelica_map::Domain>;
 
 /// `plugins/<id>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,7 +155,8 @@ pub fn open_earlier(file: &[u8]) -> Result<([u8; 32], Manifest), String> {
 
 /// Reviews `entry` against the catalog's `previous` entry and the manifest
 /// of its published version, with the author's plugin file from the release
-/// of the entry's tag.
+/// of the entry's tag. A new plugin merges by itself only with the released
+/// map's `domains` ([`new_plugin`]).
 ///
 /// # Errors
 /// An author file that is not the entry's: another key, id, or version.
@@ -160,6 +164,7 @@ pub fn review(
     entry: &Entry,
     author_file: &[u8],
     previous: Option<(&Entry, &Manifest)>,
+    domains: Option<&Domains>,
 ) -> Result<Review, String> {
     let (author, manifest) = open(author_file)?;
     if runtime::package::hex(&author) != entry.author_key {
@@ -184,7 +189,7 @@ pub fn review(
     let (mut permissions_added, mut lens_added, mut hosts_added) =
         (Vec::new(), Vec::new(), Vec::new());
     match previous {
-        None => reasons.push("a new plugin".to_owned()),
+        None => reasons.extend(new_plugin(&manifest, domains)),
         Some((before, published)) => {
             if before.repository != entry.repository {
                 reasons.push(format!("the repository changes from {}", before.repository));
@@ -234,6 +239,73 @@ pub fn review(
         lens_added,
         hosts_added,
     })
+}
+
+/// Why a new plugin waits for a maintainer: it asks for something in a class
+/// above **Changes what you see** (acting for the player, the internet, or
+/// other players), or names a domain the released map does not describe as
+/// it asks for it. Without the map, every new plugin waits.
+fn new_plugin(manifest: &Manifest, domains: Option<&Domains>) -> Vec<String> {
+    let Some(domains) = domains else {
+        return vec!["a new plugin".to_owned()];
+    };
+    let mut by_class: BTreeMap<Class, Vec<String>> = BTreeMap::new();
+    let mut unknown = Vec::new();
+    for permission in manifest.permissions() {
+        by_class
+            .entry(permission.class())
+            .or_default()
+            .push(permission.name().to_owned());
+    }
+    for name in manifest.lens_read() {
+        match domains
+            .get(&name)
+            .and_then(|domain| domain_class(domain.class))
+        {
+            Some(class) => by_class
+                .entry(class)
+                .or_default()
+                .push(format!("{name}.read")),
+            None => unknown.push(format!("{name}.read")),
+        }
+    }
+    for name in manifest.lens_act() {
+        by_class
+            .entry(Class::Acts)
+            .or_default()
+            .push(format!("{name}.act"));
+    }
+    for name in manifest.lens_change() {
+        if domains
+            .get(&name)
+            .is_some_and(|domain| domain.change.is_some())
+        {
+            by_class
+                .entry(Class::WhatYouSee)
+                .or_default()
+                .push(format!("{name}.change"));
+        } else {
+            unknown.push(format!("{name}.change"));
+        }
+    }
+    let mut reasons: Vec<String> = by_class
+        .into_iter()
+        .filter(|(class, _)| *class < Class::WhatYouSee)
+        .map(|(class, names)| {
+            format!(
+                "a new plugin in the class {}: {}",
+                class.title(),
+                names.join(", ")
+            )
+        })
+        .collect();
+    if !unknown.is_empty() {
+        reasons.push(format!(
+            "a new plugin with game map domains the released map does not describe: {}",
+            unknown.join(", ")
+        ));
+    }
+    reasons
 }
 
 /// `withdrawn.toml`.
@@ -362,7 +434,13 @@ mod tests {
             b"\0asm",
         )
         .unwrap();
-        let update = review(&entry("v1.1.0", &key), &file, Some((&before, &published))).unwrap();
+        let update = review(
+            &entry("v1.1.0", &key),
+            &file,
+            Some((&before, &published)),
+            None,
+        )
+        .unwrap();
         assert!(update.automatic, "{:?}", update.reasons);
 
         let file = runtime::author::sign(
@@ -371,7 +449,13 @@ mod tests {
             b"\0asm",
         )
         .unwrap();
-        let more = review(&entry("v1.2.0", &key), &file, Some((&before, &published))).unwrap();
+        let more = review(
+            &entry("v1.2.0", &key),
+            &file,
+            Some((&before, &published)),
+            None,
+        )
+        .unwrap();
         assert!(!more.automatic);
         assert_eq!(more.permissions_added, vec!["sound.play"]);
 
@@ -390,22 +474,116 @@ mod tests {
             &entry("v1.3.0", &key),
             &lens_file,
             Some((&before, &published)),
+            None,
         )
         .unwrap();
         assert!(!lens.automatic);
         assert_eq!(lens.lens_added, vec!["text.change"]);
         assert_eq!(lens.reasons, vec!["new game map domains: text.change"]);
 
-        let new = review(&entry("v1.2.0", &key), &file, None).unwrap();
+        let new = review(&entry("v1.2.0", &key), &file, None, None).unwrap();
         assert_eq!(new.reasons, vec!["a new plugin"]);
 
         let stranger = SigningKey::from_bytes(&[4; 32]);
         let forged =
             runtime::author::sign(&stranger, manifest("1.1.0", "").as_bytes(), b"\0asm").unwrap();
-        assert!(review(&entry("v1.1.0", &key), &forged, Some((&before, &published))).is_err());
         assert!(
-            review(&entry("v1.3.0", &key), &file, Some((&before, &published))).is_err(),
+            review(
+                &entry("v1.1.0", &key),
+                &forged,
+                Some((&before, &published)),
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            review(
+                &entry("v1.3.0", &key),
+                &file,
+                Some((&before, &published)),
+                None
+            )
+            .is_err(),
             "the release holds another version"
+        );
+    }
+
+    fn domain(name: &str, class: angelica_map::DomainClass, change: bool) -> angelica_map::Domain {
+        let words = angelica_map::Wording {
+            en: String::new(),
+            ru: String::new(),
+        };
+        angelica_map::Domain {
+            name: name.into(),
+            doc: String::new(),
+            class,
+            read: words.clone(),
+            change: change.then(|| words.clone()),
+            act: None,
+        }
+    }
+
+    #[test]
+    fn a_new_plugin_merges_by_itself_only_below_the_serious_classes() {
+        use angelica_map::DomainClass;
+        let key = SigningKey::from_bytes(&[3; 32]);
+        let domains: Domains = [
+            domain("inventory", DomainClass::You, false),
+            domain("text", DomainClass::Display, true),
+            domain("chat", DomainClass::Others, false),
+        ]
+        .into_iter()
+        .map(|domain| (domain.name.clone(), domain))
+        .collect();
+        let new = |extra: &str| {
+            let file = runtime::author::sign(
+                &key,
+                format!(
+                    "{}{extra}",
+                    manifest("1.0.0", "\"chat.print\" = true\n\"draw.world\" = true\n")
+                )
+                .as_bytes(),
+                b"\0asm",
+            )
+            .unwrap();
+            review(&entry("v1.0.0", &key), &file, None, Some(&domains)).unwrap()
+        };
+
+        let only_you = new("[lens]\nread = [\"inventory\"]\nchange = [\"text\"]\n");
+        assert!(only_you.automatic, "{:?}", only_you.reasons);
+
+        let others = new("[lens]\nread = [\"inventory\", \"chat\"]\n");
+        assert_eq!(
+            others.reasons,
+            vec!["a new plugin in the class Sees other players: chat.read"]
+        );
+        let acts = new("[lens]\nact = [\"inventory\"]\n");
+        assert_eq!(
+            acts.reasons,
+            vec!["a new plugin in the class Acts in the game for you: inventory.act"]
+        );
+        let unknown = new("[lens]\nread = [\"retainers\"]\nchange = [\"inventory\"]\n");
+        assert_eq!(
+            unknown.reasons,
+            vec![
+                "a new plugin with game map domains the released map does not describe: retainers.read, inventory.change"
+            ]
+        );
+
+        let internet = runtime::author::sign(
+            &key,
+            format!(
+                "{}[http]\nhosts = [\"example.com\"]\n",
+                manifest("1.0.0", "\"http.get\" = true\n")
+            )
+            .as_bytes(),
+            b"\0asm",
+        )
+        .unwrap();
+        let internet = review(&entry("v1.0.0", &key), &internet, None, Some(&domains)).unwrap();
+        assert_eq!(
+            internet.reasons,
+            vec!["a new plugin in the class Uses the internet: http.get"]
         );
     }
 
