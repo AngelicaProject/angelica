@@ -318,7 +318,7 @@ footer .big span:hover { color: var(--red); }
 <div class="dock"><div class="wrap"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download</a></div></div>
 <div class="wrap" id="top">
 
-<nav class="bar"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="nav" href="https://github.com/AngelicaProject/angelica">GitHub</a></nav>
+<nav class="bar"><a class="mark" href="#top">angelica</a><a class="nav" href="#window">In the game</a><a class="nav" href="#engine">The engine</a><a class="nav" href="#build">Build</a><a class="nav" href="#install">Install</a><a class="nav" href="#docs">Documentation</a><a class="nav" href="https://github.com/AngelicaProject/angelica">GitHub</a><a class="nav" href="https://discord.gg/mv24mq53h2">Discord</a></nav>
 
 <header class="hero" data-pace="1.7" data-ideas='${JSON.stringify(ideas)}'>
   <div class="grid"></div>${lily("hero", [0.184, 0.435, 0.62], [0.659, 0.263, 0.184], true)}<div class="ground"></div>
@@ -329,7 +329,7 @@ footer .big span:hover { color: var(--red); }
     <h1 class="word">angelica</h1>
     <p class="lead">An engine for every idea you bring to Eorzea.</p>
     <p class="sub">A plugin platform for FINAL FANTASY XIV. Plugins run in a sandbox and can do only what you allowed.</p>
-    <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a><a class="b two" href="#docs">Documentation</a></div>
+    <div class="btns"><a class="b one" href="https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe">Download for Windows</a><a class="b two" href="install.html">Documentation</a><a class="b two" href="https://discord.gg/mv24mq53h2">Discord</a></div>
     <div class="status"><div class="facts">${facts.map(([label, value, detail]) => `<div><span>${label}</span><b>${value}</b><small>${detail}</small></div>`).join("")}</div></div>
   </div>
 </header>
@@ -389,7 +389,7 @@ footer .big span:hover { color: var(--red); }
   </div>
 </section>
 
-<footer><div class="row"><a href="https://github.com/AngelicaProject/angelica">Source code</a><a href="https://github.com/AngelicaProject/angelica/releases">Releases</a><span>Angelica is not affiliated with Square Enix. FINAL FANTASY XIV is a trademark of Square Enix Holdings Co., Ltd.</span></div>
+<footer><div class="row"><a href="https://github.com/AngelicaProject/angelica">Source code</a><a href="https://github.com/AngelicaProject/angelica/releases">Releases</a><a href="https://discord.gg/mv24mq53h2">Discord</a><span>Angelica is not affiliated with Square Enix. FINAL FANTASY XIV is a trademark of Square Enix Holdings Co., Ltd.</span></div>
   <div class="big" data-r aria-hidden="true">${letters("angelica")}</div></footer>
 
 </div>
