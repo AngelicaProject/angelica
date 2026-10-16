@@ -89,7 +89,9 @@ const letters = (word) => [...word].map((c, i) => `<span style="--i:${i}">${c}</
 const ticker = ["use actions for you", "teleport you", "answer the game's dialogs", "see your character", "see the items you carry", "read chat", "hide chat messages", "change the game's text", "change your camera's zoom limits", "hide parts of the game's windows", "replace fonts and textures", "draw over the game world", "show notifications", "play sounds", "add chat commands", "print to your chat log", "download from approved hosts"].join(" · ") + " · ";
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Angelica</title>
+<title>Angelica: plugins for FINAL FANTASY XIV</title>
+<meta name="description" content="A plugin platform for FINAL FANTASY XIV (FFXIV).">
+<link rel="canonical" href="https://angelicaproject.github.io/angelica/">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700&family=Quicksand:wght@600&display=swap">
 <style>

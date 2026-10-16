@@ -55,5 +55,5 @@ Each file is a static instance of the variable font at that weight, cut with fon
 ## Licensing
 
 - The host, loader, tools, and installer are AGPL-3.0-only.
-- `wit/`, `angelica-sdk`, `angelica-view`, and `angelica-text` are MIT, so plugins may use any license. Their directories carry their own license file.
+- `wit/`, `angelica-sdk`, `angelica-view`, and `angelica-text` are MIT, so plugins may use any license. The plugin for coding agents (`agent-plugin/`) is MIT, so the skill may be copied into any agent. Their directories carry their own license file.
 - Code taken from another project keeps that project's license and attribution. Behavior reimplemented from a description of formats, protocols, or user experience carries no such obligation.

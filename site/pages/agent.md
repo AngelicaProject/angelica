@@ -9,7 +9,7 @@ next: Run your plugin in the game
 
 # Build a plugin with an agent
 
-Tell a coding agent what you want a plugin to do. It sets up the project, writes and tests the plugin, and asks you whenever the decision is yours.
+Tell a coding agent what you want a FINAL FANTASY XIV plugin to do. It sets up the project, writes and tests the plugin, and asks you whenever the decision is yours.
 
 ## What you need
 
@@ -25,6 +25,23 @@ Read https://angelicaproject.github.io/angelica/agent-setup.md and follow it to 
 ```
 
 The card at the top of the home page writes the same message with your idea in it. The agent works from [these instructions](https://angelicaproject.github.io/angelica/agent-setup.md), and then from the `AGENTS.md` in the project it creates.
+
+## Add Angelica to your agent
+
+Angelica's skill, `ffxiv-plugin`, keeps these instructions in your agent, so asking it for an FFXIV plugin is enough. Install it once.
+
+In Claude Code:
+
+```shell
+claude plugin marketplace add AngelicaProject/angelica
+claude plugin install angelica@angelica
+```
+
+In other agents that read Agent Skills, with the GitHub command:
+
+```shell
+gh skill install AngelicaProject/angelica ffxiv-plugin
+```
 
 ## What the agent does, and what it asks you
 

@@ -84,11 +84,25 @@ jobs:
       - run: npm ci
       - run: node build.mjs
 
+  # The plugin for coding agents (docs/plugins/agent-plugin.md): its
+  # manifest, its skill, and the marketplace that lists it are valid.
+  agent-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npx --yes @anthropic-ai/claude-code@2.1.301 plugin validate --strict ./agent-plugin
+      - run: npx --yes @anthropic-ai/claude-code@2.1.301 plugin validate --strict .
+
   # The one check the main ruleset requires: it passes only when every job
   # above passed, so jobs can change without changing the ruleset.
   ci:
     if: always()
-    needs: [rust, supply-chain, site]
+    needs: [rust, supply-chain, site, agent-plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to pass

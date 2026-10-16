@@ -1,5 +1,5 @@
 // Builds the website into dist/: the home page with the facts of the release feeds, a page for every Markdown file in pages/,
-// the same pages as Markdown, and llms.txt. Then checks that every link inside the site
+// the same pages as Markdown, llms.txt, and sitemap.xml. Then checks that every link inside the site
 // leads to a file and, with a #, to an element of that file.
 // Usage: node build.mjs
 import { execFileSync } from "node:child_process";
@@ -73,9 +73,11 @@ const canonical = [
 ];
 writeFileSync(join(dist, "llms.txt"), `# Angelica
 
-> A plugin platform for FINAL FANTASY XIV. A plugin is a Rust WebAssembly component that runs in a sandbox and can do only what the player allowed. It names entries of the game map instead of game addresses, so it keeps working across game patches.
+> A plugin platform for FINAL FANTASY XIV (FFXIV). A plugin is a Rust WebAssembly component that runs in a sandbox and can do only what the player allowed. It names entries of the game map instead of game addresses, so it keeps working across game patches.
 
-To set up a plugin project, follow [Set up an Angelica plugin project](${site}agent-setup.md); the project's AGENTS.md then guides the work.
+To set up an FFXIV plugin project, follow [Set up an Angelica plugin project](${site}agent-setup.md); the project's AGENTS.md then guides the work.
+
+The same instructions come as an agent skill, \`ffxiv-plugin\`. In Claude Code: \`claude plugin marketplace add AngelicaProject/angelica\`, then \`claude plugin install angelica@angelica\`. In other agents that read Agent Skills: \`gh skill install AngelicaProject/angelica ffxiv-plugin\`.
 
 ## Players
 
@@ -94,6 +96,14 @@ ${listed("Understand").join("\n")}
 
 - [Architecture overview](${raw}docs/architecture/overview.md): The components of Angelica and what each owns.
 - [Product principles](${raw}docs/product/principles.md): The invariants every change keeps.
+`);
+
+// sitemap.xml: every page for search engines.
+const listedPages = ["", ...readdirSync(dist).filter((f) => f.endsWith(".html") && f !== "index.html").sort()];
+writeFileSync(join(dist, "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${listedPages.map((f) => `<url><loc>${site}${f}</loc></url>`).join("\n")}
+</urlset>
 `);
 
 // Every link that stays inside the site must lead somewhere.

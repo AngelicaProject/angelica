@@ -9,6 +9,7 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 | `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests with all features. |
 | `supply-chain` | `ubuntu-latest` | `cargo deny` passes; workflows pass `actionlint` and `zizmor`. |
 | `site` | `ubuntu-latest` | The [website](./website.md) builds and every link inside it leads somewhere. |
+| `agent-plugin` | `ubuntu-latest` | The [plugin for coding agents](../plugins/agent-plugin.md) and the marketplace that lists it pass `claude plugin validate --strict`. |
 | `ci` | `ubuntu-latest` | Every job above passed. |
 
 ```text
@@ -18,6 +19,8 @@ cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile --target wasm
 cargo test --workspace --all-features --locked
 cargo deny --locked check
 cd site && npm ci && node build.mjs
+npx @anthropic-ai/claude-code@2.1.301 plugin validate --strict ./agent-plugin
+npx @anthropic-ai/claude-code@2.1.301 plugin validate --strict .
 ```
 
 No job requires a game installation.
