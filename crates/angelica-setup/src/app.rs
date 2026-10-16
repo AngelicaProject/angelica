@@ -656,6 +656,7 @@ fn install_all(
         return Err(w.development_text.into());
     };
     payload.verify(&release).map_err(|e| failure(w, &e))?;
+    closed_game(w)?;
     report(w.step_files, 0.35);
     let installation = install::installation_dir();
     install::install_files(
@@ -694,6 +695,7 @@ fn install_all(
 }
 
 fn uninstall_all(keep: bool, w: &Words) -> Result<(), String> {
+    closed_game(w)?;
     let installation = std::env::current_exe()
         .ok()
         .and_then(|program| program.parent().map(std::path::Path::to_path_buf))
@@ -713,6 +715,16 @@ fn uninstall_all(keep: bool, w: &Words) -> Result<(), String> {
     system::unregister();
     install::remove_installation(&installation, keep);
     Ok(())
+}
+
+/// Angelica is installed and removed only while the game is closed: the
+/// game holds the proxy and the runtime open while it runs.
+fn closed_game(w: &Words) -> Result<(), String> {
+    match system::game_running() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(w.in_use.into()),
+        Err(reason) => Err(failure(w, &reason)),
+    }
 }
 
 fn place_error(w: &Words, error: &install::PlaceError) -> String {

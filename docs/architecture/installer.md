@@ -12,6 +12,7 @@ It offers no plugins: the player installs them from the Angelica menu in the gam
 
 ## What it does
 
+- **Waits for the game to close.** While a program named `ffxiv_dx11.exe` runs, from any folder, it installs and removes nothing and says that the game is running, with **Try again**: the running game holds the proxy and the runtime open.
 - **Finds the game** in, in order: Steam libraries (the Steam path from the registry and `libraryfolders.vdf`, app 39210), the Square Enix launcher's default folder, and XIVLauncher's configured game path. A folder counts only when it holds `game/ffxiv_dx11.exe`.
 - **Installs Angelica** for the current user into `%LOCALAPPDATA%\Angelica` ([installation](../formats/host-installation-v1.md)): `runtime.dll`, `plugin-installer.exe`, and their release signatures, taken from inside the installer and verified against the release key before they are written. It writes the channel the installer was built for into `state/_angelica.json`. The host downloads the game map and later updates by itself.
 - **Puts two files into the game's `game` folder**: the proxy `dinput8.dll` ([loading](./loading.md)) and `angelica.json` with the installation folder. When that folder is not writable for the user (as under `Program Files`), it starts a second copy of itself with administrator rights that only copies these two files and exits.
@@ -21,7 +22,7 @@ It offers no plugins: the player installs them from the Angelica menu in the gam
 
 ## Removing
 
-The uninstaller, run from *Installed apps*, shows the same window: that Angelica's file leaves the game folder, and the choice to keep or delete the player's plugins and their data. It removes `dinput8.dll` (only when it is Angelica's proxy) and `angelica.json` from the game folder, asking for administrator rights the same way. Without the player's data it removes the installation folder; with them it leaves `plugins`, `grants`, `state`, and `storage` in place for a later installation.
+The uninstaller, run from *Installed apps*, shows the same window: that Angelica's file leaves the game folder, and the choice to keep or delete the player's plugins and their data. It starts only while the game is closed, as installing does. It removes `dinput8.dll` (only when it is Angelica's proxy) and `angelica.json` from the game folder, asking for administrator rights the same way. Without the player's data it removes the installation folder; with them it leaves `plugins`, `grants`, `state`, and `storage` in place for a later installation.
 
 ## Building
 
