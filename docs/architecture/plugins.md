@@ -20,7 +20,7 @@ The menu shows what each job did. Without the program, the menu says so when the
 
 - A plugin sees only its own linear memory and the host's imports. Game memory is never mapped into it; everything a plugin gives or gets is copied.
 - Every operation on the game is a host service with a verified adapter and a permission ([services](./services.md)). There is no access to game memory, game functions, or addresses.
-- The calls of a frame are bounded together in guest time, fuel, and time including host calls; each instance in memory. A trap or an exceeded limit faults the plugin: its effects are removed and it stays off until the player retries it. The game keeps running.
+- The calls of a frame are bounded together in guest time, fuel, and time including host calls; each instance in memory. A trap or an exceeded limit faults the plugin: its effects are removed and it stays off until the player retries it. So does a panic of Angelica's own code during the plugin's `start`, frame calls, or `stop`, caught around each plugin's calls: only that plugin stops, and the other plugins' frames go on. The game keeps running.
 - WASI imports Rust's standard library adds expose only random numbers and clocks; all others trap.
 
 ## Instances

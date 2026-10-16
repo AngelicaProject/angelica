@@ -579,20 +579,23 @@ impl Host {
             self.limits.start_wall,
             self.limits.fuel.saturating_mul(100),
         );
-        let result = sandbox::call(&mut store, |store| {
-            let bindings = plugin
-                .pre
-                .instantiate(&mut *store)
-                .map_err(|e| sandbox::describe_trap(store, &e))?;
-            match bindings.angelica_plugin_guest().call_start(&mut *store) {
-                Ok(Ok(())) => Ok(bindings),
-                Ok(Err(reason)) => Err(format!("start failed: {reason}")),
-                Err(trap) => Err(format!(
-                    "start trapped: {}",
-                    sandbox::describe_trap(store, &trap)
-                )),
-            }
-        });
+        let result = caught(|| {
+            sandbox::call(&mut store, |store| {
+                let bindings = plugin
+                    .pre
+                    .instantiate(&mut *store)
+                    .map_err(|e| sandbox::describe_trap(store, &e))?;
+                match bindings.angelica_plugin_guest().call_start(&mut *store) {
+                    Ok(Ok(())) => Ok(bindings),
+                    Ok(Err(reason)) => Err(format!("start failed: {reason}")),
+                    Err(trap) => Err(format!(
+                        "start trapped: {}",
+                        sandbox::describe_trap(store, &trap)
+                    )),
+                }
+            })
+        })
+        .and_then(|result| result);
         match result {
             Ok(bindings) => {
                 self.services.messages.started(&id);
@@ -630,12 +633,16 @@ impl Host {
                 self.limits.fuel.saturating_mul(100),
             );
             let guest = running.bindings.angelica_plugin_guest();
-            if let Err(trap) = sandbox::call(&mut running.store, |store| guest.call_stop(store)) {
-                self.diagnostic(format!(
+            match caught(|| sandbox::call(&mut running.store, |store| guest.call_stop(store))) {
+                Ok(Ok(())) => {}
+                Ok(Err(trap)) => self.diagnostic(format!(
                     "{}: stop trapped: {}",
                     plugin.manifest.id(),
                     sandbox::describe_trap(&running.store, &trap)
-                ));
+                )),
+                Err(reason) => {
+                    self.diagnostic(format!("{}: stop: {reason}", plugin.manifest.id()));
+                }
             }
         }
         if let Some(jobs) = plugin
@@ -822,7 +829,9 @@ impl Host {
             self.limits.frame_wall,
             self.limits.fuel,
         );
-        let fault = self.frame_calls(plugin, instance, frame);
+        // A failure of Angelica's own code in this plugin's calls stops
+        // only this plugin; the others' frames go on.
+        let fault = caught(|| self.frame_calls(plugin, instance, frame)).unwrap_or_else(Some);
         let spent = sandbox::spent(&instance.store);
         drop(running);
         if let Some(reason) = fault {
@@ -1230,4 +1239,20 @@ fn held(
         .into_iter()
         .filter(|name| granted.contains(name))
         .collect()
+}
+
+/// Runs `work`, a step of the host for one plugin. A panic in Angelica's
+/// own code there becomes the reason to fault that plugin, so it never
+/// reaches the game's frame and stops the others.
+fn caught<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).map_err(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "without a message".into());
+        // Dropping the payload could run code that panics again.
+        std::mem::forget(payload);
+        format!("Angelica failed during the plugin's calls: {message}")
+    })
 }
