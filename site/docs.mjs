@@ -122,7 +122,7 @@ export function page({ front, md, title }, file, pages, { source: from, lede: gi
   const source = from || `site/pages/${file.replace(/\.html$/, ".md")}`;
   const toc = `<aside class="toc">${headings.length ? `<p class="kicker">On this page</p>` : ""}<ul>${headings.map((h) => `<li><a href="#${h.id}">${h.text}</a></li>`).join("")}</ul><p class="edit">${generated ? `<a href="${generated.href}">Source on GitHub</a>` : `<a href="${repo}/edit/main/${source}">Edit this page</a>`}</p></aside>`;
   const top = `<header class="bar"><div class="in"><a class="mark" href="index.html">angelica</a><a class="where" href="index.html#docs">Documentation</a>
-  <span class="theme" role="group" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button></span><a class="nav" href="${repo}">GitHub</a><a class="b one" href="${repo}/releases/download/nightly/angelica-setup.exe">Download</a></div></header>`;
+  <span class="theme" role="group" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button></span><a class="nav" href="${repo}">GitHub</a><a class="nav" href="https://discord.gg/mv24mq53h2">Discord</a><a class="b one" href="${repo}/releases/download/nightly/angelica-setup.exe">Download</a></div></header>`;
   const meta = front.meta ? `<p class="meta">${front.meta.split(" · ").map((m) => `<span>${m}</span>`).join("")}</p>` : "";
   const crumbs = `<p class="crumbs"><a href="index.html#docs">Documentation</a> / <span>${front.section || "Build"}</span> / <span>${name}</span></p>`;
   const near = (t, label, cls) => t && pages[t] ? `<a href="${pages[t]}"${cls}><small>${label}</small>${t}</a>` : "<span></span>";
@@ -134,6 +134,7 @@ export function page({ front, md, title }, file, pages, { source: from, lede: gi
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${name}: Angelica</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icon/icon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="icon/icon-192.png"><link rel="apple-touch-icon" href="icon/apple-touch-icon.png">
 <meta name="description" content="${lede.replace(/<[^>]+>/g, "").replace(/"/g, "&quot;")}">
 <link rel="canonical" href="https://angelicaproject.github.io/angelica/${file}">
 <link rel="alternate" type="text/markdown" href="${file.replace(/\.html$/, ".md")}">
