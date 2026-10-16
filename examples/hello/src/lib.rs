@@ -19,7 +19,10 @@ use angelica_sdk::{
         guard,
         table::{Column, Variant, Writer},
     },
-    ui::{Event, Tone, Window},
+    ui::{
+        ActionKind, Countdown, Dialog, Event, Meter, Panel, Popup, Readout, Ring, Role, Shown,
+        Sparkline, Tone, Window,
+    },
 };
 
 /// The domain of the example table's guards.
@@ -53,6 +56,12 @@ struct Hello {
     tab: u32,
     volume: f64,
     bar: ExperienceBar,
+    /// Whether the example's panel is on the screen.
+    panel: bool,
+    /// The question the window asks, by its dialog's id.
+    asking: Option<&'static str>,
+    /// When the example's countdown runs out, Unix time in milliseconds.
+    until: u64,
 }
 
 /// Whether the game's experience bar is shown: the element the game map
@@ -95,6 +104,36 @@ impl Hello {
             }
             _ => {}
         }
+    }
+
+    /// Puts the question the window asks over it: whether to reset the
+    /// clicks.
+    fn ask(&self, window: &mut Window) {
+        if self.asking == Some("reset") {
+            *window = std::mem::replace(window, Window::new("", "")).dialog(
+                Dialog::new("reset", "Reset the clicks?")
+                    .text(format!("The count goes back from {} to 0.", self.clicks))
+                    .row(|row| {
+                        row.action("yes", "Reset", ActionKind::Main, true).action(
+                            "no",
+                            "Keep",
+                            ActionKind::Quiet,
+                            true,
+                        )
+                    }),
+            );
+        }
+    }
+
+    /// The answer to whether to reset the clicks.
+    fn reset(&mut self, answer: &str) {
+        if answer == "yes" {
+            self.clicks = 0;
+            if let Err(error) = storage::save("clicks.json", &self.clicks) {
+                self.say(format!("clicks not saved: {}", error.message));
+            }
+        }
+        self.asking = None;
     }
 
     fn say(&mut self, message: impl Into<String>) {
@@ -167,12 +206,66 @@ impl Hello {
         self.show_clicks();
     }
 
+    /// Every part that shows a value, laid out in a column and a grid.
+    fn parts(&self, section: Window) -> Window {
+        let clicks = f64::from(self.clicks);
+        section
+            .row(|row| {
+                row.tile("Hello")
+                    .styled("Parts", Role::Title, Tone::Normal)
+                    .spacer()
+                    .countdown(Countdown::new(self.until).done("time is up"))
+            })
+            .column(|column| {
+                column
+                    .meter(
+                        Meter::new(self.volume, 1.0)
+                            .label("Volume")
+                            .text(format!("{:.0}%", self.volume * 100.0)),
+                    )
+                    .readout(Readout::new("clicks", clicks).unit(" clicks"))
+            })
+            .grid(3, |grid| {
+                grid.ring(Ring::new(clicks % 10.0, 10.0).text(format!("{}", self.clicks % 10)))
+                    .ring(Ring::new(self.volume, 1.0).icon(65002))
+                    .ring(Ring::new(1.0, 1.0).tone(Tone::Good).text("ok"))
+            })
+            .sparkline(Sparkline::new(vec![
+                3.0, 5.0, 4.0, 8.0, 7.0, 9.0, 6.0, 11.0,
+            ]))
+            .row(|row| {
+                row.button(
+                    "panel",
+                    if self.panel {
+                        "Hide the panel"
+                    } else {
+                        "Show a panel"
+                    },
+                )
+                .button("pop", "Pop up")
+            })
+    }
+
+    /// A popup beside the example's panel, in the corner while it is off.
+    fn pop_up(&mut self) {
+        let popup = Popup::beside("clicks")
+            .seconds(3)
+            .styled("Hello from a popup", Role::Title, Tone::Normal)
+            .meter(Meter::new(f64::from(self.clicks % 10), 10.0).label("Clicks"));
+        let said = match angelica_sdk::notifications::pop_up(&popup) {
+            Ok(()) => "popped up".to_owned(),
+            Err(error) => format!("cannot pop up: {}", error.message),
+        };
+        self.say(said);
+    }
+
     fn click(&mut self, id: &str) {
         if let Some(text) = around_lens(id) {
             self.say(text);
             return;
         }
         match id {
+            "reset" => self.asking = Some("reset"),
             "click" => {
                 self.clicks += 1;
                 if let Err(error) = storage::save("clicks.json", &self.clicks) {
@@ -625,6 +718,9 @@ impl Plugin for Hello {
             letters: Vec::new(),
             tab: 0,
             volume: 0.5,
+            panel: false,
+            asking: None,
+            until: now_ms() + 90_000,
             bar: ExperienceBar::default(),
         };
         if let Err(reason) = &hello.chat {
@@ -664,7 +760,7 @@ impl Plugin for Hello {
             self.name.clone()
         };
         let colors = ["Red", "Green", "Blue"].map(String::from).to_vec();
-        vec![
+        let mut windows = vec![
             Window::new("main", "Hello")
                 .heading(format!("Hello, {greeting}"))
                 .input("name", "Name", &self.name, "your name")
@@ -673,6 +769,7 @@ impl Plugin for Hello {
                 .row(|row| {
                     row.button("click", "Click")
                         .text(format!("{} clicks", self.clicks))
+                        .button("reset", "Reset…")
                 })
                 .section("job", "Job", true, |section| {
                     section
@@ -728,8 +825,10 @@ impl Plugin for Hello {
                         })
                 })
                 .section("widgets", "Widgets", false, |section| {
-                    let section = section.tabs("tabs", &["Numbers", "Table"], self.tab);
-                    if self.tab == 0 {
+                    let section = section.tabs("tabs", &["Numbers", "Table", "Parts"], self.tab);
+                    if self.tab == 2 {
+                        self.parts(section)
+                    } else if self.tab == 0 {
                         section
                             .slider("volume", "Volume", self.volume, 0.0, 1.0)
                             .tooltip("How loud hello is")
@@ -747,13 +846,42 @@ impl Plugin for Hello {
                 })
                 .separator()
                 .toned(&self.message, Tone::Muted),
+        ];
+        for window in &mut windows {
+            self.ask(window);
+        }
+        windows
+    }
+
+    fn panels(&mut self) -> Vec<Panel> {
+        if !self.panel {
+            return Vec::new();
+        }
+        vec![
+            Panel::new("clicks", "Hello clicks")
+                .bare()
+                .shown(Shown::Always)
+                .row(|row| {
+                    row.styled("Clicks", Role::Label, Tone::Normal)
+                        .spacer()
+                        .readout(Readout::new("count", f64::from(self.clicks)))
+                })
+                .meter(
+                    Meter::new(f64::from(self.clicks % 10), 10.0)
+                        .segments(10)
+                        .tone(Tone::Good),
+                ),
         ]
     }
 
     fn ui_event(&mut self, event: Event) {
         match event {
             Event::OpenRequested => self.open = true,
+            Event::Closed(place) if place == "reset" => self.asking = None,
+            Event::Clicked(target) if target.window == "reset" => self.reset(&target.id),
             Event::Closed(_) => self.open = false,
+            Event::Clicked(target) if target.id == "panel" => self.panel = !self.panel,
+            Event::Clicked(target) if target.id == "pop" => self.pop_up(),
             Event::Clicked(target) => self.click(&target.id),
             Event::Toggled(toggled) => self.shout = toggled.checked,
             Event::Edited(edited) => self.name = edited.value,
@@ -901,3 +1029,12 @@ impl Plugin for Hello {
 }
 
 angelica_sdk::plugin!(Hello);
+
+/// Now, Unix time in milliseconds.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}

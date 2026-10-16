@@ -5,6 +5,7 @@ members = [
   "crates/angelica-map",
   "crates/angelica-hook",
   "crates/angelica-text",
+  "crates/angelica-view",
   "crates/angelica-sqpack",
   "crates/angelica-cli",
   "crates/angelica-plugin-installer",
@@ -33,6 +34,7 @@ authors = ["AngelicaProject contributors"]
 angelica-map = { path = "crates/angelica-map" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
+angelica-view = { path = "crates/angelica-view" }
 angelica-sqpack = { path = "crates/angelica-sqpack" }
 crc32fast = "1.5.2"
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
@@ -50,6 +52,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
 tempfile = "3"
+png = "0.18.1"
 thiserror = "2.0.20"
 toml = "1.1.6"
 windows-sys = "0.61.2"

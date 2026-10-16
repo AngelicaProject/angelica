@@ -1,0 +1,14 @@
+[package]
+name = "angelica-view"
+description = "What plugins show: places and parts as typed values and as the data the plugin API carries, with the host's checks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Plugins link this crate through the SDK.
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true

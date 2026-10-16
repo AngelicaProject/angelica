@@ -252,6 +252,9 @@ pub struct Context {
     pub jobs: Arc<Jobs>,
     /// Requests to the approved hosts; `None` without `http.get`.
     pub http: Option<Arc<crate::http::Client>>,
+    /// The minor version of plugin API 1 the manifest names, which decides
+    /// the kinds of places and parts it may use.
+    pub api_minor: u16,
 }
 
 /// Which instance a store belongs to.
@@ -1540,6 +1543,24 @@ impl api::notifications::Host for State {
                 .services
                 .notifications
                 .show(&context.id, &text, attention, Instant::now())
+        })
+        .map_err(Into::into)
+    }
+
+    fn pop_up(&mut self, popup: api::ui::Place) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::Notifications))?;
+        let popup = angelica_view::data::decode_popup(
+            &crate::view::place_from_wit(popup),
+            self.context.api_minor,
+        )
+        .map_err(|reason| Error::new(Kind::InvalidArgument, reason))?;
+        let context = self.context.clone();
+        self.host(|_| {
+            context
+                .services
+                .notifications
+                .pop_up(&context.id, popup, Instant::now())
         })
         .map_err(Into::into)
     }

@@ -13,6 +13,7 @@ The website at `https://angelicaproject.github.io/angelica/` is the home page fo
 - The Reference group of the menu is for agents and maintainers, with a notice on each page that says so:
   - `site/docs.mjs` lists canonical documents of `docs/` (`reference`) that the build renders as `reference-*.html` pages. Their links lead to the other Reference pages or to the file on GitHub, and a link on any page to one of them stays on the site.
   - `site/gamedata.mjs` writes **Game data** from the released map's files, which `status.mjs` downloads and checks: its domains, roots, types and fields, events, actions, and enums.
+  - `site/gallery.mjs` writes **Interface parts**: every place and part a plugin can show, drawn by the host's own renderer, with the SDK code that builds it and a picture for each of the site's themes. The examples live in `angelica-view` (`src/examples.rs`), and a test fails when a kind of the plugin API has none, so a new part cannot go undocumented. The host's gallery test draws them over a stand-in for the game into `site/gallery/` with `gallery.json`; it needs Direct3D's software renderer, so it runs on Windows, and `pages.yml` runs it in a Windows job whose pictures the build job takes. Without `site/gallery/` the page says the pictures are missing.
   - The build runs `cargo rustdoc` for `angelica-sdk` and puts the result under `sdk/`, with `site/sdk-header.html` as the line that leads back to the documentation. The SDK warns on `missing_docs`, and CI's clippy fails on any warning, so every public item of the SDK has a description.
 
 ```text
@@ -20,6 +21,14 @@ cd site
 npm ci
 node build.mjs
 ```
+
+To draw the gallery first, on Windows, from the repository's root (the folder must be absolute, since the test runs in its crate's folder):
+
+```text
+GALLERY_OUT="$PWD/site/gallery" cargo test -p angelica-host --lib gallery -- --ignored --exact interop::gallery::gallery
+```
+
+`pages.yml` publishes after a push to `main` that changes the site, `docs/`, or the crates the pages are made from (`angelica-view`, `angelica-host`, `angelica-sdk`), and every hour.
 
 Every **Download** link on the site points to `releases/download/nightly/angelica-setup.exe`, the installer of the nightly channel ([releases](./releases.md)).
 

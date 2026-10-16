@@ -869,6 +869,59 @@ fn scissor(clip: egui::Rect, scale: f32, width: f32, height: f32) -> Result<Opti
 }
 
 #[cfg(test)]
+impl Painter {
+    /// The swap chain's first buffer as rows of RGBA, for the
+    /// documentation's gallery.
+    pub(super) fn read_back(&self, chain: &IDXGISwapChain) -> Result<(u32, u32, Vec<u8>), String> {
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_USAGE_STAGING,
+        };
+        // SAFETY: the swap chain is live and its first buffer is a texture.
+        let target: ID3D11Texture2D = unsafe { chain.GetBuffer(0) }.map_err(|e| e.to_string())?;
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: a valid texture writes its description into a valid struct.
+        unsafe { target.GetDesc(&raw mut desc) };
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0.cast_unsigned();
+        desc.MiscFlags = 0;
+        let mut staging = None;
+        // SAFETY: the description is a valid staging texture of the same size.
+        unsafe {
+            self.device
+                .CreateTexture2D(&raw const desc, None, Some(&raw mut staging))
+        }
+        .map_err(|e| e.to_string())?;
+        let staging = staging.ok_or("no staging texture")?;
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        // SAFETY: both textures belong to this device and have the same
+        // size and format; the staging texture is mapped for reading.
+        unsafe {
+            self.immediate.CopyResource(&staging, &target);
+            self.immediate
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))
+                .map_err(|e| e.to_string())?;
+        }
+        let width = desc.Width as usize * 4;
+        let mut rows = Vec::with_capacity(width * desc.Height as usize);
+        for y in 0..desc.Height as usize {
+            // SAFETY: the mapping holds `Height` rows of `RowPitch` bytes,
+            // each with `Width` pixels of 4 bytes.
+            let row = unsafe {
+                std::slice::from_raw_parts(
+                    mapped.pData.cast::<u8>().add(y * mapped.RowPitch as usize),
+                    width,
+                )
+            };
+            rows.extend_from_slice(row);
+        }
+        // SAFETY: the staging texture was mapped above.
+        unsafe { self.immediate.Unmap(&staging, 0) };
+        Ok((desc.Width, desc.Height, rows))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use windows::Win32::Graphics::{

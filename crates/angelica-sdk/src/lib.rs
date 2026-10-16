@@ -97,7 +97,13 @@ pub trait Plugin: Sized + 'static {
         Vec::new()
     }
 
-    /// A player action in a window or the Angelica menu.
+    /// The plugin's panels for this frame: small parts of the screen the
+    /// player places and keeps in view (see [`ui::Panel`]).
+    fn panels(&mut self) -> Vec<ui::Panel> {
+        Vec::new()
+    }
+
+    /// A player action in a window, a panel, or the Angelica menu.
     fn ui_event(&mut self, _event: ui::Event) {}
 
     /// A command of the plugin the player ran (see [`commands`]).
@@ -181,12 +187,18 @@ macro_rules! plugin {
                     })
                 }
 
-                fn ui() -> ::std::vec::Vec<$crate::ui::Window> {
-                    with(::std::vec::Vec::new(), $crate::Plugin::ui)
+                fn ui() -> ::std::vec::Vec<$crate::bindings::angelica::plugin::ui::Place> {
+                    with(::std::vec::Vec::new(), |plugin| {
+                        let windows = $crate::Plugin::ui(plugin);
+                        let panels = $crate::Plugin::panels(plugin);
+                        $crate::ui::view_to_wit(windows, panels)
+                    })
                 }
 
-                fn ui_event(event: $crate::ui::Event) {
-                    with((), |plugin| $crate::Plugin::ui_event(plugin, event));
+                fn ui_event(event: $crate::bindings::angelica::plugin::ui::Event) {
+                    if let ::std::option::Option::Some(event) = $crate::ui::event_from_wit(event) {
+                        with((), |plugin| $crate::Plugin::ui_event(plugin, event));
+                    }
                 }
 
                 fn command(

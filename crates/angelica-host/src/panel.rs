@@ -4,17 +4,16 @@
 #![forbid(unsafe_code)]
 use crate::theme::{self, Word};
 use crate::{
-    host::{Action, Event, Host, Plugin, Status},
+    host::{Event, Host},
     language::{Language, Strings},
-    menu::{self, Bar, Look, Mark, Menu},
-    sandbox::bindings::angelica::plugin::ui::{
-        Action as EntryAction, ActionKind, Choice, Chosen, Edited, Entry, Fact, Icon,
-        Mark as EntryMark, Navigated, Number, NumberSet, Progress, Table, Tabs, TextInput, Toggled,
-        Tone, Widget, WidgetRef,
-    },
+    menu::{self, Look, Menu},
+};
+use angelica_view::{
+    Action as EntryAction, ActionKind, Choice, Chosen, Edited, Entry, Fact, Icon,
+    Mark as EntryMark, Number, NumberSet, Table, Tabs, TextInput, Toggled, Widget, WidgetRef,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 
@@ -94,12 +93,7 @@ fn draw_world(host: &Host, context: &egui::Context) {
 pub struct Panel {
     menu: Menu,
     inputs: HashMap<(String, String, String), String>,
-    /// The plugin windows collapsed to their title bars, by plugin and
-    /// window id.
-    collapsed: HashSet<(String, String)>,
-    /// The order plugin windows first opened in this game session, which
-    /// places each new one a step below and right of the one before.
-    placed: HashMap<(String, String), usize>,
+    pub(crate) places: crate::places::Places,
     icons: Icons,
     pub map_status: Vec<String>,
 }
@@ -107,7 +101,7 @@ pub struct Panel {
 /// Icon textures by icon number, with the frame each was last drawn in;
 /// `None` for an icon the game does not have or the host cannot decode.
 #[derive(Default)]
-struct Icons {
+pub(crate) struct Icons {
     textures: HashMap<u32, (Option<egui::TextureHandle>, u64)>,
     frame: u64,
     /// When this frame's time for decoding icons ends.
@@ -171,11 +165,11 @@ impl Panel {
     /// the system.
     #[must_use]
     pub fn new(host: &Host, map_status: Vec<String>, system: Language) -> Self {
+        let places = crate::places::Places::new(host);
         Self {
-            menu: Menu::new(host, system),
+            menu: Menu::placed(host, system, places.menu_place()),
             inputs: HashMap::new(),
-            collapsed: HashSet::new(),
-            placed: HashMap::new(),
+            places,
             icons: Icons::default(),
             map_status,
         }
@@ -208,192 +202,108 @@ impl Panel {
         if let Some(text) = host.services().clipboard.take() {
             context.copy_text(text);
         }
-        let keep = self.menu.draw(host, context, &self.map_status, menu);
+        let mut keep = self.menu.draw(host, context, &self.map_status, menu);
+        if self.menu.take_arrange() {
+            self.places.layout = true;
+            keep = false;
+        }
         let raised = self.menu.take_raised();
+        let (look, strings) = self.menu.look(context);
         // Plugin windows are drawn with the menu open too; one opened from
         // the menu comes in front of it.
-        for plugin in &host.plugins() {
-            if plugin.status() != Status::Running {
-                continue;
-            }
-            let (look, strings) = self.menu.look(context);
-            let raise = raised.as_deref() == Some(plugin.manifest.id());
-            for window in plugin.windows() {
-                self.draw_window(host, plugin, &window, context, look, strings);
-                if raise {
-                    let id = plugin.manifest.id();
-                    let collapsed = self.collapsed.contains(&(id.to_owned(), window.id.clone()));
-                    context.move_to_top(egui::LayerId::new(
-                        egui::Order::Middle,
-                        window_id(id, &window.id, collapsed),
-                    ));
-                }
-            }
+        let mut frame = crate::places::Frame {
+            host,
+            context,
+            look,
+            strings,
+            inputs: &mut self.inputs,
+            icons: &mut self.icons,
+            now: context.input(|input| input.time),
+            screen: context.content_rect(),
+        };
+        if let Some(place) = self.menu.take_place(frame.screen) {
+            self.places.keep_menu(&frame, place);
         }
+        self.places
+            .draw(&mut frame, raised.as_deref(), self.menu.notes_bottom());
         keep
     }
-
-    /// Where a plugin window first opens: in the middle of the screen, each
-    /// next one a step lower and to the right; the player moves it from
-    /// there.
-    fn place(&mut self, key: &(String, String), context: &egui::Context, look: Look) -> egui::Pos2 {
-        let next = self.placed.len();
-        let order = *self.placed.entry(key.clone()).or_insert(next);
-        let width = look.at(480.0);
-        let screen = context.content_rect();
-        #[allow(clippy::cast_precision_loss)]
-        let step = look.at(28.0) * (order % 8) as f32;
-        egui::pos2(
-            screen.center().x - width / 2.0 + step,
-            screen.top() + screen.height() * 0.16 + step,
-        )
-    }
-
-    fn draw_window(
-        &mut self,
-        host: &Host,
-        plugin: &Plugin,
-        window: &crate::host::Window,
-        context: &egui::Context,
-        look: Look,
-        strings: &'static Strings,
-    ) {
-        let id = plugin.manifest.id();
-        let key = (id.to_owned(), window.id.clone());
-        let collapsed = self.collapsed.contains(&key);
-        let place = self.place(&key, context, look);
-        let window_id = window_id(id, &window.id, collapsed);
-        let status = window.status.as_ref().map(|status| {
-            let mark = match status.tone {
-                Tone::Good => Mark::Running,
-                Tone::Warning | Tone::Bad => Mark::Attention,
-                Tone::Normal | Tone::Muted => Mark::None,
-            };
-            (status.text.as_str(), mark)
-        });
-        let bar = Bar {
-            wordmark: false,
-            title: &window.title,
-            path: &window.path,
-            status,
-            collapsed: Some(collapsed),
-            menu: true,
-            strings,
-        };
-        let mut pressed = menu::Pressed::default();
-        // A collapsed window is its own small window with its own place.
-        let frame = egui::Window::new(format!(
-            "{} — {}",
-            window.title, plugin.manifest.plugin.name
-        ))
-        .id(window_id)
-        .default_pos(place)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(!collapsed)
-        .frame(menu::window_frame(context, look.p));
-        if collapsed {
-            frame.show(context, |ui| {
-                ui.set_width(look.at(330.0));
-                pressed = menu::bar(ui, &look, &bar);
-            });
-        } else {
-            // The window keeps its size: what does not fit scrolls, and the
-            // player resizes it by its corner.
-            frame
-                .default_size(egui::vec2(look.at(480.0), look.at(460.0)))
-                .show(context, |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    pressed = menu::bar(ui, &look, &bar);
-                    if let Some(button) = &pressed.menu {
-                        egui::Popup::menu(button).show(|ui| {
-                            if menu::popup_item(ui, &look, None, strings.open_folder, look.p.text) {
-                                host.queue(Action::OpenFolder(id.to_owned()));
-                            }
-                            if menu::popup_item(ui, &look, None, strings.turn_off, look.p.text) {
-                                host.queue(Action::Disable(id.to_owned()));
-                            }
-                        });
-                    }
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin::symmetric(
-                            menu::num_u8(look.at(16.0)),
-                            menu::num_u8(look.at(12.0)),
-                        ))
-                        .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing =
-                                        egui::vec2(look.at(12.0), look.at(8.0));
-                                    let mut drawer = Drawer {
-                                        host,
-                                        plugin: id,
-                                        window: &window.id,
-                                        inputs: &mut self.inputs,
-                                        icons: &mut self.icons,
-                                        last: None,
-                                        look,
-                                        strings,
-                                    };
-                                    let mut position = 0;
-                                    drawer.widgets(ui, &window.widgets, &mut position);
-                                });
-                        });
-                });
-        }
-        if pressed.toggle {
-            if collapsed {
-                self.collapsed.remove(&key);
-            } else {
-                self.collapsed.insert(key);
-            }
-        }
-        if let Some(depth) = pressed.navigate {
-            host.queue_event(
-                id,
-                Event::Navigated(Navigated {
-                    window: window.id.clone(),
-                    depth,
-                }),
-            );
-        }
-        if pressed.close {
-            host.queue_event(id, Event::Closed(window.id.clone()));
-        }
-    }
 }
 
-/// A plugin window's egui id; a collapsed window is its own window.
-fn window_id(plugin: &str, window: &str, collapsed: bool) -> egui::Id {
-    egui::Id::new(("angelica-plugin", plugin, window, collapsed))
-}
-
-struct Drawer<'a> {
-    host: &'a Host,
-    plugin: &'a str,
-    window: &'a str,
-    inputs: &'a mut HashMap<(String, String, String), String>,
-    icons: &'a mut Icons,
+pub(crate) struct Drawer<'a> {
+    pub(crate) host: &'a Host,
+    pub(crate) plugin: &'a str,
+    pub(crate) window: &'a str,
+    pub(crate) inputs: &'a mut HashMap<(String, String, String), String>,
+    pub(crate) icons: &'a mut Icons,
     /// The widget a following tooltip points at.
-    last: Option<egui::Response>,
-    look: Look,
-    strings: &'static Strings,
+    pub(crate) last: Option<egui::Response>,
+    pub(crate) look: Look,
+    pub(crate) strings: &'static Strings,
+    /// The position of the part being drawn, which names the parts
+    /// without an id for their motion.
+    pub(crate) index: usize,
+    /// When tabs changed, so the parts after them fade in.
+    pub(crate) faded: Option<f64>,
+}
+
+/// How long the parts after tabs take to fade in after a change.
+const TAB_FADE: f64 = 0.12;
+/// How long a new row takes to appear.
+const ROW_IN: f64 = 0.22;
+/// How long a row stays tinted after it starts needing the player.
+const ROW_TINT: f64 = 1.4;
+
+/// What an entry remembers between frames: when it first appeared, its
+/// last mark, and when it started needing the player.
+#[derive(Clone, Copy)]
+struct Seen {
+    since: f64,
+    mark: EntryMark,
+    tinted: f64,
 }
 
 impl Drawer<'_> {
+    fn id(&self, what: &str) -> egui::Id {
+        egui::Id::new(("angelica-part", self.plugin, self.window, what, self.index))
+    }
+
     /// Draws widgets from `position` up to the `end` that closes the
-    /// enclosing row, section, or table, or the end of the list.
-    fn widgets(&mut self, ui: &mut egui::Ui, widgets: &[Widget], position: &mut usize) {
+    /// enclosing container, or the end of the list. A spacer pushes what
+    /// follows it to the end of its row, by the width it took last frame.
+    pub(crate) fn widgets(&mut self, ui: &mut egui::Ui, widgets: &[Widget], position: &mut usize) {
+        let mut spacer: Option<(egui::Id, f32)> = None;
         while let Some(widget) = widgets.get(*position) {
             *position += 1;
-            if matches!(
-                widget,
-                Widget::EndRow | Widget::EndSection | Widget::EndTable
-            ) {
-                return;
+            if is_end(widget) {
+                break;
             }
-            self.item(ui, widgets, widget, position);
+            if matches!(widget, Widget::Spacer) {
+                self.index = *position - 1;
+                let id = self.id("spacer");
+                let rest = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
+                ui.add_space((ui.available_width() - rest - 1.0).max(0.0));
+                spacer = Some((id, ui.cursor().left()));
+                self.last = None;
+                continue;
+            }
+            let now = ui.input(|input| input.time);
+            match self.faded {
+                Some(at) if now - at < TAB_FADE => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let opacity = ((now - at) / TAB_FADE) as f32;
+                    ui.scope(|ui| {
+                        ui.multiply_opacity(opacity);
+                        self.item(ui, widgets, widget, position);
+                    });
+                    ui.ctx().request_repaint();
+                }
+                _ => self.item(ui, widgets, widget, position),
+            }
+        }
+        if let Some((id, left)) = spacer {
+            let rest = ui.min_rect().right() - left;
+            ui.data_mut(|data| data.insert_temp(id, rest.max(0.0)));
         }
     }
 
@@ -405,12 +315,32 @@ impl Drawer<'_> {
         widget: &Widget,
         position: &mut usize,
     ) {
+        self.index = *position - 1;
         match widget {
             Widget::BeginRow => {
-                ui.horizontal_wrapped(|ui| {
+                // A row with a spacer is one line, its end at the right;
+                // other rows wrap what does not fit.
+                let one_line = row_has_spacer(widgets, *position);
+                let draw = |ui: &mut egui::Ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     self.widgets(ui, widgets, position);
+                };
+                if one_line {
+                    ui.horizontal(draw);
+                } else {
+                    ui.horizontal_wrapped(draw);
+                }
+                self.last = None;
+            }
+            Widget::BeginColumn => {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = self.look.at(6.0);
+                    self.widgets(ui, widgets, position);
                 });
+                self.last = None;
+            }
+            Widget::BeginGrid(columns) => {
+                self.grid(ui, widgets, *columns, position);
                 self.last = None;
             }
             Widget::BeginSection(section) => {
@@ -435,6 +365,38 @@ impl Drawer<'_> {
             }
             other => self.last = self.widget(ui, other),
         }
+    }
+
+    /// Fills a grid of equal columns up to its end, left to right, row by
+    /// row; a tooltip belongs to the cell before it.
+    fn grid(&mut self, ui: &mut egui::Ui, widgets: &[Widget], columns: u8, position: &mut usize) {
+        let columns = usize::from(columns.max(1));
+        let look = self.look;
+        #[allow(clippy::cast_precision_loss)]
+        let width =
+            (ui.available_width() - look.at(12.0) * (columns as f32 - 1.0)) / columns as f32;
+        egui::Grid::new(self.id("grid"))
+            .num_columns(columns)
+            .min_col_width(width.max(look.at(24.0)))
+            .max_col_width(width.max(look.at(24.0)))
+            .spacing(egui::vec2(look.at(12.0), look.at(8.0)))
+            .show(ui, |ui| {
+                let mut cells = 0;
+                while let Some(widget) = widgets.get(*position) {
+                    *position += 1;
+                    if matches!(widget, Widget::EndGrid) {
+                        break;
+                    }
+                    let cell = !matches!(widget, Widget::Tooltip(_));
+                    self.item(ui, widgets, widget, position);
+                    if cell {
+                        cells += 1;
+                        if cells % columns == 0 {
+                            ui.end_row();
+                        }
+                    }
+                }
+            });
     }
 
     /// Draws a table's headings and fills its cells up to `end-table`; a
@@ -485,15 +447,7 @@ impl Drawer<'_> {
         Some(match widget {
             Widget::Heading(text) => self.heading(ui, text),
             Widget::Text(text) => {
-                let p = self.look.p;
-                let color = match text.tone {
-                    Tone::Normal => p.text,
-                    Tone::Muted => p.secondary,
-                    Tone::Good => p.on,
-                    Tone::Warning => p.attention,
-                    Tone::Bad => p.danger,
-                };
-                ui.label(self.rich(&text.text, color))
+                crate::parts::text(ui, self.look, &text.text, text.role, text.tone)
             }
             Widget::Button(button) => {
                 let response = theme::word(
@@ -532,7 +486,28 @@ impl Drawer<'_> {
             Widget::Choice(choice) => self.choice(ui, choice),
             Widget::Number(number) => self.number(ui, number),
             Widget::Tabs(tabs) => self.tabs(ui, tabs),
-            Widget::Progress(progress) => self.progress(ui, progress),
+            Widget::Meter(meter) => crate::parts::meter(ui, self.look, self.id("meter"), meter),
+            Widget::Ring(ring) => {
+                let (response, inner) = crate::parts::ring(ui, self.look, self.id("ring"), ring);
+                if let Some(icon) = ring.icon
+                    && let Some(texture) = self.icons.texture(self.host, ui.ctx(), icon)
+                {
+                    ui.painter().image(
+                        texture,
+                        inner,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                response
+            }
+            Widget::Readout(readout) => {
+                let id = egui::Id::new(("angelica-readout", self.plugin, self.window, &readout.id));
+                crate::parts::readout(ui, self.look, id, readout)
+            }
+            Widget::Countdown(countdown) => crate::parts::countdown(ui, self.look, countdown),
+            Widget::Sparkline(sparkline) => crate::parts::sparkline(ui, self.look, sparkline),
+            Widget::Tile(text) => crate::parts::tile(ui, self.look, text),
             Widget::Fact(fact) => self.fact(ui, fact),
             Widget::Entry(entry) => self.entry(ui, entry),
             Widget::Icon(icon) => self.icon(ui, *icon),
@@ -544,10 +519,15 @@ impl Drawer<'_> {
             }
             Widget::BeginRow
             | Widget::EndRow
+            | Widget::BeginColumn
+            | Widget::EndColumn
+            | Widget::BeginGrid(_)
+            | Widget::EndGrid
             | Widget::BeginSection(_)
             | Widget::EndSection
             | Widget::BeginTable(_)
             | Widget::EndTable
+            | Widget::Spacer
             | Widget::Tooltip(_) => return None,
         })
     }
@@ -764,18 +744,46 @@ impl Drawer<'_> {
             let hovered = ui.rect_contains_pointer(row);
             let details = entry.chosen && !(entry.facts.is_empty() && entry.more.is_empty());
             let painter = ui.painter().clone();
-            if entry.chosen || hovered {
-                let below = if details { 0 } else { 4 };
-                painter.rect_filled(
-                    row,
-                    egui::CornerRadius {
-                        nw: 4,
-                        ne: 4,
-                        sw: below,
-                        se: below,
-                    },
-                    if entry.chosen { p.selection } else { p.hover },
-                );
+            let key = egui::Id::new(("angelica-entry", self.plugin, self.window, &entry.id));
+            let now = ui.input(|input| input.time);
+            let seen = ui.data_mut(|data| {
+                let mut seen = data.get_temp::<Seen>(key).unwrap_or(Seen {
+                    since: now,
+                    mark: entry.mark,
+                    tinted: f64::NEG_INFINITY,
+                });
+                if entry.mark == EntryMark::Attention && seen.mark != EntryMark::Attention {
+                    seen.tinted = now;
+                }
+                seen.mark = entry.mark;
+                data.insert_temp(key, seen);
+                seen
+            });
+            if now - seen.since < ROW_IN {
+                #[allow(clippy::cast_possible_truncation)]
+                ui.multiply_opacity(((now - seen.since) / ROW_IN) as f32);
+                ui.ctx().request_repaint();
+            }
+            let below = if details { 0 } else { 4 };
+            let corners = egui::CornerRadius {
+                nw: 4,
+                ne: 4,
+                sw: below,
+                se: below,
+            };
+            if now - seen.tinted < ROW_TINT {
+                #[allow(clippy::cast_possible_truncation)]
+                let left = 1.0 - ((now - seen.tinted) / ROW_TINT) as f32;
+                painter.rect_filled(row, corners, crate::theme::alpha(p.attention, 0.18 * left));
+                ui.ctx().request_repaint();
+            }
+            let hover = ui
+                .ctx()
+                .animate_bool_with_time(key.with("hover"), hovered, 0.12);
+            if entry.chosen {
+                painter.rect_filled(row, corners, p.selection);
+            } else if hover > 0.0 {
+                painter.rect_filled(row, corners, crate::theme::alpha(p.hover, hover));
             }
             let faded = entry.mark == EntryMark::Off;
             let y = row.center().y;
@@ -814,36 +822,6 @@ impl Drawer<'_> {
             }
             if details {
                 self.entry_details(ui, entry);
-            }
-            response
-        })
-        .inner
-    }
-
-    /// A thin line that fills with the action color, and its label.
-    fn progress(&self, ui: &mut egui::Ui, progress: &Progress) -> egui::Response {
-        let look = self.look;
-        let fraction = progress.fraction.clamp(0.0, 1.0);
-        ui.horizontal(|ui| {
-            let width = if progress.label.is_empty() {
-                ui.available_width()
-            } else {
-                (ui.available_width() * 0.5).max(look.at(120.0))
-            };
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(width, look.at(20.0)), egui::Sense::hover());
-            let line = egui::Rect::from_center_size(
-                rect.center(),
-                egui::vec2(rect.width(), look.at(2.0).max(2.0)),
-            );
-            ui.painter().rect_filled(line, 1.0, look.p.line);
-            ui.painter().rect_filled(
-                line.with_max_x(line.left() + line.width() * fraction),
-                1.0,
-                look.p.action,
-            );
-            if !progress.label.is_empty() {
-                ui.label(self.rich(&progress.label, look.p.secondary));
             }
             response
         })
@@ -919,6 +897,17 @@ impl Drawer<'_> {
     fn tabs(&mut self, ui: &mut egui::Ui, tabs: &Tabs) -> egui::Response {
         let look = self.look;
         let p = look.p;
+        let key = egui::Id::new(("angelica-tabs-seen", self.plugin, self.window, &tabs.id));
+        let now = ui.input(|input| input.time);
+        let changed = ui.data_mut(|data| {
+            let (selected, at) = data
+                .get_temp::<(u32, f64)>(key)
+                .unwrap_or((tabs.selected, f64::NEG_INFINITY));
+            let at = if selected == tabs.selected { at } else { now };
+            data.insert_temp(key, (tabs.selected, at));
+            at
+        });
+        self.faded = Some(changed);
         let (row, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), look.at(32.0)),
             egui::Sense::hover(),
@@ -1086,14 +1075,30 @@ fn word_of(kind: ActionKind) -> Word {
     }
 }
 
+/// Whether the widget ends a container.
+fn is_end(widget: &Widget) -> bool {
+    matches!(
+        widget,
+        Widget::EndRow
+            | Widget::EndColumn
+            | Widget::EndGrid
+            | Widget::EndSection
+            | Widget::EndTable
+    )
+}
+
 /// The position after the `end` matching the `begin` before `position`.
 fn skip(widgets: &[Widget], mut position: usize) -> usize {
     let mut depth = 1;
     while let Some(widget) = widgets.get(position) {
         position += 1;
         match widget {
-            Widget::BeginRow | Widget::BeginSection(_) | Widget::BeginTable(_) => depth += 1,
-            Widget::EndRow | Widget::EndSection | Widget::EndTable => {
+            Widget::BeginRow
+            | Widget::BeginColumn
+            | Widget::BeginGrid(_)
+            | Widget::BeginSection(_)
+            | Widget::BeginTable(_) => depth += 1,
+            end if is_end(end) => {
                 depth -= 1;
                 if depth == 0 {
                     break;
@@ -1103,4 +1108,32 @@ fn skip(widgets: &[Widget], mut position: usize) -> usize {
         }
     }
     position
+}
+
+/// Whether the row whose parts start at `position` holds a spacer of its
+/// own, outside the containers inside it.
+fn row_has_spacer(widgets: &[Widget], position: usize) -> bool {
+    let mut depth = 0usize;
+    for widget in widgets.iter().skip(position) {
+        match widget {
+            Widget::BeginRow
+            | Widget::BeginColumn
+            | Widget::BeginGrid(_)
+            | Widget::BeginSection(_)
+            | Widget::BeginTable(_) => depth += 1,
+            Widget::EndRow
+            | Widget::EndColumn
+            | Widget::EndGrid
+            | Widget::EndSection
+            | Widget::EndTable => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            Widget::Spacer if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }

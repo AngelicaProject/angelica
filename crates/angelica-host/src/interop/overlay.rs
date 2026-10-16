@@ -98,6 +98,9 @@ fn pin(address: usize) -> Result<(), String> {
 pub struct OverlayHooks {
     present: VtableSlot,
     resize: VtableSlot,
+    /// The game's import of `SetCursor`; without it, the game's cursor
+    /// shows through Angelica's for part of every frame.
+    cursor: Option<VtableSlot>,
 }
 
 impl OverlayHooks {
@@ -171,7 +174,20 @@ impl OverlayHooks {
             }
             return Err(error);
         }
-        Ok(Self { present, resize })
+        let cursor = match super::cursor::install() {
+            Ok(slot) => Some(slot),
+            Err(error) => {
+                super::log(&format!(
+                    "the game's cursor is not kept off Angelica: {error}"
+                ));
+                None
+            }
+        };
+        Ok(Self {
+            present,
+            resize,
+            cursor,
+        })
     }
     pub fn disable(&mut self) -> bool {
         if let Some(overlay) = OVERLAY.get() {
@@ -180,9 +196,13 @@ impl OverlayHooks {
         }
         // SAFETY: removal restores only our own slot values and refuses later tools' changes.
         unsafe {
+            let cursor = self
+                .cursor
+                .as_mut()
+                .is_none_or(|cursor| cursor.disable().is_ok());
             let resized = self.resize.disable().is_ok();
             let presented = self.present.disable().is_ok();
-            resized && presented
+            cursor && resized && presented
         }
     }
 }
@@ -415,7 +435,11 @@ impl Overlay {
         }
         self.input
             .mouse
-            .store(frame.context.egui_wants_pointer_input(), Ordering::Release);
+            .store(wants_pointer(&frame.context), Ordering::Release);
+        self.input.set_cursor(output.platform_output.cursor_icon);
+        // The game sets its cursor every frame on the window's thread, which
+        // presents too; set after it, Angelica's cursor is the one shown.
+        self.input.show_frame_cursor();
         // The game keeps the keyboard unless the player types in a text
         // field; a pressed button or a chosen row does not take it.
         self.input
@@ -526,7 +550,7 @@ fn system_language() -> crate::language::Language {
 
 /// The system's fonts for what Angelica's own fonts do not cover: Segoe UI,
 /// and the first Japanese font found.
-fn system_fonts() -> Result<Vec<(String, Vec<u8>)>, String> {
+pub(super) fn system_fonts() -> Result<Vec<(String, Vec<u8>)>, String> {
     use std::os::windows::ffi::OsStringExt;
     let mut fonts = Vec::new();
     let mut path = vec![0u16; 32768];
@@ -564,6 +588,24 @@ fn removed(drawn: u64, reason: &str) -> String {
     } else {
         format!("the game's Direct3D device stopped after Angelica drew {drawn} frames: {reason}")
     }
+}
+
+/// Whether Angelica takes the pointer from the game: egui uses it or it is
+/// over Angelica's interface. egui counts its bottom layer as the screen's
+/// background, so a panel there that takes input (every panel in the layout
+/// mode) is asked about by its own layer.
+fn wants_pointer(context: &egui::Context) -> bool {
+    if context.egui_wants_pointer_input() {
+        return true;
+    }
+    let (at, down) =
+        context.input(|input| (input.pointer.interact_pos(), input.pointer.any_down()));
+    !down
+        && at
+            .and_then(|at| context.layer_id_at(at))
+            .is_some_and(|layer| {
+                layer.order == egui::Order::Background && layer != egui::LayerId::background()
+            })
 }
 
 unsafe extern "system" fn present(raw: *mut c_void, interval: u32, flags: u32) -> i32 {

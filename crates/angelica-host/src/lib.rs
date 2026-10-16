@@ -38,6 +38,8 @@ mod mutations;
 pub mod notifications;
 pub mod package;
 pub mod panel;
+pub(crate) mod parts;
+pub(crate) mod places;
 pub mod plugin_installer;
 pub mod sandbox;
 pub mod self_update;
@@ -47,7 +49,7 @@ pub mod sound;
 pub mod storage;
 pub mod text_case;
 pub mod theme;
-pub mod ui;
+pub mod view;
 pub mod wasi;
 
 #[cfg(windows)]

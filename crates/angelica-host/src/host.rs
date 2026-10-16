@@ -9,7 +9,6 @@ use crate::{
     manifest::{Grants, Manifest, Permission},
     sandbox::{self, Bindings, Context, Limits, Log, PluginPre, Role, Sandbox, Services, State},
     storage::{DEFAULT_QUOTA, Storage},
-    ui,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,7 +22,7 @@ use std::{
 };
 use wasmtime::{Store, component::Component};
 
-pub use sandbox::bindings::angelica::plugin::ui::{Event, Window};
+pub use angelica_view::{Event, Panel, Window};
 
 /// Where the host keeps what it persists.
 #[derive(Debug, Clone)]
@@ -76,6 +75,7 @@ pub struct Plugin {
     running: Mutex<Option<Running>>,
     jobs: Mutex<Option<Arc<Jobs>>>,
     windows: Mutex<Vec<Window>>,
+    panels: Mutex<Vec<Panel>>,
     /// When the menu was last told that the plugin held up a frame.
     slow: Mutex<Option<std::time::Instant>>,
     /// The game map's domains, for what reading them is called.
@@ -106,6 +106,15 @@ impl Plugin {
     #[must_use]
     pub fn windows(&self) -> Vec<Window> {
         self.windows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The panels the plugin returned last frame.
+    #[must_use]
+    pub fn panels(&self) -> Vec<Panel> {
+        self.panels
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -500,6 +509,7 @@ impl Host {
             running: Mutex::new(None),
             jobs: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
+            panels: Mutex::new(Vec::new()),
             slow: Mutex::new(None),
             lens,
         });
@@ -564,6 +574,7 @@ impl Host {
             services: self.services.clone(),
             log: plugin.log.clone(),
             jobs: jobs.clone(),
+            api_minor: crate::view::api_minor(&plugin.manifest.plugin.api),
             http: grants.permissions.contains(&Permission::HttpGet).then(|| {
                 Arc::new(crate::http::Client::new(
                     plugin.manifest.http_hosts().into_iter().collect(),
@@ -656,6 +667,11 @@ impl Host {
         self.remove_effects(plugin.manifest.id());
         plugin
             .windows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        plugin
+            .panels
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
@@ -1029,9 +1045,9 @@ impl Host {
             return Some(fault);
         }
         for (_, event) in events.iter().filter(|(target, _)| target == id) {
-            if let Err(trap) =
-                sandbox::call_for_player(store, |store| guest.call_ui_event(store, event))
-            {
+            if let Err(trap) = sandbox::call_for_player(store, |store| {
+                guest.call_ui_event(store, &crate::view::event_to_wit(event))
+            }) {
                 return Some(format!(
                     "ui-event trapped: {}",
                     sandbox::describe_trap(store, &trap)
@@ -1039,15 +1055,30 @@ impl Host {
             }
         }
         match sandbox::call(store, |store| guest.call_ui(store)) {
-            Ok(windows) => match ui::validate(&windows) {
-                Ok(()) => {
-                    *plugin
-                        .windows
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner) = windows;
+            Ok(places) => {
+                let places: Vec<_> = places
+                    .into_iter()
+                    .map(crate::view::place_from_wit)
+                    .collect();
+                let minor = crate::view::api_minor(&plugin.manifest.plugin.api);
+                match angelica_view::data::decode(&places, minor) {
+                    Ok(places) => {
+                        let (mut windows, mut panels) = (Vec::new(), Vec::new());
+                        for place in places {
+                            match place {
+                                angelica_view::Place::Window(window) => windows.push(window),
+                                angelica_view::Place::Panel(panel) => panels.push(panel),
+                            }
+                        }
+                        *plugin
+                            .windows
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner) = windows;
+                        *plugin.panels.lock().unwrap_or_else(PoisonError::into_inner) = panels;
+                    }
+                    Err(reason) => return Some(format!("invalid view: {reason}")),
                 }
-                Err(reason) => return Some(format!("invalid windows: {reason}")),
-            },
+            }
             Err(trap) => {
                 return Some(format!(
                     "ui trapped: {}",

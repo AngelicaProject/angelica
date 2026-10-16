@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+angelica-view.workspace = true
 angelica-host.workspace = true
 angelica-map.workspace = true
 angelica-text.workspace = true

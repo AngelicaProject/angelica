@@ -10,7 +10,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | --- | --- | --- |
 | `runtime` | the plugin's log, whether it started with the game, the game version | — |
 | `storage` | the plugin's private folder | — |
-| `ui` | windows the host draws (types used by `guest`) | — |
+| `ui` | places and parts the host draws (types used by `guest`) | — |
 | `jobs` | long work in a separate instance on a host thread | — |
 | `game-files` | files from the installed game's archives | — |
 | `excel` | the game's Excel sheets as its files hold them | — |
@@ -41,29 +41,102 @@ The host keeps one **main instance** per running plugin and calls it on the game
 
 The calls of one frame — `tick`, the commands, the events, the window events, and `ui` — share one budget, and `start` and `stop` each have their own: a guest time limit, which does not count time spent in host calls, and a fuel limit (`host.json`, [installation](./host-installation-v1.md)), by default 20 ms for a frame's calls and 2 s for `start` and `stop`; and a limit on time including host calls, 2 s for a frame's calls and 30 s for `start` and `stop`, so a plugin cannot hold the game's main thread with host operations. Exceeding a limit traps. A frame in which a plugin's calls take more than 100 ms is noted in the Angelica menu.
 
-A trap, a `start` or `tick` error, or invalid windows **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (rules, replaced files, commands, watches, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
+A trap, a `start` or `tick` error, or places that break the [rules](#rules-for-every-place-and-part) **fault** the plugin: the host stops it without calling `stop`, removes everything it activated (rules, replaced files, commands, watches, jobs, windows), and shows the reason. It stays off until the player retries it. The game never stops because of a plugin.
 
 `run-job` runs in a **job instance**: a fresh instance of the component per job, with its own memory, on a host thread, for at most 10 minutes of guest time and without a fuel limit. A job instance never runs `start`. A job may use `runtime`, `storage`, `game-files`, `excel`, `http`, and `jobs.report`; `file-replacements`, `commands`, `chat`, `lens`, `events`, `jobs.start`, `jobs.poll`, and `jobs.cancel` return `wrong-context`, and `http` returns it in the main instance. A job's input and output are at most 16 MiB; a plugin has at most four jobs at once, counting finished jobs whose result `poll` has not returned yet and cancelled jobs until they stop. A trap or error fails only the job. Disabling the plugin cancels its jobs.
 
 Each instance's memory is limited to the manifest's `plugin.memory_bytes`, or the host default of 64 MiB.
 
-## Windows
+## Places and parts
 
-Every frame the host draws the windows `ui` returns; a window that is not returned is not shown. The host frames each window and supplies the fonts, colors, and scaling; a plugin never draws.
+A plugin shows what it has in **places** — windows, panels, and popups — built from **parts** ([interface](../architecture/ui.md#places-and-parts)). Both are data: a `kind` and named `properties` ([`ui.wit`](../../wit/ui.wit)). The kinds and their properties are listed below, each with the API version that added it; later versions add kinds and properties here without changing the WIT types, and none ever changes its meaning or goes away. The host draws every part in Angelica's look and moves what changes; a plugin never draws.
 
-A window's title bar shows its `title`, then its `path` — where the player is below the window's top level, outermost first, at most 4 non-blank parts — and its `status`, one short line about what the window is for, whose tone chooses its mark: `good` the mark of something running, `warning` and `bad` the mark of something that needs the player. When the player presses the back arrow, the title, or an earlier part of the path, the plugin receives `navigated` with the number of parts that stay (0 for the top level) and returns the window with that path; the host does not change the path itself. The bar's other controls — collapse, the window's menu, and close — are the host's ([interface](../architecture/ui.md#plugin-windows)).
+Every frame `ui` returns the plugin's windows and panels, and a window's dialog right after it; one that is not returned is not shown. `notifications.pop-up` shows a popup ([notifications](#notifications)). Place ids are unique per plugin, and part ids within a place.
 
-Widgets are a flat list. `begin-row` … `end-row` lays widgets side by side, `begin-section` … `end-section` puts them under a heading the player can collapse, and `begin-table` … `end-table` shows column headings and fills the cells left to right, row by row, with one widget or one row per cell; they nest up to 16 deep, and a table holds no sections or tables. A `tooltip` shows its text while the player points at the widget right before it. Widgets are controlled: a checkbox, text input, choice, number, or tabs shows the value the plugin passes, and a change by the player arrives as an `event` before the next `ui` — `toggled`, `edited`, `chosen` (an option or a tab), or `set` (a number). While the player types in a text input, the host keeps the typed text; otherwise the plugin's value is shown. A number is a slider or a field the player drags or types into, between its `min` and `max`; with a `step`, the value set is a multiple of the step from `min`. An `icon` shows one of the game's icons by its number, the number game sheets hold (such as `Item`'s icon column), in a square of `size` 1–256; the host reads it from the game's archives, the high-resolution texture first, and an icon the game does not have, or one not read yet, shows as an empty frame. The host spends at most 2 ms of a frame reading icons and keeps up to 512 of them.
+### Rules for every place and part
 
-The host checks the windows before drawing them: at most 16 windows and 4096 widgets, ids of 1–128 bytes unique within a window (window ids unique per plugin), texts of at most 4096 bytes and 512 KiB in total, a path of at most 4 non-blank parts, at most 1024 options per choice and a selected option that exists, 1–32 tabs with a selected tab that exists, 1–16 table columns, icons of size 1–256, numbers with finite `min` ≤ `value` ≤ `max`, a step of at least 0, and at most 6 decimals, a tooltip right after a widget the player sees, and every `begin` ended by its own `end`. Windows that break a rule fault the plugin.
+The host checks the places before showing them, and a place that breaks a rule faults the plugin (a popup is refused with `invalid-argument` instead):
 
-A `button` is an action word of a `kind`: `normal`, `main` (the main action of a window, at most one in view), `quiet` (a side action), or `danger` (what cannot be undone). A `fact` is a name and its value on one line.
+- every `kind` and property is one listed here, added in an API version no newer than the manifest's `plugin.api`, and its value has the listed shape;
+- a property marked *required* is present, a property appears at most once, and an absent one takes its default;
+- ids are 1–128 bytes where a part needs one and empty where it does not; texts are at most 4096 bytes and 512 KiB in all; numbers are finite;
+- at most 16 windows, 8 panels, and 4096 parts in all; containers nest at most 16 deep and every container is closed by its `end`;
+- the limits and ranges given with each property below.
 
-An `entry` is a row of a list, drawn like the rows of Angelica's own list: a tile with the first letter of its `title`, the title, a `note` after it, a short `value` at the right, and a `mark` — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. With `progress`, a thin line takes the note's place. Under the pointer the row shows its `actions`, up to 4, in place of the note and the value. A click on the row arrives as `clicked` with the entry's id and a pressed action as `clicked` with the action's id; the plugin decides which entry is `chosen`. The chosen entry is highlighted and shows under its row its `facts`, up to 16, and its `more` actions, up to 8. The ids of an entry and of all its actions are unique within the window like any widget's id, so a plugin gives the facts and `more` actions only to the chosen entry or makes their ids differ per entry.
+Shapes: *text*, *number* (`f64`), *integer* (`s64`), *flag* (`bool`), *texts*, and *numbers* (lists). A *tone* is a text, one of `normal`, `muted`, `good`, `warning`, `bad`. A *role* is a text, one of `body`, `title`, `value` (figures of one width), `big`, `label` (the secondary color), `small`.
+
+### Places
+
+| Kind | Since | Properties |
+|---|---|---|
+| `window` | 1.0 | `title` text, *required*: the name in the title bar, usually the plugin's; `path` texts, at most 4 non-blank: where the player is below the top level, outermost first; `status` text: one short line in the title bar; `status-tone` tone, `good` by default |
+| `panel` | 1.0 | `name` text, 1–64 characters, *required*: its name in the layout mode; `backing` text, `plate` (default) or `bare`; `anchor` text, where it starts before the player moves it: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left` (default), `bottom`, `bottom-right`; `shown` text, `always` (default), `in-combat`, or `out-of-combat` |
+| `dialog` | 1.0 | `title` text, *required*: the question, such as `Trust this publisher?`; `window` text, *required*: the id of the window that asks it, returned by the same `ui` |
+| `popup` | 1.0 | `at` text, `corner` (default), `center`, or `panel`; `panel` text: the id of the plugin's panel it appears beside, required with `at = panel`; `seconds` integer, 2–10, 5 by default; `attention` flag, as for `notifications.show` |
+
+A window's status tone chooses its mark: `good` the mark of something running, `warning` and `bad` the mark of something that needs the player. When the player presses the back arrow, the title, or an earlier part of the path, the plugin receives `navigated` with the number of parts that stay (0 for the top level) and returns the window with that path; the host does not change the path itself. The title bar's other controls — collapse, the window's menu, and close — are the host's. `closed` arrives when the player closes a window.
+
+A dialog is a question its window asks: the window waits under it, dimmed and taking no input, until the plugin stops returning the dialog. A window has at most one dialog, and its only parts that take input are buttons; its clicks name the dialog's id as their place, and when the player closes it without an answer the plugin receives `closed` with the dialog's id. Return the dialog every frame while the question stands, and stop once the player answered or closed it.
+
+A panel's clicks pass to the game except on parts that take input. The player can choose otherwise than `shown`, or hide the panel, in the layout mode. A popup's parts take no input: only text, layout, and value parts (below) are allowed in it, at most 32.
+
+### Parts
+
+**Layout.** A container holds the parts after it up to its `end`.
+
+| Kind | Since | Properties |
+|---|---|---|
+| `row` | 1.0 | side by side |
+| `column` | 1.0 | one under another |
+| `grid` | 1.0 | `columns` integer, 2–8, *required*: equal columns, filled left to right, row by row |
+| `section` | 1.0 | id; `title` text, *required*; `open` flag, true by default: under a heading the player can collapse |
+| `table` | 1.0 | `columns` texts, 1–16, *required*: column headings; each cell is one part, or one `row`, left to right, row by row; holds no sections or tables |
+| `end` | 1.0 | closes the innermost container |
+| `spacer` | 1.0 | takes the free room of its row or column, pushing what follows to its end |
+| `separator` | 1.0 | a thin line |
+| `tabs` | 1.0 | id; `labels` texts, 1–32, *required*; `selected` integer, an index of `labels`; the plugin shows the selected tab's parts after it; sends `chosen` |
+
+**Text.**
+
+| Kind | Since | Properties |
+|---|---|---|
+| `text` | 1.0 | `text` text, *required*; `role` role, `body` by default; `tone` tone, `normal` by default |
+| `heading` | 1.0 | `text` text, *required*: a small header with a thin rule |
+| `fact` | 1.0 | `name` text and `value` text, *required*: a name and its value on one line |
+| `tooltip` | 1.0 | `text` text, *required*: shown while the player points at the part right before it |
+| `tile` | 1.0 | `text` text, *required*: a square tile with its first letter |
+| `icon` | 1.0 | `icon` integer, *required*: one of the game's icons by the number game sheets hold (such as `Item`'s icon column); `size` integer, 1–256, 24 by default |
+
+The host reads an icon from the game's archives, the high-resolution texture first; an icon the game does not have, or one not read yet, shows as an empty frame. It spends at most 2 ms of a frame reading icons and keeps up to 512 of them.
+
+**Values.** The host moves meters and rings to a new value instead of jumping, shows a readout's change for a moment, and counts countdowns down itself.
+
+| Kind | Since | Properties |
+|---|---|---|
+| `meter` | 1.0 | `value` number and `max` number above 0, *required*; `label` text; `text` text: the value in words, such as `35 250 / 52 000`; `segments` integer, 0 (a bar, the default) or 2–32; `tone` tone |
+| `ring` | 1.0 | `value` number and `max` number above 0, *required*; `size` integer, 16–128, 40 by default; `icon` integer: a game icon inside; `text` text, at most 8 characters, inside when there is no icon; `tone` tone |
+| `readout` | 1.0 | id; `value` number, *required*; `decimals` integer, 0–6; `unit` text, such as `%`; `role` role, `value` by default; `tone` tone. When the value differs from the previous frame's, the host shows the change beside it |
+| `countdown` | 1.0 | `until` integer, *required*: Unix time in milliseconds, as `wasi:clocks/wall-clock` gives it; `done` text, shown in the warning tone once it runs out, `0:00` by default; `role` role, `value` by default |
+| `sparkline` | 1.0 | `values` numbers, 2–256, *required*, oldest first, drawn scaled between the smallest and the largest; `height` integer, 16–128, 36 by default |
+
+**Actions and input.** Parts that take input have an id, show the value the plugin passes, and send what the player did as an event before the next `ui`. While the player types in a text field, the host keeps the typed text; otherwise the plugin's value is shown.
+
+| Kind | Since | Properties |
+|---|---|---|
+| `button` | 1.0 | id; `label` text, *required*; `style` text: `normal` (default), `main` (the main action of a window, at most one in view, bold with an arrow), `quiet` (a side action), `danger` (what cannot be undone); `enabled` flag, true by default; sends `clicked` |
+| `checkbox` | 1.0 | id; `label` text, *required*; `checked` flag; sends `toggled` with a flag |
+| `text-field` | 1.0 | id; `label` text; `value` text; `hint` text; sends `edited` with a text |
+| `choice` | 1.0 | id; `label` text; `options` texts, at most 1024, *required*; `selected` integer, an index of `options`, none by default; sends `chosen` with an integer |
+| `number` | 1.0 | id; `label` text; `value`, `min`, and `max` numbers with `min` ≤ `value` ≤ `max`, *required*; `step` number, at least 0 (0, the default, for any): the value set is a multiple of it from `min`; `decimals` integer, 0–6; `slider` flag: a slider instead of a field the player drags or types into; sends `set` with a number |
+| `entry` | 1.0 | id; `title` text, *required*; `note` text; `value` text; `mark` text, `none` (default), `on`, `off`, or `attention`; `chosen` flag; `progress` number, 0–1: a thin line in place of the note. A container: a `button` in it with `in-row` flag true is one of up to 4 actions shown in the row under the pointer; under a chosen entry, its `fact`s (up to 16) and other `button`s (up to 8) are shown under the row. Sends `clicked` |
+
+An entry is drawn like the rows of Angelica's own list: a tile with the first letter of its title, the title, the note after it, the value at the right, and the mark — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. A click on the row sends `clicked` with the entry's id, and a pressed button `clicked` with its own; the plugin decides which entry is chosen. A `button` takes `in-row` only inside an entry.
+
+### Events
+
+`ui-event` receives what the player did as an `event`: its `kind`, the id of the place and of the part, and a value for kinds that carry one. Kinds: `clicked`, `toggled` (a flag), `edited` (a text), `chosen` (an integer: an option or a tab), `set` (a number), `navigated` (an integer), `closed` (a window or a dialog, with an empty part), and `open-requested` (the player pressed the plugin's Open button in the Angelica menu; empty place and part). Later API versions may add kinds of events; a plugin ignores kinds it does not know.
 
 `runtime.language` returns the language of Angelica's interface, `en` or `ru`, which the player can change while the plugin runs; a plugin shows its own text in that language when it has it and in English otherwise.
-
-`open-requested` arrives when the player presses the plugin's Open button in the Angelica menu; `closed` when the player closes a window.
 
 ## Storage
 
@@ -219,6 +292,8 @@ A plugin sends to the plugins its manifest lists in `[messages] to`, which the p
 
 `notifications.show` shows one line of 1 to 200 characters without control characters at the top right of the screen for 7 seconds, drawn by the host as Angelica's own notes are, under the plugin's name and with a mark: the attention mark when `attention` is set, the running mark otherwise. With `attention`, the game's button on the taskbar also flashes while the game is in the background, until the player returns to it. A plugin notifies at most once in 2 seconds, `limit-exceeded` otherwise; at most 3 notifications of all plugins are shown at once, the oldest leaving first, and a stopped plugin's notifications leave with it. Notes are drawn while the menu is closed. Main instance only.
 
+`notifications.pop-up` shows a place of the kind `popup` for its `seconds`: in the corner with the notes, large above the middle of the screen (`center`), or beside one of the plugin's panels (`panel`; in the corner while that panel is not shown). It needs `notifications` and shares `show`'s limits; a popup that breaks the [rules of places and parts](#rules-for-every-place-and-part) is `invalid-argument`.
+
 ## Sound
 
 `sound.play` plays a WAV file from the plugin's storage at a volume from 0 to 1. The host reads the file, at most 8 MiB, and checks it: a RIFF WAVE file with one format chunk and one data chunk inside the file, PCM samples of 8, 16, or 24 bits or 32-bit float (also inside `WAVE_FORMAT_EXTENSIBLE`), 1 or 2 channels, 8 to 96 kHz, at most 10 seconds; anything else is `invalid-argument`. It then writes its own 16-bit PCM copy with the volume applied, float samples outside -1 to 1 clamped and others silenced, and Windows plays that copy, never the plugin's file. One sound plays at a time: a new one, of any plugin, stops the one playing. A plugin plays at most one sound a second, `limit-exceeded` otherwise. Main instance only.
@@ -235,4 +310,4 @@ A component built by Rust's standard library imports WASI. The host provides `wa
 
 ## Compatibility
 
-Interfaces and functions of `angelica:plugin@1.0.0` do not change. A later 1.x version adds interfaces or functions in a new package version, and the host keeps running components built for earlier 1.x versions.
+Interfaces and functions of `angelica:plugin@1.0.0` do not change. A later 1.x version adds interfaces or functions in a new package version, and the host keeps running components built for earlier 1.x versions. Places and parts grow without a new package version: a later 1.x adds [kinds and properties](#places-and-parts), which a plugin uses by raising `plugin.api` in its manifest to that version; a host refuses a plugin whose `plugin.api` is newer than the one it runs.

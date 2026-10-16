@@ -56,14 +56,14 @@ The host calls the plugin's main instance on the game's main thread ([calls into
 
 - `start` once; define commands, start watches, load settings, add rules and rule files here.
 - `tick` every frame; poll jobs here.
-- `command`, `game_event`, `ui_event` as the player and the game act, then `ui` for the windows of this frame.
+- `command`, `game_event`, `ui_event` as the player and the game act, then `ui` and `panels` for the windows and panels of this frame.
 - `stop` before the plugin is disabled.
 - `run_job` in a separate instance for long work.
 
 Rules that keep a plugin within its limits:
 
 - The calls of one frame share about 20 ms of guest time. Anything that reads many sheet rows, parses a large file, or makes a request runs in a [job](./interfaces.md#jobs).
-- Windows are declared every frame from the plugin's state; widgets are controlled, so the plugin stores every value it shows.
+- Windows and panels are declared every frame from the plugin's state; widgets are controlled, so the plugin stores every value it shows.
 - An error returned from `start` or `tick`, or a trap, faults the plugin: it stops, everything it activated is removed, and the player sees the reason. Return errors from `command` (printed to the player) and handle the rest.
 - `?` converts a host error into the `String` the plugin's methods return.
 - Declare only the permissions the plugin uses: the player approves each one, and a new version that declares more waits for approval again.
@@ -93,6 +93,8 @@ Rules that keep a plugin within its limits:
 | the game reaching an event | an event in the map given to `test.use_map`; then `test.fire("<event>", &[("<argument>", Fire::Value(…))])`, or `Fire::Object("<path>")` for a reference, and `test.frames(1)` to deliver it |
 | what the plugin printed | `test.game.printed_text()`; `test.game.clear_printed()` forgets it |
 | what the plugin shows | `test.texts(id)`: the headings and texts of its windows; `test.host.plugin(id).unwrap().windows()` for every widget (types in `angelica_fake_game::ui`) |
+| what the plugin keeps in view | `test.host.plugin(id).unwrap().panels()`: its panels with their parts |
+| what the plugin popped up or notified | `test.host.services().notifications.current(Instant::now())`: the notes shown now, newest first; a popup's are in `popup` |
 
 The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job. [`crates/angelica-fake-game/tests/inventory.rs`](../../crates/angelica-fake-game/tests/inventory.rs) tests a plugin that reads the bags through Lens.
 

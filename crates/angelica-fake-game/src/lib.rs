@@ -13,10 +13,10 @@ pub use objects::{Fire, Set};
 
 pub mod maps;
 mod objects;
+/// The windows and window events of the plugin API.
+pub use angelica_view as ui;
 /// The host the tests run plugins in.
 pub use runtime;
-/// The windows and window events of the plugin API.
-pub use runtime::sandbox::bindings::angelica::plugin::ui;
 use runtime::{
     excel_text::{ExcelText, Rewrite, SheetInfo},
     game::Game,

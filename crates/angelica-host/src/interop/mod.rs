@@ -4,10 +4,13 @@ mod chat;
 mod clipboard;
 mod component;
 mod crash;
+mod cursor;
 mod decide;
 mod entries;
 mod excel_rows;
 mod file_reads;
+#[cfg(test)]
+mod gallery;
 mod game;
 mod input;
 pub mod memory;

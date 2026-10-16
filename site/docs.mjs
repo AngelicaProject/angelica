@@ -57,7 +57,7 @@ const nav = [
   ["Play", ["Install Angelica", "Turn on a plugin", "Patch day", "Remove Angelica", "When something goes wrong"]],
   ["Build", ["Build a plugin with an agent", "Write your first plugin", "Run your plugin in the game", "Publish a plugin"]],
   ["Understand", ["How Angelica works", "How plugins see the game", "The game map and patch day", "The sandbox and permissions", ["Contribute", doc("development/README.md")]]],
-  ["Reference", ["Game data", ...reference.map((r) => r.title), ["Rust SDK", "sdk/angelica_sdk/index.html"]], "For agents and maintainers"],
+  ["Reference", ["Game data", "Interface parts", ...reference.map((r) => r.title), ["Rust SDK", "sdk/angelica_sdk/index.html"]], "For agents and maintainers"],
 ];
 
 /** A link of a canonical document, `href` relative to `from` in docs/: the site's page for a document
@@ -153,6 +153,9 @@ const css = `
   --bar: rgba(244,242,238,.94); --tint: rgba(63,127,168,.09); --on: #2e7d46; --c-k: #3f7fa8; --c-v: #7a4fa0; --c-s: #a8432f; --c-t: #1f5d82; --c-n: #9a6a12; color-scheme: light; }
 ${dark}
 * { box-sizing: border-box; }
+.part { margin: 14px 0 10px; } .part img { display: block; max-width: 100%; height: auto; border-radius: 6px; } .part .dark { display: none; }
+:root[data-theme="dark"] .part .light { display: none; } :root[data-theme="dark"] .part .dark { display: block; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .part .light { display: none; } :root:not([data-theme="light"]) .part .dark { display: block; } }
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { margin: 0; background: var(--pearl); color: var(--ink); font-family: var(--sans); font-size: 17px; line-height: 1.65; }
 a { color: inherit; }
