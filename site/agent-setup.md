@@ -1,6 +1,6 @@
 # Set up an Angelica plugin project
 
-Instructions for a coding agent. The user asked you to set up a project for an Angelica plugin: a plugin for FINAL FANTASY XIV, written in Rust and compiled to a WebAssembly component. Work on Windows, in the terminal you have.
+Instructions for a coding agent. The user asked you to set up a project for an Angelica plugin: a plugin for FINAL FANTASY XIV (FFXIV), written in Rust and compiled to a WebAssembly component. Work on Windows, in the terminal you have.
 
 ## 1. Check the tools
 
@@ -62,3 +62,10 @@ The first `cargo test` fetches the Angelica repository and builds the test host,
 ## 6. Continue with the project's AGENTS.md
 
 Read `AGENTS.md` in the project and follow its work loop from the first step: the design you agree on with the user. It holds the commands, the rules, and links to the documentation, and it stays with the project for every later change.
+
+## Later plugins
+
+Angelica's agent skill, `ffxiv-plugin`, points an agent to these instructions whenever the user asks for an FFXIV plugin. Mention it once the first plugin works, and install it only if the user wants it:
+
+- Claude Code: `claude plugin marketplace add AngelicaProject/angelica`, then `claude plugin install angelica@angelica`.
+- Other agents that read Agent Skills: `gh skill install AngelicaProject/angelica ffxiv-plugin`.
