@@ -134,6 +134,7 @@ export function page({ front, md, title }, file, pages, { source: from, lede: gi
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${name}: Angelica</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icon/icon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="icon/icon-192.png"><link rel="apple-touch-icon" href="icon/apple-touch-icon.png">
 <meta name="description" content="${lede.replace(/<[^>]+>/g, "").replace(/"/g, "&quot;")}">
 <link rel="canonical" href="https://angelicaproject.github.io/angelica/${file}">
 <link rel="alternate" type="text/markdown" href="${file.replace(/\.html$/, ".md")}">
