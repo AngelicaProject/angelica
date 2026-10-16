@@ -100,12 +100,12 @@ pub fn prepare(
             format!("{name} is not a value plugins change"),
         ));
     };
-    if !may_change(&field.domain) {
+    if !may_change(&target.domain) {
         return Err(Error::new(
             Kind::PermissionDenied,
             format!(
                 "{name} is in domain {}, which the plugin may not change: list it in the manifest's [lens] change",
-                field.domain
+                target.domain
             ),
         ));
     }

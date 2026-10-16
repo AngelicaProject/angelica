@@ -583,6 +583,7 @@ default = 0xE0000000
 doc = "The player asked to use an action."
 at = "test.use_action"
 domain = "actions"
+whose = "you"
 
 [events.action_used.args.kind]
 doc = "The kind."
@@ -601,6 +602,7 @@ arg = 3
 doc = "The game adds a message to the chat log."
 at = "test.print_message"
 domain = "chat"
+whose = "others"
 
 [events.chat_message_added.args.kind]
 doc = "The log kind."
@@ -627,6 +629,7 @@ at = "excel.hash_table_page_row_resolver.store_row"
 derived = "sheet_cell"
 domain = "text"
 rules = "text-table-v1"
+whose = "you"
 
 [events.sheet_text.args.sheet]
 doc = "The sheet."
@@ -655,6 +658,7 @@ doc = "A letter the conversion to capitals meets."
 at = "text.utf8_string.to_upper"
 derived = "case_letter"
 domain = "text"
+whose = "you"
 
 [events.letter_upper.args.letter]
 doc = "The letter."
@@ -671,6 +675,7 @@ doc = "A letter the conversion to small letters meets."
 at = "text.utf8_string.to_lower"
 derived = "case_letter"
 domain = "text"
+whose = "you"
 
 [events.letter_lower.args.letter]
 doc = "The letter."
@@ -722,21 +727,25 @@ elements = { window = 1, text = 4 }
 doc = "The player."
 global = "test.local_player"
 type = "test.battle_chara"
+whose = "you"
 
 [roots.game]
 doc = "The game."
 global = "test.game_main"
 type = "test.game_main"
+whose = "you"
 
 [roots.windows]
 doc = "The windows."
 global = "test.stage"
 type = "test.stage"
+whose = "you"
 
 [roots.camera]
 doc = "The cameras."
 global = "test.camera_manager"
 type = "test.camera_manager"
+whose = "you"
 "#,
     ),
 ];

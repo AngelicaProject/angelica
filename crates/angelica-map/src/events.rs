@@ -125,6 +125,9 @@ pub struct Arg {
     pub forbidden: bool,
     /// The bits of an integer value that hold it; the others are cleared.
     pub mask: Option<u64>,
+    /// For a reference: whose object it is, and the domains renamed below
+    /// it.
+    pub entering: crate::whose::Entering,
 }
 
 /// What a plugin's rule may make the game do at an event of a function:
@@ -162,6 +165,8 @@ pub struct Event {
     pub derived: Option<String>,
     /// The format of rule files the event takes, besides single rules.
     pub rules: Option<String>,
+    /// Whose objects and values it gives, and the domains renamed in them.
+    pub entering: crate::whose::Entering,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +188,8 @@ struct RawEvent {
     args: BTreeMap<String, RawArg>,
     #[serde(default)]
     outcomes: BTreeMap<String, RawOutcome>,
+    whose: Option<String>,
+    r#as: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +219,8 @@ struct RawArg {
     #[serde(default)]
     forbidden: bool,
     mask: Option<u64>,
+    whose: Option<String>,
+    r#as: Option<BTreeMap<String, String>>,
 }
 
 /// Parses `events.toml`; the kinds of function arguments come later, from
@@ -231,6 +240,8 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
         if !(1..=MOST_RATE).contains(&rate) {
             return Err(format!("event `{name}`: `rate` is 1 to {MOST_RATE}"));
         }
+        let entering = crate::whose::Entering::parse(event.whose, event.r#as)
+            .map_err(|message| format!("event `{name}`: {message}"))?;
         let mut args = BTreeMap::new();
         for (arg_name, arg) in event.args {
             if !is_word(&arg_name) {
@@ -295,6 +306,7 @@ pub(crate) fn parse(text: &str) -> Result<BTreeMap<String, Event>, String> {
                 outcomes,
                 derived: event.derived,
                 rules: event.rules,
+                entering,
             },
         );
     }
@@ -366,6 +378,10 @@ fn parse_arg(name: &str, raw: RawArg, domain: &str) -> Result<Arg, String> {
     if raw.mask.is_some() && !matches!(shape, Shape::Value { .. }) {
         return Err("a mask belongs to values".into());
     }
+    let entering = crate::whose::Entering::parse(raw.whose, raw.r#as)?;
+    if !entering.is_empty() && !matches!(shape, Shape::Ref(_)) {
+        return Err("`whose` and `as` belong to references".into());
+    }
     Ok(Arg {
         name: name.to_owned(),
         doc: raw.doc,
@@ -375,6 +391,7 @@ fn parse_arg(name: &str, raw: RawArg, domain: &str) -> Result<Arg, String> {
         domain: raw.domain.unwrap_or_else(|| domain.to_owned()),
         forbidden: raw.forbidden,
         mask: raw.mask,
+        entering,
     })
 }
 

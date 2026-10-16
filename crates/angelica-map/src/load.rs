@@ -206,6 +206,10 @@ impl Map {
                 message,
             }
         })?;
+        crate::whose::check(&objects).map_err(|message| MapError::InvalidObjects {
+            path: PathBuf::from("roots.toml"),
+            message,
+        })?;
         Ok(Self {
             entries,
             sheets,

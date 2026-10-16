@@ -262,6 +262,7 @@ fn arg_shape(objects: &Objects, arg: &angelica_map::Arg) -> String {
         set: None,
         bit: None,
         pointer: None,
+        entering: angelica_map::Entering::default(),
     };
     let mut held = match &arg.shape {
         Shape::Text(length) => format!("text of at most {length} bytes, behind a pointer"),

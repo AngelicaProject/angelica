@@ -210,7 +210,7 @@ An array gives:
 
 A fixed `length` and a `stride` other than that of pointers are numbers of the map, and an update of the game can change them. The array field's entry confirms them for every build: when its offset is derived from code, it has `contains` checks on code of the game that walks or copies the array with those numbers, so the entry is absent when the code changes; when its offset is a constant, the build record confirms it only after its elements were checked in the game.
 
-Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it.
+Every field may also have `domain`, the field's domain when it is not the type's, and `forbidden = true`, which describes the field for completeness while no plugin ever reads it. A reference or an array may have `whose` and `as` ([whose objects](#whose-objects)).
 
 A value or text field may have `set`: `true`, or a table of `range = [least, most]`, `call`, and `hold`, when plugins may change it. Only a value that exists on the player's computer alone is marked, such as the camera's zoom limits or what the game's windows show: never one the game sends to its servers. The field is a number, a `bool`, or text, never a pointer or forbidden; its domain has `change` wording; only a number has a range, and an integer field an integer one.
 
@@ -230,6 +230,32 @@ type = "inventory.inventory_manager"
 
 - A root is named like a domain. `doc` is not blank.
 - `global`: a `global` entry; of type `struct`, it is the object of `type`; of type `ptr`, it holds a pointer to it, and the root has no object while the pointer is zero.
+- `whose` and optionally `as`: whose objects the root holds and the domains renamed below it ([whose objects](#whose-objects)).
+
+### Whose objects
+
+A path reaches the player's objects or other players' and the world's. The player's own character and the character they have selected are the same type of the game, and their fields the same entries; what differs is whose object the path reached, and the player approves those in different words.
+
+- `whose`: `you` or `others`. Every root and every event has it. A reference field, an array field, and a reference argument of an event may have it; without it they keep the `whose` of the object or event they belong to. An embedded object is part of its object and keeps its `whose`.
+- `as`: optional, where `whose` may be: `{ <domain> = "<domain>", … }`. Below this point, a field of a listed domain belongs to the domain it is renamed to, and so does an element a partition puts in a listed domain. A rename lower on the path replaces this one for the domains it lists; the others keep this one. The field that holds the reference or the array keeps its own domain.
+
+```toml
+[roots.target]
+doc = "The player's targets."
+global = "target.system.instance"
+type = "target.system"
+whose = "you"
+
+[types."target.system".fields.current]
+doc = "The object the player has selected; nothing while none."
+ref = "object.game_object"
+whose = "others"
+as = { character = "target", location = "target" }
+```
+
+`target.current { name }` reads the entry that `player { name }` reads, in the domain `target` instead of `character`. Below a `whose = "others"`, no field belongs to a domain of class `you` once renamed: a new way to others' objects renames every such domain it reaches, so the player's permission for their own character never covers anyone else's.
+
+`angelica map check` refuses a map with a root or an event without `whose`; a host reads one as the player's.
 
 ### Events
 
@@ -259,12 +285,13 @@ arg = 2
 - `args`: at least one argument, each named like a field.
 - `derived`: optional, the name of a derivation of the host: the event is not read from the function's registers; the host's adapter hooks the function and derives the event's arguments itself, such as one firing per text cell of a row the function stores. A derived event is never watched; it is a decision point whose rules are equalities on its arguments.
 - `rules`: optional, for a derived event: the format of rule files it takes besides single rules.
+- `whose` and optionally `as`: whose objects and values the event gives and the domains renamed in them ([whose objects](#whose-objects)).
 
 An argument gives where its value is and what it is:
 
 - `from = "<value>"`, for a derived event: a value the derivation gives, its kind the derivation's. `arg = n`, for a function: the argument at position `n` from 0, its kind from the function's `abi`. `register = "<register>"` with `kind = "<value kind>"`, for a location: one of `rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`, `rbp`, `r8` to `r15`, or the low 64 bits of `xmm0` to `xmm15`. A float is in an `xmm` register, and only a float.
 - Its shape: a value, with `sheet`, `enum`, `flags`, and `unit` as for a field; `text = n`, NUL-terminated UTF-8 of at most `n` bytes behind a pointer; or `ref = "<type>"`, a pointer to an object of the type, from which a watch's path goes on. Text and references have the kind `ptr`.
-- `domain` and `forbidden`, as for a field.
+- `domain` and `forbidden`, as for a field; for a reference, `whose` and `as` ([whose objects](#whose-objects)).
 - `mask`: optional, for an integer value: the bits that hold it; the others are cleared before it is read or compared, as for a log kind kept in the low bits of a wider argument.
 
 An event of a function may have `outcomes`: what a plugin's rule may make the game do there. Such an event is a decision point.
@@ -332,7 +359,7 @@ default = 0
 
 ### Rules and resolution
 
-The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large; when a `variant` is on a type without `extends`, names no value, or names a field of the base that is not an enum value or a value the enum lacks; when an `element` names something other than a text field, a `bit` is past its integer or on anything but an integer, or a `pointer` is not a `ptr` field entry or on text that is not in a `struct`; when a `set` field's `call` is not a function of the main thread that takes the object and the value and returns nothing, or text or a bit is set without one. It is invalid too when a derived event names an unknown derivation, is not at a function, has an argument without `from` or a value the derivation lacks or of another shape, an outcome with `returns` or without `text`, a `same_length` that is not a text argument, or rule files of a format the derivation does not take; when an event that is not derived has `from`, `rules`, or an outcome with `text`; when an event's `at` is not a function or a location, an event with outcomes is not at a function or its domain has no `change` wording, an outcome's `returns` does not fit the function's return kind, a `mask` is zero or on anything but an integer, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind.
+The whole map is invalid when the object model names a domain, type, enum, entry, or field that does not exist; when a field's shape does not fit its entry's `type` or its entry's `of` is not the type that declares it; when a value's meaning does not fit its kind; when an array's `count`, `present`, or `partition` names a field of the wrong shape or a partition names an unknown value or domain; or when types contain each other through `extends`, embedded objects, or arrays in place, which would make an object infinitely large; when a `variant` is on a type without `extends`, names no value, or names a field of the base that is not an enum value or a value the enum lacks; when an `element` names something other than a text field, a `bit` is past its integer or on anything but an integer, or a `pointer` is not a `ptr` field entry or on text that is not in a `struct`; when a `set` field's `call` is not a function of the main thread that takes the object and the value and returns nothing, or text or a bit is set without one. It is invalid too when a derived event names an unknown derivation, is not at a function, has an argument without `from` or a value the derivation lacks or of another shape, an outcome with `returns` or without `text`, a `same_length` that is not a text argument, or rule files of a format the derivation does not take; when an event that is not derived has `from`, `rules`, or an outcome with `text`; when an event's `at` is not a function or a location, an event with outcomes is not at a function or its domain has no `change` wording, an outcome's `returns` does not fit the function's return kind, a `mask` is zero or on anything but an integer, an argument's position is past the function's arguments, a function's argument names a register or a location's argument a position, or an argument's shape does not fit its kind; when an action's `call` is not a function of the main thread, its arguments do not cover the function's exactly once, its domain has no `act` wording, a parameter is a pointer, or a value, default, or range does not fit the argument's kind. It is invalid too when `whose` is neither `you` nor `others`, or `whose` or `as` is on anything but a root, an event, a reference, or an array; when `as` renames a domain that nothing below it belongs to, or to a domain that does not exist; when a field or an argument below a `whose = "others"` belongs, once renamed, to a domain of class `you`; or when a field plugins change is renamed to a domain without `change` wording.
 
 In a build, a root is absent when its global is absent, a field when its entry is absent, an event when its `at` is absent, and an action when its function or a global it passes is absent; everything else of the model stays usable. The object model is not part of `entries_sha256`; `angelica map verify` reports its roots, fields, events, and actions under `objects`, and an action whose condition or object path does not fit the model as absent.
 

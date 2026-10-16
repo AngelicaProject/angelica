@@ -992,3 +992,62 @@ fn firings_wait_for_the_next_frame_within_the_rate() {
     lens.watches.fire(0, &call(), &memory);
     assert_eq!(lens.watches.take("p"), []);
 }
+
+/// The player's target read in its own domain: the same type as the
+/// player's character, renamed below the reference.
+fn targeted() -> Schema {
+    schema_of(
+        &TYPES.replace(
+            "doc = \"Its target.\"\nref = \"test.character\"\n",
+            "doc = \"Its target.\"\nref = \"test.character\"\nwhose = \"others\"\nas = { character = \"target\" }\n",
+        ),
+        &format!(
+            "{DOMAINS}\n[domains.target]\ndoc = \"The target.\"\nclass = \"others\"\nread = {{ en = \"Sees your target\", ru = \"Sees your target\" }}\n"
+        ),
+        "doc = \"Kinds.\"\nvalues = { bag_1 = 0, bag_2 = 1, crystals = 2001 }\n",
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_reference_renames_the_domains_below_it() {
+    let schema = targeted();
+    let both = |domain: &str| domain == "character" || domain == "target";
+    let prepared = prepare(&schema, "player.target { name, data.level }", &both).unwrap();
+    assert_eq!(
+        prepared.domains,
+        ["character", "target"].map(String::from).into()
+    );
+    assert!(
+        prepared
+            .columns
+            .iter()
+            .all(|column| column.domain == "target")
+    );
+    let rows = run(&memory(true), &prepared).unwrap();
+    assert_eq!(
+        rows[0].values,
+        [
+            Some(Value::Text("Alphinaud".into())),
+            Some(Value::Unsigned(70))
+        ]
+    );
+
+    let own = prepare(&schema, "player { name }", &both).unwrap();
+    assert_eq!(own.columns[0].domain, "character");
+
+    let only_character = |domain: &str| domain == "character";
+    for query in [
+        "player.target { name }",
+        "player[target.name = \"Alphinaud\"] { name }",
+        "player { target.data.level }",
+    ] {
+        let error = prepare(&schema, query, &only_character).unwrap_err();
+        assert_eq!(error.kind, Kind::PermissionDenied, "{query}");
+        assert!(
+            error.message.contains("reads target"),
+            "{query}: {}",
+            error.message
+        );
+    }
+}
