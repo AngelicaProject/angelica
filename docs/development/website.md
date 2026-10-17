@@ -30,7 +30,7 @@ GALLERY_OUT="$PWD/site/gallery" cargo test -p angelica-host --lib gallery -- --i
 
 `pages.yml` publishes after a push to `main` that changes the site, `docs/`, or the crates the pages are made from (`angelica-view`, `angelica-host`, `angelica-sdk`), and every hour.
 
-Every **Download** link on the site points to `releases/download/nightly/angelica-setup.exe`, the installer of the nightly channel ([releases](./releases.md)).
+Every **Download** link on the site points to `releases/download/nightly/angelica-setup.exe`, the installer of the nightly channel ([releases](./releases.md)); the install page also links the Linux installer, `releases/download/nightly/angelica-setup-linux-x86_64.tar.gz`.
 
 The build fails when a link inside the site leads to a missing file or a missing element of a page. The `site` job of [CI](./ci.md) runs it for every pull request.
 

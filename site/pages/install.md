@@ -2,7 +2,7 @@
 order: 1
 section: Play
 kicker: Get started
-meta: About 2 minutes · Windows
+meta: About 2 minutes · Windows · Linux · Steam Deck
 prev: 
 next: Turn on a plugin
 ---
@@ -15,8 +15,8 @@ Angelica installs beside FINAL FANTASY XIV and starts together with the game.
 
 You need:
 
-- Windows 10 or Windows 11.
-- FINAL FANTASY XIV for Windows. Angelica works with the Steam version, the Square Enix launcher, and XIVLauncher.
+- Windows 10 or Windows 11, or Linux, including the Steam Deck.
+- FINAL FANTASY XIV for Windows. Angelica works with the Steam version, the Square Enix launcher, and XIVLauncher. On Linux, it works with the Steam version through Proton and with XIVLauncher.Core.
 
 Other tools you use, such as Dalamud or ReShade, can stay installed.
 
@@ -38,6 +38,20 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 
 1. When the installer says it is done, it shows the key that opens Angelica. Select **Close**.
 
+## Install on Linux or Steam Deck
+
+On Linux the game runs in Proton or in XIVLauncher.Core, and Angelica runs inside the game the same way it does on Windows.
+
+1. Start the game once and close it, if you never started it on this computer.
+1. On Steam Deck, switch to **Desktop Mode**.
+1. Download [`angelica-setup-linux-x86_64.tar.gz`](https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup-linux-x86_64.tar.gz), extract it, and run `angelica-setup`.
+1. Check the game folder. The installer looks for the game in your Steam libraries and in XIVLauncher.Core's settings.
+
+   If it found the wrong game or none, select **Choose another folder** and pick the folder of the game.
+
+1. Select **Install**, then **Close**.
+1. On Steam Deck, go back to **Gaming Mode** and start the game.
+
 ## Open Angelica in the game
 
 1. Start the game.
@@ -45,6 +59,8 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
    For the first seconds, a small note at the top right says that Angelica is running and which key opens it.
 
 1. Press <kbd>Insert</kbd>, type `/angelica` in the chat, or select **Angelica** in the game's **System** menu.
+
+   The Steam Deck has no <kbd>Insert</kbd> key: use the **System** menu or the chat command.
 
    The Angelica window opens over the game.
 
@@ -55,6 +71,13 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 - Angelica goes to `%LOCALAPPDATA%\Angelica`, for your Windows user only.
 - Two files go into the game's `game` folder: `dinput8.dll`, which starts Angelica with the game, and `angelica.json`, which tells it where Angelica is. Nothing else in the game folder changes.
 - Angelica appears in **Settings > Apps > Installed apps**, where you can [remove it](remove.md).
+
+On Linux:
+
+- Angelica goes to `~/.local/share/angelica`, or into the folder of the Flatpak that runs the game.
+- The same two files go into the game's `game` folder.
+- In the game's Wine prefix, one setting tells Wine to load Angelica's `dinput8.dll` for the game instead of its own.
+- **Remove Angelica** appears among your applications.
 
 You do not need to run the installer again. Angelica checks for updates while you play, and a new version starts the next time you start the game.
 After a game patch, Angelica gets what it needs for the new version of the game by itself.
@@ -74,6 +97,16 @@ To install Angelica, remove that program or move its `dinput8.dll` out of the ga
 
 Close the game, then select **Try again**.
 If the game is already closed, wait a few seconds until it has fully exited, then try again.
+
+### On Linux, the installer asks you to start the game once
+
+Angelica needs the Wine prefix the game runs in, and Proton or XIVLauncher.Core creates it the first time the game starts.
+Start the game, close it, then select **Try again**.
+
+### On Linux, the installer says that Wine is still running
+
+Wine keeps running for a few seconds after the game closes.
+Wait a few seconds, then select **Try again**.
 
 ### The installer does not find the game
 
