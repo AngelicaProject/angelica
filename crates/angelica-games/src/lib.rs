@@ -8,6 +8,7 @@ use std::os::windows::process::CommandExt as _;
 /// The game's executable, relative to its `game` folder.
 const EXECUTABLE: &str = "ffxiv_dx11.exe";
 const STEAM_FOLDER: &str = "steamapps/common/FINAL FANTASY XIV Online/game";
+#[cfg(windows)]
 const SQUARE_ENIX: &str =
     r"C:\Program Files (x86)\SquareEnix\FINAL FANTASY XIV - A Realm Reborn\game";
 
@@ -27,28 +28,21 @@ pub fn resolve(path: &Path) -> Option<PathBuf> {
 }
 
 /// Every installation found, in order: Steam libraries, the Square Enix
-/// launcher's default folder, and `XIVLauncher`'s game path; each once.
+/// launcher's default folder (on Windows), and `XIVLauncher`'s game path;
+/// each once.
 #[must_use]
 pub fn find() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(steam) = steam_path() {
-        let steam = PathBuf::from(steam);
+    for steam in steam_roots() {
         let libraries = std::fs::read_to_string(steam.join("steamapps/libraryfolders.vdf"))
             .map(|text| library_folders(&text))
             .unwrap_or_default();
         candidates.push(steam.join(STEAM_FOLDER));
         candidates.extend(libraries.iter().map(|library| library.join(STEAM_FOLDER)));
     }
+    #[cfg(windows)]
     candidates.push(PathBuf::from(SQUARE_ENIX));
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        let config = Path::new(&appdata).join("XIVLauncher/launcherConfigV3.json");
-        if let Some(path) = std::fs::read_to_string(config)
-            .ok()
-            .and_then(|text| xivlauncher_game(&text))
-        {
-            candidates.push(path.join("game"));
-        }
-    }
+    candidates.extend(xivlauncher_games());
     let mut found: Vec<PathBuf> = Vec::new();
     for candidate in candidates {
         let normal = std::fs::canonicalize(&candidate).unwrap_or(candidate.clone());
@@ -64,7 +58,59 @@ pub fn find() -> Vec<PathBuf> {
     found
 }
 
+#[cfg(windows)]
+fn steam_roots() -> Vec<PathBuf> {
+    steam_path().map(PathBuf::from).into_iter().collect()
+}
+
+#[cfg(not(windows))]
+fn steam_roots() -> Vec<PathBuf> {
+    home().map_or_else(Vec::new, |home| linux::steam_roots(&home))
+}
+
+#[cfg(windows)]
+fn xivlauncher_games() -> Vec<PathBuf> {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return Vec::new();
+    };
+    let config = Path::new(&appdata).join("XIVLauncher/launcherConfigV3.json");
+    std::fs::read_to_string(config)
+        .ok()
+        .and_then(|text| xivlauncher_game(&text))
+        .map(|path| path.join("game"))
+        .into_iter()
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn xivlauncher_games() -> Vec<PathBuf> {
+    home().map_or_else(Vec::new, |home| {
+        linux::xlcore_roots(&home)
+            .iter()
+            .map(|root| linux::xlcore_game(&home, root).join("game"))
+            .collect()
+    })
+}
+
+#[cfg(not(windows))]
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The Wine prefixes the game in `game` runs in, on Linux: Steam's prefix
+/// for the game's library, each `XIVLauncher.Core` prefix whose game path is
+/// this game, and the prefix that holds the game in its `drive_c`. Only
+/// prefixes that exist are named; a game never started has none yet.
+#[cfg(not(windows))]
+#[must_use]
+pub fn wine_prefixes(game: &Path) -> Vec<PathBuf> {
+    home().map_or_else(Vec::new, |home| linux::wine_prefixes(&home, game))
+}
+
 /// Steam's folder, from the registry through the system's `reg.exe`.
+#[cfg(windows)]
 fn steam_path() -> Option<String> {
     let name = "SteamPath";
     let mut command = std::process::Command::new("reg");
@@ -104,6 +150,9 @@ pub fn xivlauncher_game(json: &str) -> Option<PathBuf> {
     let path = value.get("GamePath")?.as_str()?;
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
+
+#[cfg(not(windows))]
+mod linux;
 
 #[cfg(test)]
 mod tests {

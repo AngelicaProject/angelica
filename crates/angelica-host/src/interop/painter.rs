@@ -371,12 +371,17 @@ impl Painter {
                 .and_then(|device| device.GetAdapter())
             {
                 if let Ok(desc) = adapter.GetDesc() {
-                    let name = String::from_utf16_lossy(&desc.Description);
+                    // The name ends at its first NUL; Wine leaves bytes
+                    // after it.
+                    let length = desc
+                        .Description
+                        .iter()
+                        .position(|&unit| unit == 0)
+                        .unwrap_or(desc.Description.len());
+                    let name = String::from_utf16_lossy(&desc.Description[..length]);
                     parts.push(format!(
-                        "{} (vendor {:04x}, device {:04x})",
-                        name.trim_end_matches('\0'),
-                        desc.VendorId,
-                        desc.DeviceId
+                        "{name} (vendor {:04x}, device {:04x})",
+                        desc.VendorId, desc.DeviceId
                     ));
                 }
                 if let Ok(version) = adapter.CheckInterfaceSupport(&IDXGIDevice::IID) {

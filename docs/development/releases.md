@@ -26,6 +26,7 @@ Nightly runs inside the game process and may stop the game; it is for testers. T
 | Asset | Purpose |
 | --- | --- |
 | `angelica-setup.exe` | The installer; the release's runtime, plugin installer, and proxy are inside it |
+| `angelica-setup-linux-x86_64.tar.gz` | The [installer for Linux](../architecture/installer.md#on-linux), `angelica-setup`, with the same files inside |
 | `runtime.dll`, `runtime.dll.sig` | The host and its release signature |
 | `plugin-installer.exe`, `plugin-installer.exe.sig` | The plugin installer and its release signature |
 | `dinput8.dll`, `dinput8.dll.sig` | The proxy and its release signature |
@@ -56,12 +57,13 @@ The game map changes with game patches, not with Angelica, so it has its own rel
 
 ## Release workflow
 
-`.github/workflows/release.yml` builds on `windows-latest`:
+`.github/workflows/release.yml` builds on `windows-latest`, then the Linux installer on `ubuntu-22.04`, then publishes:
 
 1. For a tag, it waits for CI on `main` to pass for the tagged commit and fails if the commit is not on `main` or CI failed. A nightly starts only after a successful CI run of a push to `main` whose commit is still the head of `main`; a newer nightly cancels one still building.
 2. It checks or computes the version; a nightly writes its version into `Cargo.toml` and the lockfile before building.
 3. It builds the proxy, the runtime, the plugin installer, and the installer in release mode with `ANGELICA_RELEASE_PUBLIC_KEY`, signs the proxy, the runtime, and the plugin installer with `angelica release sign`, embeds them in the installer, and writes and signs `channel.json` with `angelica release feed`.
-4. It writes `SHA256SUMS.txt` and publishes the stable release with generated notes, or replaces the `nightly` pre-release.
+4. On `ubuntu-22.04`, whose older C library keeps the binary running on older systems, it builds the Linux installer with the same signed files embedded and packs it into a `.tar.gz`, which keeps it executable.
+5. It writes `SHA256SUMS.txt` over every asset and publishes the stable release with generated notes, or replaces the `nightly` pre-release.
 
 ## Cutting a stable release
 

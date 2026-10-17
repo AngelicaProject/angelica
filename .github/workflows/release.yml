@@ -57,8 +57,11 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
       actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     env:
       GH_TOKEN: ${{ github.token }}
       COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -161,31 +164,82 @@ jobs:
         run: |
           ANGELICA_SETUP_PAYLOAD="$(pwd)/dist" cargo build --release -p angelica-setup
           cp target/release/angelica-setup.exe dist/
-          rm dist/release.json
 
-      - name: Write the update feed and checksums
+      - name: Write the update feed
         env:
           ANGELICA_RELEASE_SIGNING_KEY: ${{ secrets.ANGELICA_RELEASE_SIGNING_KEY }}
           VERSION: ${{ steps.version.outputs.version }}
           CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
-          target/release/angelica.exe release feed --product angelica --channel "$CHANNEL" \
-            --version "$VERSION" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --file dist/runtime.dll --file dist/plugin-installer.exe --file dist/dinput8.dll \
-            --output dist/channel.json
+          target/release/angelica.exe release feed --product angelica --channel "$CHANNEL"             --version "$VERSION" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)"             --file dist/runtime.dll --file dist/plugin-installer.exe --file dist/dinput8.dll             --output dist/channel.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows
+          path: dist/
+          if-no-files-found: error
+
+  # The installer for a game in Wine on Linux, with the same signed files
+  # inside. An older Ubuntu keeps it running on older systems.
+  linux:
+    needs: windows
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ANGELICA_RELEASE_PUBLIC_KEY: ${{ vars.ANGELICA_RELEASE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ env.COMMIT }}
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows
+          path: payload/
+      - name: Build the installer with the signed files inside
+        run: |
+          ANGELICA_SETUP_PAYLOAD="$(pwd)/payload" cargo build --release --locked -p angelica-setup
+          mkdir -p dist
+          tar --create --gzip --file dist/angelica-setup-linux-x86_64.tar.gz             --directory target/release angelica-setup
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('release-{0}', github.ref_name) || 'release-nightly' }}
+      cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+      VERSION: ${{ needs.windows.outputs.version }}
+      TAG: ${{ needs.windows.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist/
+          merge-multiple: true
+      - name: Write the checksums
+        run: |
+          rm dist/release.json
           (cd dist && sha256sum -- * > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
-
       - name: Publish
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          TAG: ${{ steps.version.outputs.tag }}
         run: |
           if [ "$TAG" = "nightly" ]; then
-            gh release delete nightly --cleanup-tag --yes || true
-            gh release create nightly dist/* --prerelease --target "$COMMIT" \
-              --title "Nightly $VERSION" \
-              --notes "Built from $COMMIT after CI passed on main. Nightly builds are for testers and may stop the game."
+            gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+            gh release create nightly dist/* --repo "$GITHUB_REPOSITORY" --prerelease --target "$COMMIT"               --title "Nightly $VERSION"               --notes "Built from $COMMIT after CI passed on main. Nightly builds are for testers and may stop the game."
           else
-            gh release create "$TAG" dist/* --title "Angelica $VERSION" --generate-notes --latest
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Angelica $VERSION" --generate-notes --latest
           fi

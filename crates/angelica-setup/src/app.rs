@@ -466,14 +466,9 @@ impl App {
             ui.add_space(10.0);
         }
         let game = self.game();
-        let neighbors = game.as_deref().map(|game| {
-            Neighbors::find(
-                game,
-                std::env::var_os("APPDATA")
-                    .as_deref()
-                    .map(std::path::Path::new),
-            )
-        });
+        let neighbors = game
+            .as_deref()
+            .map(|game| Neighbors::find(game, system::dalamud_installed()));
         let compatible = neighbors
             .as_ref()
             .map(Neighbors::compatible)
@@ -490,7 +485,7 @@ impl App {
         let conflict = neighbors.as_ref().is_some_and(|found| found.other_proxy);
         if conflict {
             text(ui, w.conflict, DANGER);
-        } else if game.as_deref().is_some_and(|game| !install::writable(game)) {
+        } else if cfg!(windows) && game.as_deref().is_some_and(|game| !install::writable(game)) {
             text(ui, w.admin_note, SECONDARY);
         }
         let ready = game.is_some() && !conflict && !picking;
@@ -657,8 +652,9 @@ fn install_all(
     };
     payload.verify(&release).map_err(|e| failure(w, &e))?;
     closed_game(w)?;
+    let prefixes = wine_prefixes(game, w)?;
     report(w.step_files, 0.35);
-    let installation = install::installation_dir();
+    let (installation, seen) = install::installation_for(game);
     install::install_files(
         &installation,
         payload.version,
@@ -666,29 +662,26 @@ fn install_all(
         &payload.files(),
     )
     .map_err(|e| failure(w, &e))?;
-    let uninstaller = installation.join("angelica-setup.exe");
+    let uninstaller = installation.join(install::UNINSTALLER);
     if let Ok(program) = std::env::current_exe()
         && program != uninstaller
     {
         let _ = std::fs::copy(&program, &uninstaller);
     }
-    if install::writable(game) {
+    if cfg!(not(windows)) || install::writable(game) {
         report(w.step_game, 0.7);
-        install::place(game, &installation, payload.dinput8_dll).map_err(|e| place_error(w, &e))?;
+        install::place(game, &seen, payload.dinput8_dll).map_err(|e| place_error(w, &e))?;
     } else {
         report(w.step_admin, 0.7);
-        let args = format!(
-            "--place \"{}\" \"{}\"",
-            game.display(),
-            installation.display()
-        );
+        let args = format!("--place \"{}\" \"{}\"", game.display(), seen.display());
         match system::run_elevated(&args) {
             Ok(0) => {}
             Ok(code) => return Err(exit_error(w, code)),
             Err(_) => return Err(w.declined.into()),
         }
     }
-    install::record_game(&installation, game).map_err(|e| failure(w, &e))?;
+    set_overrides(&prefixes, w)?;
+    install::record_game(&installation, game, &prefixes).map_err(|e| failure(w, &e))?;
     system::register(&uninstaller, payload.version).map_err(|e| failure(w, &e))?;
     report(w.step_files, 1.0);
     Ok(())
@@ -701,8 +694,9 @@ fn uninstall_all(keep: bool, w: &Words) -> Result<(), String> {
         .and_then(|program| program.parent().map(std::path::Path::to_path_buf))
         .filter(|folder| folder.join("current.json").exists())
         .unwrap_or_else(install::installation_dir);
+    remove_overrides(&install::recorded_prefixes(&installation), w)?;
     if let Some(game) = install::recorded_game(&installation) {
-        if install::writable(&game) {
+        if cfg!(not(windows)) || install::writable(&game) {
             install::remove_from_game(&game).map_err(|e| place_error(w, &e))?;
         } else {
             match system::run_elevated(&format!("--remove \"{}\"", game.display())) {
@@ -724,6 +718,66 @@ fn closed_game(w: &Words) -> Result<(), String> {
         Ok(false) => Ok(()),
         Ok(true) => Err(w.in_use.into()),
         Err(reason) => Err(failure(w, &reason)),
+    }
+}
+
+/// The Wine prefixes the game runs in, none on Windows. Their registry is
+/// changed only while Wine is stopped in each.
+#[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)]
+fn wine_prefixes(_game: &std::path::Path, _w: &Words) -> Result<Vec<PathBuf>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+fn wine_prefixes(game: &std::path::Path, w: &Words) -> Result<Vec<PathBuf>, String> {
+    let prefixes = angelica_games::wine_prefixes(game);
+    if prefixes.is_empty() {
+        return Err(w.no_prefix.into());
+    }
+    if prefixes.iter().any(|prefix| system::prefix_running(prefix)) {
+        return Err(w.wine_running.into());
+    }
+    Ok(prefixes)
+}
+
+#[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)]
+fn set_overrides(_prefixes: &[PathBuf], _w: &Words) -> Result<(), String> {
+    Ok(())
+}
+
+/// Makes Wine load the proxy in each prefix.
+#[cfg(not(windows))]
+fn set_overrides(prefixes: &[PathBuf], w: &Words) -> Result<(), String> {
+    for prefix in prefixes {
+        crate::wine::set_override(prefix).map_err(|e| registry_error(w, e))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)]
+fn remove_overrides(_prefixes: &[PathBuf], _w: &Words) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn remove_overrides(prefixes: &[PathBuf], w: &Words) -> Result<(), String> {
+    for prefix in prefixes
+        .iter()
+        .filter(|prefix| prefix.join("user.reg").is_file())
+    {
+        crate::wine::remove_override(prefix).map_err(|e| registry_error(w, e))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn registry_error(w: &Words, error: crate::wine::RegistryError) -> String {
+    match error {
+        crate::wine::RegistryError::Running => w.wine_running.into(),
+        crate::wine::RegistryError::Other(reason) => failure(w, &reason),
     }
 }
 

@@ -1,6 +1,6 @@
 # Installer
 
-`angelica-setup.exe` puts Angelica beside the game for a player who has never used plugins. It is one tall window, 380 by 500 pixels with rounded corners, that keeps its shape from the first screen to the last, in Angelica's look ([interface](./ui.md)): the light theme, actions as words, and plain labels with their values. Angelica draws its own title bar: the word `angelica`, then minimize and close; dragging the bar moves the window.
+`angelica-setup.exe` puts Angelica beside the game for a player who has never used plugins. The same installer, built for Linux as `angelica-setup`, does it for the game running in Wine, as Steam's Proton and `XIVLauncher.Core` run it on Linux and the Steam Deck ([on Linux](#on-linux)). It is one tall window, 380 by 500 pixels with rounded corners, that keeps its shape from the first screen to the last, in Angelica's look ([interface](./ui.md)): the light theme, actions as words, and plain labels with their values. Angelica draws its own title bar: the word `angelica`, then minimize and close; dragging the bar moves the window.
 
 ## What the player sees
 
@@ -20,10 +20,25 @@ It offers no plugins: the player installs them from the Angelica menu in the gam
 - **Registers itself** under the user's *Installed apps* with a copy of itself in the installation folder as the uninstaller.
 - Installing again over an existing installation updates the proxy and keeps the player's plugins, grants, settings, and storage.
 
+## On Linux
+
+On Linux the game is the same Windows program, run by Wine, and so is Angelica inside it: the proxy, the runtime, and the plugins are the Windows release's files. The installer differs in where it finds the game, where it puts Angelica, and one setting of Wine.
+
+- **Finds the game** in Steam's libraries (`~/.steam/steam`, `~/.local/share/Steam`, and the flatpak's `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, each with its `libraryfolders.vdf`) and in `XIVLauncher.Core`'s game path (`GamePath` in `launcher.ini` of `~/.xlcore`, or of the flatpak's `~/.var/app/dev.goats.xivlauncher/.xlcore`; its `ffxiv` folder when none is set). **Choose another folder** opens the desktop's folder dialog, KDE's or GNOME's.
+- **Finds the Wine prefixes the game runs in**: Steam's `steamapps/compatdata/39210/pfx` in the game's library, the `wineprefix` of each `XIVLauncher.Core` whose game path is this game, and the prefix whose `drive_c` holds the game. A prefix counts when it has `user.reg`; with none, the game has never started, and the installer asks the player to start it once.
+- **Installs Angelica** into `~/.local/share/angelica` (`XDG_DATA_HOME`), or, for a game inside a flatpak's folder `~/.var/app/<id>/`, into `~/.var/app/<id>/data/angelica`, which that flatpak can see. `angelica.json` names it as the game sees it, under Wine's drive `Z:` (`Z:\home\deck\.local\sharengelica`).
+- **Makes Wine load the proxy.** Wine prefers its own `dinput8.dll` to one in the game folder, so in each prefix's `user.reg` the installer sets `"dinput8"="native,builtin"` under `Software\Wine\AppDefaultsfxiv_dx11.exe\DllOverrides`: for the game's program only, the proxy first and Wine's own when there is none. Wine keeps a running prefix's registry in memory and writes it back when it stops, so the installer changes it only while no Wine server runs in the prefix (one whose working folder is `server-<device>-<inode>` of the prefix folder) and otherwise asks the player to wait.
+- **Waits for the game to close**: a process named `ffxiv_dx11.exe`, or with it in its command line.
+- **Never needs administrator rights**: the game folder is the player's own.
+- **Registers itself** as *Remove Angelica* among the user's applications (`~/.local/share/applications/angelica-remove.desktop`), starting the copy of itself in the installation folder with `--uninstall`.
+- `game.json` in the installation also records the prefixes it changed. Removing takes the override out of those prefixes, removing the key when nothing else is in it, under the same rule about a running prefix.
+
+The interface's language follows `LC_ALL`, `LC_MESSAGES`, or `LANG`.
+
 ## Removing
 
 The uninstaller, run from *Installed apps*, shows the same window: that Angelica's file leaves the game folder, and the choice to keep or delete the player's plugins and their data. It starts only while the game is closed, as installing does. It removes `dinput8.dll` (only when it is Angelica's proxy) and `angelica.json` from the game folder, asking for administrator rights the same way. Without the player's data it removes the installation folder; with them it leaves `plugins`, `grants`, `state`, and `storage` in place for a later installation.
 
 ## Building
 
-`angelica-setup` is a crate of this workspace. The release workflow builds it with the release's proxy, runtime, plugin installer, their signatures, and the channel embedded ([releases](../development/releases.md)); a build without them refuses to install and says that it is a development build.
+`angelica-setup` is a crate of this workspace. The release workflow builds it for Windows and for Linux with the release's proxy, runtime, plugin installer, their signatures, and the channel embedded ([releases](../development/releases.md)); a build without them refuses to install and says that it is a development build. On Linux it draws its window through X11 or Wayland, whichever the desktop has, loading their libraries at run time.

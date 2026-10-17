@@ -16,12 +16,49 @@ pub enum PlaceError {
     Other(String),
 }
 
+/// The copy of the installer that removes Angelica, in the installation.
+#[cfg(windows)]
+pub const UNINSTALLER: &str = "angelica-setup.exe";
+#[cfg(not(windows))]
+pub const UNINSTALLER: &str = "angelica-setup";
+
 /// `%LOCALAPPDATA%\Angelica`.
+#[cfg(windows)]
 #[must_use]
 pub fn installation_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
         .join("Angelica")
+}
+
+/// `~/.local/share/angelica`.
+#[cfg(not(windows))]
+#[must_use]
+pub fn installation_dir() -> PathBuf {
+    crate::system::data_home()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("angelica")
+}
+
+/// The installation for `game`, and the path `angelica.json` names it by,
+/// as the game sees it.
+#[cfg(windows)]
+#[must_use]
+pub fn installation_for(_game: &Path) -> (PathBuf, PathBuf) {
+    let installation = installation_dir();
+    (installation.clone(), installation)
+}
+
+/// The installation for `game`, where the Wine that runs it can see it
+/// (`crate::wine`), and the path `angelica.json` names it by, under `Z:`.
+#[cfg(not(windows))]
+#[must_use]
+pub fn installation_for(game: &Path) -> (PathBuf, PathBuf) {
+    let installation = crate::system::home().map_or_else(installation_dir, |home| {
+        crate::wine::installation_dir(&home, crate::system::data_home().as_deref(), game)
+    });
+    let seen = PathBuf::from(crate::wine::windows_path(&installation));
+    (installation, seen)
 }
 
 /// Whether `bytes` are Angelica's proxy of any version.
@@ -177,14 +214,37 @@ pub fn recorded_game(installation: &Path) -> Option<PathBuf> {
     value.get("game")?.as_str().map(PathBuf::from)
 }
 
-/// Records the game folder for the uninstaller.
+/// The Wine prefixes whose registry the installation changed, from the
+/// uninstall entry's record.
+#[must_use]
+pub fn recorded_prefixes(installation: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(installation.join("game.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value.get("prefixes")?.as_array().map(|prefixes| {
+                prefixes
+                    .iter()
+                    .filter_map(|prefix| prefix.as_str().map(PathBuf::from))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Records the game folder, and the Wine prefixes set to load the proxy,
+/// for the uninstaller.
 ///
 /// # Errors
 /// A failure to write.
-pub fn record_game(installation: &Path, game: &Path) -> Result<(), String> {
+pub fn record_game(installation: &Path, game: &Path, prefixes: &[PathBuf]) -> Result<(), String> {
+    let mut record = serde_json::json!({ "game": game });
+    if !prefixes.is_empty() {
+        record["prefixes"] = serde_json::json!(prefixes);
+    }
     write(
         &installation.join("game.json"),
-        serde_json::json!({ "game": game }).to_string().as_bytes(),
+        record.to_string().as_bytes(),
     )
 }
 
@@ -272,6 +332,20 @@ mod tests {
             game.join("dinput8.dll").exists(),
             "another tool's file stays"
         );
+    }
+
+    #[test]
+    fn the_record_names_the_game_and_the_prefixes_set_to_load_the_proxy() {
+        let root = tempfile::tempdir().unwrap();
+        let installation = root.path();
+        let game = root.path().join("game");
+        record_game(installation, &game, &[]).unwrap();
+        assert_eq!(recorded_game(installation), Some(game.clone()));
+        assert!(recorded_prefixes(installation).is_empty());
+        let prefixes = vec![root.path().join("pfx"), root.path().join("wineprefix")];
+        record_game(installation, &game, &prefixes).unwrap();
+        assert_eq!(recorded_game(installation), Some(game));
+        assert_eq!(recorded_prefixes(installation), prefixes);
     }
 
     #[test]

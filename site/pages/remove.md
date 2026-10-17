@@ -2,7 +2,7 @@
 order: 4
 section: Play
 kicker: Get started
-meta: About 1 minute · Windows
+meta: About 1 minute · Windows · Linux · Steam Deck
 prev: Patch day
 next: When something goes wrong
 ---
@@ -22,5 +22,7 @@ Angelica is removed like any other Windows program.
 1. Select **Remove**.
 
    If the game is in a folder like `Program Files`, Windows asks for administrator rights.
+
+On Linux or Steam Deck, close the game, open **Remove Angelica** among your applications, and choose the same way. It also removes the setting it made in the game's Wine prefix.
 
 To turn off or remove a single plugin instead, see [Turn on a plugin](turn-on-a-plugin.md#turn-off-or-remove-a-plugin).

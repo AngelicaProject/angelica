@@ -15,7 +15,7 @@
 - `angelica-hook`;
 - `angelica-proxy`;
 - the `interop` module of `angelica-host`.
-- the `system` module of `angelica-setup`, which only starts the installer again with administrator rights, reads the interface language, opens Windows' folder dialog, and lists the running programs' names.
+- the `system` module of `angelica-setup`, which only starts the installer again with administrator rights, reads the interface language, opens Windows' folder dialog, and lists the running programs' names on Windows; its Linux part has no `unsafe` code.
 
 In those places:
 
