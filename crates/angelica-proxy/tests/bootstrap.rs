@@ -42,11 +42,10 @@ fn build_proxy(root: &Path, target: &Path, public: Option<&str>) {
     run(&mut command);
 }
 
-#[test]
-fn signed_host_starts_before_game_and_failures_leave_game_running() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let directory = tempfile::tempdir().unwrap();
-    let dir = directory.path();
+/// The proxy built with a test key, the game that imports it, and the
+/// runtime signed with that key, in `dir`; returns the key, the runtime's
+/// bytes, and its signature.
+fn fixture(root: &Path, dir: &Path) -> (SigningKey, Vec<u8>, [u8; 64]) {
     let key = SigningKey::from_bytes(&[41; 32]);
     let public = key
         .verifying_key()
@@ -73,6 +72,31 @@ fn signed_host_starts_before_game_and_failures_leave_game_running() {
     let bytes = std::fs::read(dir.join("runtime.dll")).unwrap();
     let signature = key.sign(&bytes).to_bytes();
     std::fs::write(dir.join("runtime.dll.sig"), signature).unwrap();
+    (key, bytes, signature)
+}
+
+/// Writes the fixture into the folder `ANGELICA_WINE_FIXTURE` names, for
+/// `tests/wine.sh`, which runs it in Wine (`docs/development/testing.md`).
+#[test]
+#[ignore = "builds the fixture for the Wine check"]
+fn wine_fixture() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::path::PathBuf::from(std::env::var_os("ANGELICA_WINE_FIXTURE").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let build = tempfile::tempdir().unwrap();
+    fixture(root, build.path());
+    for name in ["dinput8.dll", "game.exe", "runtime.dll", "runtime.dll.sig"] {
+        std::fs::copy(build.path().join(name), dir.join(name)).unwrap();
+    }
+}
+
+#[test]
+fn signed_host_starts_before_game_and_failures_leave_game_running() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path();
+    let (key, bytes, signature) = fixture(root, dir);
+    let target = dir.join("build");
     std::fs::write(
         dir.join("angelica.json"),
         serde_json::json!({"installation_dir": dir}).to_string(),

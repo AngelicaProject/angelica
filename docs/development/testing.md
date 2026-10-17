@@ -28,6 +28,13 @@ cargo test -p angelica-proxy --test bootstrap
 
 The test invokes the pinned compiler and an offline Cargo build in a temporary directory and runs in Windows CI. It requires the workspace dependencies in the Cargo cache, but no game, network, or release key. It also checks export names and ordinals and confirms rejected DLLs never execute their `DllMain`.
 
+The same fixture runs in Wine, as the game does on Linux ([loading](../architecture/loading.md#in-wine)). The ignored `wine_fixture` test writes the proxy, the game, and the signed runtime into the folder `ANGELICA_WINE_FIXTURE` names, and `tests/wine.sh` runs the game in a new Wine prefix: without the `dinput8` override the host must not start, and with the override the installer sets it must start before the game's entry point. Wine's own `dinput8` has no `GetdfDIJoystick`, so with `ANGELICA_TEST_WINE` set the game accepts the null that call returns:
+
+```text
+ANGELICA_WINE_FIXTURE=<folder> cargo test -p angelica-proxy --test bootstrap -- --ignored --exact wine_fixture
+sh crates/angelica-proxy/tests/wine.sh <folder>   # on Linux, with Wine installed
+```
+
 ## Host tests
 
 Pure host modules have unit tests: rules and text tables against rows (layout checks, guards, their order, refused buffers), letter case against the game's rules, storage confinement and quota, manifests and grants. Every parser and check that reads what a plugin, a package, or the player provides — text tables, replacement fonts, textures, materials, and models, command lines, chat messages, manifests, the places and parts plugins show — is also fed tens of thousands of damaged inputs from a seeded generator (`mutations.rs` in the host, `tests/text.rs` in `angelica-text`, `tests/data.rs` in `angelica-view`) and must refuse them without panicking.

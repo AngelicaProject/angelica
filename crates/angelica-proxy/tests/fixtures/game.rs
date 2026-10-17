@@ -24,7 +24,9 @@ fn check_exports() {
 fn main() {
     check_exports();
     // SAFETY: this system export takes no arguments.
-    assert!(!unsafe { GetdfDIJoystick() }.is_null());
+    let joystick = unsafe { GetdfDIJoystick() };
+    // Wine's own dinput8 has no GetdfDIJoystick, so the proxy returns null.
+    assert!(!joystick.is_null() || std::env::var_os("ANGELICA_TEST_WINE").is_some());
     use std::io::Write;
     let mut trace = std::fs::OpenOptions::new().create(true).append(true).open(std::env::var_os("ANGELICA_TEST_TRACE").unwrap()).unwrap();
     writeln!(trace, "game").unwrap();
