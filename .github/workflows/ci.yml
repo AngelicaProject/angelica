@@ -38,6 +38,23 @@ jobs:
       - run: cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile -p angelica-inventory --target wasm32-wasip2 --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
 
+  # The installer and game discovery for a game in Wine on Linux
+  # (docs/architecture/installer.md), which the Windows job does not build.
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.98.1
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy -p angelica-games -p angelica-setup --all-targets --locked -- -D warnings
+      - run: cargo test -p angelica-games -p angelica-setup --locked
+
   # Dependencies: known vulnerabilities, yanked crates, licenses, and sources
   # (deny.toml). Workflows: actionlint (with shellcheck) and zizmor.
   supply-chain:
@@ -102,7 +119,7 @@ jobs:
   # above passed, so jobs can change without changing the ruleset.
   ci:
     if: always()
-    needs: [rust, supply-chain, site, agent-plugin]
+    needs: [rust, linux, supply-chain, site, agent-plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to pass

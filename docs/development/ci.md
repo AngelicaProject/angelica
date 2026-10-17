@@ -7,6 +7,7 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 | Job | Runner | Guarantees |
 | --- | --- | --- |
 | `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests with all features. |
+| `linux` | `ubuntu-22.04` | The installer and game discovery build for Linux without Clippy warnings and pass their tests. |
 | `supply-chain` | `ubuntu-latest` | `cargo deny` passes; workflows pass `actionlint` and `zizmor`. |
 | `site` | `ubuntu-latest` | The [website](./website.md) builds and every link inside it leads somewhere. |
 | `agent-plugin` | `ubuntu-latest` | The [plugin for coding agents](../plugins/agent-plugin.md) and the marketplace that lists it pass `claude plugin validate --strict`. |
@@ -17,6 +18,8 @@ cargo fmt --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile --target wasm32-wasip2 --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+cargo clippy -p angelica-games -p angelica-setup --all-targets --locked -- -D warnings  # on Linux
+cargo test -p angelica-games -p angelica-setup --locked  # on Linux
 cargo deny --locked check
 cd site && npm ci && node build.mjs
 npx @anthropic-ai/claude-code@2.1.301 plugin validate --strict ./agent-plugin
