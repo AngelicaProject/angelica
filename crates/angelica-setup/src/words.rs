@@ -1,4 +1,4 @@
-//! The installer's words, in Russian when Windows is, and in English
+//! The installer's words, in Russian when the system is, and in English
 //! otherwise. Labels name a thing; values say what it is now.
 
 pub struct Words {
@@ -28,6 +28,11 @@ pub struct Words {
     pub retry: &'static str,
     pub other_tool: &'static str,
     pub in_use: &'static str,
+    /// Said only for a game in Wine.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub wine_running: &'static str,
+    #[cfg_attr(windows, allow(dead_code))]
+    pub no_prefix: &'static str,
     pub declined: &'static str,
     pub failure: &'static str,
     pub development: &'static str,
@@ -72,6 +77,8 @@ pub const EN: Words = Words {
     retry: "Try again →",
     other_tool: "The game folder has a dinput8.dll of another program. Remove that program's file, then try again.",
     in_use: "The game is running. Close it, then try again.",
+    wine_running: "Wine is still running the game's programs. Wait a few seconds after closing the game, then try again.",
+    no_prefix: "Start the game once and close it, then install Angelica.",
     declined: "Windows did not give permission to change the game folder. Try again and allow it.",
     failure: "Error: {reason}",
     development: "Development build",
@@ -116,6 +123,8 @@ pub const RU: Words = Words {
     retry: "Повторить →",
     other_tool: "В папке игры лежит dinput8.dll другой программы. Удалите файл той программы и повторите.",
     in_use: "Игра запущена. Закройте её и повторите.",
+    wine_running: "Wine ещё работает с программами игры. Подождите несколько секунд после закрытия игры и повторите.",
+    no_prefix: "Запустите игру один раз и закройте её, затем установите Angelica.",
     declined: "Windows не дала разрешение изменить папку игры. Повторите и разрешите.",
     failure: "Ошибка: {reason}",
     development: "Сборка для разработки",

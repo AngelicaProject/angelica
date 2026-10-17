@@ -1,5 +1,6 @@
-//! `angelica-setup.exe` (`docs/architecture/installer.md`): installs
-//! Angelica beside the game, and removes it with `--uninstall`. With
+//! `angelica-setup` (`docs/architecture/installer.md`): installs Angelica
+//! beside the game, on Windows and for the game in Wine on Linux, and
+//! removes it with `--uninstall`. With
 //! `--place <game> <installation>` or `--remove <game>` it is the copy with
 //! administrator rights that only changes the game folder.
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -10,6 +11,8 @@ mod neighbors;
 mod payload;
 #[allow(unsafe_code)]
 mod system;
+#[cfg(not(windows))]
+mod wine;
 mod words;
 
 use std::path::PathBuf;

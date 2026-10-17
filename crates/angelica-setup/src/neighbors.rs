@@ -5,7 +5,8 @@ use std::path::Path;
 /// Tools the installer names beside the game.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Neighbors {
-    /// `XIVLauncher`, which starts the game with Dalamud.
+    /// `XIVLauncher` or `XIVLauncher.Core`, which start the game with
+    /// Dalamud.
     pub dalamud: bool,
     /// `ReShade` in the game folder.
     pub reshade: bool,
@@ -14,9 +15,10 @@ pub struct Neighbors {
 }
 
 impl Neighbors {
-    /// Looks beside `game`, the game's `game` folder, and in `appdata`.
+    /// Looks beside `game`, the game's `game` folder; `dalamud` says
+    /// whether the launcher that loads Dalamud is installed.
     #[must_use]
-    pub fn find(game: &Path, appdata: Option<&Path>) -> Self {
+    pub fn find(game: &Path, dalamud: bool) -> Self {
         let reshade = ["dxgi.dll", "d3d11.dll"].iter().any(|name| {
             std::fs::read(game.join(name)).is_ok_and(|bytes| {
                 bytes
@@ -27,7 +29,7 @@ impl Neighbors {
         let other_proxy = std::fs::read(game.join("dinput8.dll"))
             .is_ok_and(|bytes| !crate::install::is_angelica_proxy(&bytes));
         Self {
-            dalamud: appdata.is_some_and(|appdata| appdata.join("XIVLauncher").is_dir()),
+            dalamud,
             reshade,
             other_proxy,
         }
@@ -55,18 +57,16 @@ mod tests {
     fn tools_beside_the_game_are_named_and_another_proxy_stops_the_installation() {
         let root = tempfile::tempdir().unwrap();
         let game = root.path().join("game");
-        let appdata = root.path().join("appdata");
         std::fs::create_dir_all(&game).unwrap();
-        assert_eq!(Neighbors::find(&game, Some(&appdata)), Neighbors::default());
+        assert_eq!(Neighbors::find(&game, false), Neighbors::default());
 
-        std::fs::create_dir_all(appdata.join("XIVLauncher")).unwrap();
         std::fs::write(game.join("dxgi.dll"), b"MZ...ReShade...").unwrap();
         std::fs::write(game.join("dinput8.dll"), b"MZ another tool").unwrap();
-        let found = Neighbors::find(&game, Some(&appdata));
+        let found = Neighbors::find(&game, true);
         assert_eq!(found.compatible(), vec!["Dalamud", "ReShade"]);
         assert!(found.other_proxy);
 
         std::fs::write(game.join("dinput8.dll"), b"angelica-loader.log").unwrap();
-        assert!(!Neighbors::find(&game, Some(&appdata)).other_proxy);
+        assert!(!Neighbors::find(&game, true).other_proxy);
     }
 }

@@ -48,6 +48,15 @@ The host downloads updates of its [channel](../development/releases.md#host-upda
 
 Each version of the host lives in its own folder, `<installation_dir>/versions/<version>/`, with `runtime.dll`, `plugin-installer.exe`, and their signatures. `<installation_dir>/current.json`, strict JSON `{"format": 1, "version": "0.2.0"}`, names the version the proxy loads; without it, the proxy loads `runtime.dll` from the installation folder itself. The updater writes a complete new version folder first and then replaces `current.json` by renaming a new file over it, so the running version's files are never touched. A present but malformed `current.json`, a version name that is a path, missing files, or an invalid signature disable Angelica for that launch rather than falling back to an older host. The proxy neither writes nor promotes updates. The updater removes a version folder only when it is neither current nor in use.
 
+## In Wine
+
+On Linux the game runs in Wine (Steam's Proton or the Wine of a launcher), and the same proxy and runtime load the same way. Two things differ:
+
+- Wine prefers its own `dinput8.dll` to one in the application folder. The proxy loads only when the prefix's registry sets `dinput8` to `native,builtin` for the game's program; the [installer](./installer.md#on-linux) sets it. Without the setting the game starts without Angelica and writes no log.
+- Wine's own `dinput8.dll` has no `GetdfDIJoystick`. A forwarded export the system DLL lacks returns the export's failure value and is logged; the game does not use it.
+
+Wine runs the queued start before the game's entry point, as Windows does. `installation_dir` is a Windows path as the game sees it, under drive `Z:` for a folder of the Linux file system.
+
 ## Coexistence
 
 Other tools may load into the same process before or after Angelica. Angelica does not unload, patch, or detect other tools; hook chaining is described in [`hooks.md`](./hooks.md).
