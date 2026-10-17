@@ -139,13 +139,13 @@ The object model describes the game's objects for Lens (`docs/architecture/lens.
 [domains.inventory]
 doc = "The items the player carries: the bags, the equipped gear, the currency, the crystals, and the key items."
 class = "you"
-read = { en = "Sees the items you carry", ru = "Видит предметы, которые вы носите" }
+read = { en = "See the items you carry", ru = "Видеть предметы, которые вы носите" }
 ```
 
 - A domain is named by a lowercase letter followed by lowercase letters, digits, and underscores, at most 64 bytes.
 - `doc`: what the domain holds; not blank.
 - `class`: how far the domain reaches, as the player sees it: `you` (only about the player), `display` (changes what the player sees), `others` (sees other players), `acts` (acts in the game for the player), or `acts_on_others` (acts toward other players). A host grants a domain only of a class it presents.
-- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `act`, in the same form, says what acting in the domain allows; a domain without it has no actions. `change`, in the same form, says what changing values of the domain allows; a domain without it has no values plugins change.
+- `read`: what reading the domain allows, in English (`en`) and Russian (`ru`), as the approval shows it; neither blank. `act`, in the same form, says what acting in the domain allows; a domain without it has no actions. `act_local = true`, only with `act`, says the domain's actions only change what the game shows on the player's computer, such as opening a window, and send nothing to the game's servers; false by default. `change`, in the same form, says what changing values of the domain allows; a domain without it has no values plugins change.
 
 A new domain and its wording are approved by the maintainer once; types and fields join a domain without a new approval. A domain is narrow: what one kind of plugin needs, not everything about the player.
 

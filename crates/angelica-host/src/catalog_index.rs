@@ -44,9 +44,20 @@ pub struct Listed {
     pub link: String,
     pub sha256: String,
     pub source: String,
+    /// The plugin's icon as a small PNG, in hexadecimal.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 impl Listed {
+    /// The plugin's icon, when the index has a valid one.
+    #[must_use]
+    pub fn icon_bytes(&self) -> Option<Vec<u8>> {
+        let icon = crate::author::unhex(self.icon.as_deref()?)?;
+        crate::author::check_icon(&icon).ok()?;
+        Some(icon)
+    }
+
     /// The permissions this Angelica knows, for their icons and words.
     #[must_use]
     pub fn known_permissions(&self) -> Vec<Permission> {

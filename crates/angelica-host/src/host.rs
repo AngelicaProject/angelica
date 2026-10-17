@@ -213,6 +213,8 @@ pub struct Host {
     look_in_dev_mode: std::sync::atomic::AtomicBool,
     /// Dev mode; none in tests.
     dev: std::sync::OnceLock<Arc<crate::dev::DevMode>>,
+    /// Whether the game refused the hooks of item menus, said once.
+    menus_refused: std::sync::atomic::AtomicBool,
 }
 
 impl Host {
@@ -245,6 +247,7 @@ impl Host {
             look: Mutex::new(None),
             look_in_dev_mode: std::sync::atomic::AtomicBool::new(false),
             dev: std::sync::OnceLock::new(),
+            menus_refused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -560,6 +563,7 @@ impl Host {
             lens_read: held(plugin.manifest.lens_read(), &grants.lens_read),
             lens_act: held(plugin.manifest.lens_act(), &grants.lens_act),
             lens_change: held(plugin.manifest.lens_change(), &grants.lens_change),
+            link_hosts: link_hosts(&plugin.manifest, &grants),
             message_to: if grants.permissions.contains(&Permission::MessagesSend) {
                 held(plugin.manifest.message_to(), &grants.message_to)
             } else {
@@ -678,7 +682,23 @@ impl Host {
         plugin.set_status(status);
     }
 
+    /// Keeps a plugin's item menu entries for the game's menus, installing
+    /// the hooks of item menus when the first entry appears.
+    fn show_menu_entries(&self, id: &str, items: Vec<(String, String)>) {
+        let first = !items.is_empty() && !self.services.menus.has_items();
+        self.services.menus.set_items(id, items);
+        if first
+            && let Err(reason) = self.services.game.enable_menus()
+            && !self
+                .menus_refused
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.diagnostic(format!("plugins' menu entries are not shown: {reason}"));
+        }
+    }
+
     fn remove_effects(&self, id: &str) {
+        self.services.menus.remove_plugin(id);
         self.services.excel.remove_plugin(id);
         self.services.case.remove_plugin(id);
         self.services.files.remove_plugin(id);
@@ -800,6 +820,15 @@ impl Host {
             if let Err(reason) = self.apply(&action) {
                 self.diagnostic(reason);
             }
+        }
+        for chosen in self.services.menus.take_chosen() {
+            self.queue_event(
+                &chosen.plugin,
+                Event::MenuChosen(angelica_view::MenuChosen {
+                    entry: chosen.entry,
+                    value: chosen.value,
+                }),
+            );
         }
         let events: Vec<_> = self
             .events
@@ -1063,13 +1092,20 @@ impl Host {
                 let minor = crate::view::api_minor(&plugin.manifest.plugin.api);
                 match angelica_view::data::decode(&places, minor) {
                     Ok(places) => {
-                        let (mut windows, mut panels) = (Vec::new(), Vec::new());
+                        let (mut windows, mut panels, mut items) =
+                            (Vec::new(), Vec::new(), Vec::new());
                         for place in places {
                             match place {
                                 angelica_view::Place::Window(window) => windows.push(window),
                                 angelica_view::Place::Panel(panel) => panels.push(panel),
+                                angelica_view::Place::MenuEntry(entry) => match entry.target {
+                                    angelica_view::MenuFor::Item => {
+                                        items.push((entry.id, entry.label));
+                                    }
+                                },
                             }
                         }
+                        self.show_menu_entries(id, items);
                         *plugin
                             .windows
                             .lock()
@@ -1262,6 +1298,20 @@ fn write_json(directory: &Path, id: &str, value: &impl Serialize) -> Result<(), 
 }
 
 /// What a manifest lists that the player granted.
+/// The sites whose pages a plugin may open: those its manifest lists and
+/// the player approved, none without `links.open`.
+fn link_hosts(
+    manifest: &crate::manifest::Manifest,
+    grants: &crate::manifest::Grants,
+) -> Vec<String> {
+    if !grants.permissions.contains(&Permission::LinksOpen) {
+        return Vec::new();
+    }
+    held(manifest.link_hosts(), &grants.link_hosts)
+        .into_iter()
+        .collect()
+}
+
 fn held(
     listed: std::collections::BTreeSet<String>,
     granted: &std::collections::BTreeSet<String>,

@@ -45,7 +45,8 @@ interface ui {
         properties: list<property>,
     }
 
-    /// A window, a dialog, a panel, or a popup, with the parts it holds.
+    /// A window, a dialog, a panel, a popup, or a menu entry, with the parts
+    /// it holds.
     record place {
         kind: string,
         id: string,
@@ -55,8 +56,8 @@ interface ui {
 
     /// What the player did, by its kind: `clicked`, `toggled` (a flag),
     /// `edited` (a text), `chosen` (an integer), `set` (a number),
-    /// `navigated` (an integer), `closed`, or `open-requested`; later API
-    /// versions may add kinds.
+    /// `navigated` (an integer), `closed`, `open-requested`, or
+    /// `menu-chosen` (an integer); later API versions may add kinds.
     record event {
         kind: string,
         /// The place's id; empty for `open-requested`.

@@ -52,6 +52,21 @@ impl Frame<'_> {
         look: Look,
         widgets: &[Widget],
     ) {
+        self.parts_filling(ui, plugin, place, look, widgets, false);
+    }
+
+    /// Draws a place's parts with `look`; with `fill`, a split takes the
+    /// rest of the room and each side scrolls in it. Returns where a split
+    /// starts and the height its taller side needs.
+    fn parts_filling(
+        &mut self,
+        ui: &mut egui::Ui,
+        plugin: &str,
+        place: &str,
+        look: Look,
+        widgets: &[Widget],
+        fill: bool,
+    ) -> Option<(f32, f32)> {
         let mut drawer = Drawer {
             host: self.host,
             plugin,
@@ -63,9 +78,12 @@ impl Frame<'_> {
             strings: self.strings,
             index: 0,
             faded: None,
+            fill,
+            needed: None,
         };
         let mut position = 0;
         drawer.widgets(ui, widgets, &mut position);
+        drawer.needed
     }
 
     /// How far an opening that began at `opened` is, from 0 to 1.
@@ -885,6 +903,21 @@ fn window_body(ui: &mut egui::Ui, f: &mut Frame<'_>, key: &Key, window: &Window)
         if asking {
             ui.disable();
             ui.style_mut().visuals.disabled_alpha = 1.0;
+        }
+        // A split takes the rest of the window, and each of its sides
+        // scrolls on its own.
+        if window
+            .widgets
+            .iter()
+            .any(|widget| matches!(widget, Widget::BeginSplit(_)))
+        {
+            let top = ui.cursor().min.y;
+            ui.spacing_mut().item_spacing = vec2(look.at(12.0), look.at(8.0));
+            let needed = f
+                .parts_filling(ui, &key.0, &key.1, look, &window.widgets, true)
+                .map_or(0.0, |(at, tall)| at - top + tall);
+            measured = look.at(32.0) + look.at(12.0) * 2.0 + needed + 4.0;
+            return;
         }
         // Content wider than the window scrolls sideways; the window keeps
         // the width the player gave it.

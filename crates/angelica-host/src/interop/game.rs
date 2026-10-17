@@ -9,6 +9,7 @@ pub struct WindowsGame {
     pub case: Arc<TextCase>,
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub commands: Arc<crate::commands::Commands>,
+    pub menus: Arc<crate::menus::Menus>,
     pub lens: Arc<crate::lens::Lens>,
     pub version: String,
 }
@@ -81,6 +82,13 @@ impl Game for WindowsGame {
         hooked(
             "chat commands",
             super::chat::install_commands(&self.catalog, self.base, self.commands.clone()),
+        )
+    }
+
+    fn enable_menus(&self) -> Result<(), String> {
+        hooked(
+            "item menus",
+            super::menus::install(&self.catalog, self.base, self.menus.clone()),
         )
     }
 

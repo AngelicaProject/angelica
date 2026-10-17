@@ -10,6 +10,10 @@ description = "A test plugin that tries to break every boundary of the host."
 [permissions]
 "chat.print" = true
 "files.replace" = true
+"links.open" = true
+
+[links]
+hosts = ["example.com"]
 
 [lens]
 change = ["text"]

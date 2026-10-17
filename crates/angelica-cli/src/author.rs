@@ -225,6 +225,18 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The plugin's icon: `icon.png` beside its `angelica.toml`, when there is
+/// one.
+pub(crate) fn plugin_icon(folder: &Path) -> Result<Option<Vec<u8>>, String> {
+    let path = folder.join("icon.png");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let icon = read_limited(&path, author::MAX_ICON)?;
+    author::check_icon(&icon).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(icon))
+}
+
 /// A plugin signed into a file.
 struct Packed {
     id: String,
@@ -244,6 +256,7 @@ fn pack_plugin(folder: &Path, component: &Path, key: Option<&PathBuf>) -> Result
     .map_err(|e| e.to_string())?;
     let component = read_limited(component, author::MAX_COMPONENT)?;
     installer::compile(&component)?;
+    let icon = plugin_icon(folder)?;
     let key_path = key_path(key)?;
     let (key, key_created) = author_key(&key_path)?;
     Ok(Packed {
@@ -251,7 +264,7 @@ fn pack_plugin(folder: &Path, component: &Path, key: Option<&PathBuf>) -> Result
         version: manifest.plugin.version.clone(),
         name: manifest.plugin.name.clone(),
         description: manifest.plugin.description.clone(),
-        file: author::sign(&key, &manifest_bytes, &component)?,
+        file: author::sign_with_icon(&key, &manifest_bytes, &component, icon.as_deref())?,
         key: key_path,
         key_created,
     })

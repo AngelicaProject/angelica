@@ -8,9 +8,9 @@ A task the cards do not cover is not available to plugins yet: file an [API requ
 
 Show the plugin's own windows and react to the player.
 
-- SDK: `ui::Window` built in `Plugin::ui` from parts: texts (`heading`, `text`, `muted`, `toned`, `styled`, `fact`, `tile`), buttons (`button`, `action` with a style), `entry` rows, checkboxes, text inputs, choices, numbers (`number`, `slider`), values (`meter`, `ring`, `readout`, `countdown`, `sparkline`, `progress`), game icons (`icon(number, size)`, the number from a sheet such as `Item`), layout (`row`, `column`, `grid`, `section`, `tabs`, `table`, `separator`, `spacer`), and a `tooltip` for the part before it. `path` and `status` fill the title bar. Actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button or an entry), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option or a tab, by index), `Set` (a number), `Navigated` (the player went back along the path), `Closed`, and `OpenRequested`; each names the window and part.
+- SDK: `ui::Window` built in `Plugin::ui` from parts: texts (`heading`, `text`, `muted`, `toned`, `styled`, `fact`, `tile`), buttons (`button`, `action` with a style), `entry` rows, checkboxes, text inputs, choices, numbers (`number`, `slider`), values (`meter`, `ring`, `readout`, `countdown`, `sparkline`, `progress`), game icons (`icon(number, size)`, the number from a sheet such as `Item`), layout (`row`, `column`, `grid`, `section`, `tabs`, `table`, `separator`, `spacer`, and a window's last part `split` with sections at its side), and a `tooltip` for the part before it. `checkbox_words` shows the plugin's own two words in place of **On** and **Off**. `path` and `status` fill the title bar. Actions arrive in `Plugin::ui_event` as `ui::Event`: `Clicked` (a button or an entry), `Edited` (a text input's new value), `Toggled` (a checkbox), `Chosen` (a choice's option, a tab, or a split's section, by index), `Set` (a number), `Navigated` (the player went back along the path), `Closed`, and `OpenRequested`; each names the window and part.
 - Permission: none. Instance: main.
-- Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, choice, number, and selected tab in the plugin and update it from the event. Tabs only draw the tab row: add the selected tab's widgets after it. An icon needs no permission; one the game does not have shows as an empty frame.
+- Return the windows every frame; a window not returned is closed. Widgets are controlled: keep every checkbox, input, choice, number, and selected tab in the plugin and update it from the event. Tabs only draw the tab row: add the selected tab's widgets after it. A split draws only its sections: add the selected section's widgets inside it. An icon needs no permission; one the game does not have shows as an empty frame.
 - `Event::OpenRequested` comes from the plugin's Open button in the Angelica menu; open the main window on it.
 - Ask the player before something that matters, such as trusting a publisher or removing data, with a dialog over the window: `window.dialog(Dialog::new("trust", "Trust this publisher?").fact("Key", key).row(|row| row.action("yes", "Trust", ActionKind::Main, true).action("no", "Cancel", ActionKind::Quiet, true)))`. Its clicks name the dialog's id as `window`; `Event::Closed("trust")` means the player closed it without an answer. Return it every frame until then; only buttons take input in it.
 - The host sizes a window to its parts and moves values to their new figures itself: return the new value, never animate it.
@@ -30,6 +30,13 @@ Window::new("main", "Timers")
     .input("name", "Name", &self.name, "a timer name")
     .row(|row| row.button("add", "Add").button_enabled("clear", "Clear", !self.timers.is_empty()))
 ```
+
+## An entry in the menu of an item
+
+- SDK: return `ui::MenuEntry::item("look", "Look up in Harmonia")` from `Plugin::menu_entries`; the choice arrives in `Plugin::ui_event` as `ui::Event::MenuChosen` with the entry's id and the item's row of `Item`.
+- Permission: none. Instance: main.
+- The game shows the entry in every item menu while the plugin returns it, after the game's own entries and in the color of plugin names. At most 4 entries per plugin, 8 of all plugins in a menu.
+- Contract: [places and parts](../formats/plugin-api-v1.md#places).
 
 ## Panels
 
@@ -66,6 +73,7 @@ Tell the player something in the chat log.
 - SDK: `chat::Message::new().text(..).accent(..).print()`, or `chat::print(text)`.
 - Permission: `chat.print`. Instance: main.
 - Every message starts with the plugin's name. At most 20 messages a second; before the chat log exists (during the game's start) printing returns `unavailable`.
+- An item link: `Message::new().text("Found ").item(5057, true, 2).print()?` prints a link to row 5057 of `Item` (high quality, named in English, language 2), which the player clicks for the item's tooltip. The host writes the name and the rarity's color from the sheet; up to 8 links in a message.
 - Use ASCII `...`, never `…`.
 - Contract: [chat](../formats/plugin-api-v1.md#chat).
 
@@ -123,7 +131,7 @@ Change a value the game keeps on the player's computer alone, such as how far th
 Do something in the game for the player, as the game's own interface would: use an action or an item, mount, teleport, answer a yes or no dialog, choose an entry of a list of choices.
 
 - SDK: `lens::act("use_action", &[("kind", lens::named("general_action")), ("action", 4u32.into())])?`; parameters by name, numbers with `.into()`, enum values with `lens::named`. A parameter left out takes the map's default.
-- Permission: each domain the plugin acts in, listed in the manifest as `[lens] act = ["actions"]`; the player sees it under **Acts in the game for you**, with a warning that automation breaks the game's terms. Instance: main, from `tick`, a command, or an event.
+- Permission: each domain the plugin acts in, listed in the manifest as `[lens] act = ["actions"]`; the player sees it under **Act in the game for you**, with a warning that automation breaks the game's terms. Instance: main, from `tick`, a command, or an event.
 - `unavailable` is normal: a condition does not hold now ("you are in combat"), or the game refused. Say what happened to the player; do not retry every frame. `limit-exceeded` means the action's rate; `permission-denied` with the stop message means the player stopped plugins from acting, so stop until they let them act again.
 - Find actions and their parameters with `angelica schema search` and `schema show <action>`.
 - Contract: [Lens](../formats/plugin-api-v1.md#lens).
@@ -268,6 +276,13 @@ Give the player text to paste elsewhere: a position, a link, a macro.
 - Permission: `clipboard.write`. Instance: main, while handling the player's click or command; anywhere else the call is refused.
 - The text reaches the clipboard at the end of the frame, at most 64 KiB.
 - Contract: [clipboard](../formats/plugin-api-v1.md#clipboard).
+
+## Opening a page in the browser
+
+- SDK: `links::open("https://www.example.com/item/5057")?` in `Plugin::ui_event` or `Plugin::command`.
+- Permission: `links.open`, with the sites in `[links] hosts` of the manifest, as `[http] hosts` lists them. Instance: main, while handling the player's click or command; anywhere else the call is refused.
+- Only `https` pages of the listed sites, one a second; the player's browser opens at the end of the frame.
+- Contract: [links](../formats/plugin-api-v1.md#links).
 
 ## Notifying the player
 

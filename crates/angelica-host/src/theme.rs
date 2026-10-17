@@ -57,7 +57,7 @@ pub struct Palette {
     pub title: Color32,
     /// Menus and tooltips.
     pub popup: Color32,
-    /// The column of sections in Settings.
+    /// The column of sections in Settings, and the track of tabs.
     pub column: Color32,
     /// The chosen section and the active tab.
     pub chosen: Color32,
@@ -222,6 +222,66 @@ pub fn wordmark(size: f32) -> FontId {
 #[must_use]
 pub fn mono(size: f32) -> FontId {
     FontId::monospace(size)
+}
+
+/// A row of tabs: the words on a track in the column color, the chosen one
+/// on a plate in the chosen color. `at` scales a size in points; `id` tells
+/// the row from others. Returns the index the player clicked.
+pub fn tab_strip(
+    ui: &mut Ui,
+    p: &Palette,
+    at: &dyn Fn(f32) -> f32,
+    id: egui::Id,
+    labels: &[&str],
+    selected: usize,
+) -> Option<usize> {
+    let painter = ui.painter().clone();
+    let (inset, height, pad) = (at(3.0), at(24.0), at(12.0));
+    let galleys: Vec<_> = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let font = if index == selected {
+                medium(at(13.0))
+            } else {
+                sans(at(13.0))
+            };
+            painter.layout_no_wrap((*label).to_owned(), font, p.text)
+        })
+        .collect();
+    let width = galleys
+        .iter()
+        .map(|g| g.size().x + 2.0 * pad + inset)
+        .sum::<f32>()
+        + inset;
+    let (track, _) = ui.allocate_exact_size(vec2(width, height + 2.0 * inset), Sense::hover());
+    painter.rect_filled(track, CornerRadius::same(6), p.column);
+    let mut x = track.left() + inset;
+    let mut clicked = None;
+    for (index, galley) in galleys.into_iter().enumerate() {
+        let rect = Rect::from_min_size(
+            pos2(x, track.top() + inset),
+            vec2(galley.size().x + 2.0 * pad, height),
+        );
+        let response = ui
+            .interact(rect, id.with(index), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let active = index == selected;
+        if active {
+            painter.rect_filled(rect, CornerRadius::same(4), p.chosen);
+        }
+        let color = if active || response.hovered() {
+            p.text
+        } else {
+            p.secondary
+        };
+        painter.galley_with_override_text_color(rect.center() - galley.size() / 2.0, galley, color);
+        if response.clicked() && !active {
+            clicked = Some(index);
+        }
+        x = rect.right() + inset;
+    }
+    clicked
 }
 
 /// Where the context keeps the theme in use.
@@ -391,6 +451,69 @@ pub fn word(ui: &mut Ui, text: &str, kind: Word, enabled: bool, k: f32) -> egui:
     } else {
         response
     }
+}
+
+/// The size of a switch at the normal size.
+pub const SWITCH: Vec2 = Vec2::new(30.0, 17.0);
+
+/// A switch centered on `center`, `k` times its normal size: a track in the
+/// "on" color with the knob at the right when `on`, a pale track with the
+/// knob at the left when not; the knob slides, 120 ms. `hint` shows under
+/// the pointer.
+#[must_use]
+pub fn switch(ui: &Ui, center: Pos2, id: egui::Id, on: bool, hint: &str, k: f32) -> egui::Response {
+    let p = current(ui.ctx()).palette();
+    let rect = Rect::from_center_size(center, SWITCH * k);
+    let response = ui
+        .interact(rect.expand(3.0 * k), id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hint);
+    let at = ui.ctx().animate_bool_with_time(id.with("knob"), on, 0.12);
+    let painter = ui.painter();
+    let radius = rect.height() / 2.0;
+    let round = CornerRadius::same(num_traits::cast(radius.round()).unwrap_or(u8::MAX));
+    let track = lerp_color(p.line, p.on, at);
+    painter.rect_filled(rect, round, track);
+    if at < 1.0 {
+        painter.rect_stroke(
+            rect,
+            round,
+            Stroke::new(1.0, alpha(p.border, 1.0 - at)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let knob = radius - 2.0 * k;
+    let x = rect.left() + radius + (rect.width() - 2.0 * radius) * at;
+    let hovered = response.hovered();
+    painter.circle_filled(
+        pos2(x, rect.center().y + 0.5 * k),
+        knob + 0.5 * k,
+        Color32::from_black_alpha(40),
+    );
+    painter.circle_filled(
+        pos2(x, rect.center().y),
+        knob,
+        if hovered {
+            Color32::from_gray(255)
+        } else {
+            Color32::from_gray(248)
+        },
+    );
+    response
+}
+
+/// The color between `from` (at 0) and `to` (at 1).
+fn lerp_color(from: Color32, to: Color32, at: f32) -> Color32 {
+    let mix = |a: u8, b: u8| {
+        let value = f32::from(a) + (f32::from(b) - f32::from(a)) * at.clamp(0.0, 1.0);
+        num_traits::cast(value.round()).unwrap_or(b)
+    };
+    Color32::from_rgba_premultiplied(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+        mix(from.a(), to.a()),
+    )
 }
 
 /// A choice of short words: the chosen one bold in the text color, the

@@ -18,7 +18,7 @@ A new plugin does nothing until you allow what it asks for.
 1. Select the **Catalog** tab.
 1. Find the plugin and select **Install**.
 
-   The plugin appears on the **Installed** tab, under **Needs attention**.
+   When it is installed, Angelica shows the plugin's page and asks what it may do.
 
 ## Install a plugin from a link
 
@@ -27,31 +27,32 @@ Some plugins are not in the catalog. Their authors give a link that starts with 
 1. On the **Installed** tab, paste the link into the field below the list.
 1. Select **+ Add**.
 
-   The plugin appears in the list within a second, under **Needs attention**.
+   When it is installed, Angelica shows the plugin's page and asks what it may do.
 
-The plugin's details then say that it comes from its authors, not from the Angelica catalog.
+The plugin's page then says that it comes from its authors, not from the Angelica catalog.
 
 ## Allow and turn it on
 
-1. On the **Installed** tab, select the plugin under **Needs attention**, then **Review permissions…**.
+1. On the plugin's page, read what it will be able to do, such as read your chat or download from certain sites.
 
-   A window shows what the plugin will be able to do, such as read your chat or download from certain sites.
+   If you left the page, select **Allow…** next to the plugin on the **Installed** tab.
 
-1. Read the list. If you agree, select **Allow and turn on**.
+1. If you agree, select **Allow and turn on**.
 
    If you do not, select **Not now**. The plugin stays off and waits.
 
-To use the plugin, select it and choose **Open**, or double-click it.
+To use the plugin, select it, then **Plugin management**, or double-click it.
 
 ## When a plugin asks for more
 
 Plugins update by themselves. If a new version asks for something new, it waits under **Needs attention** again.
-**Review permissions…** shows what is new at the top, and what you already allowed below it.
+Select **Allow…** next to it: the page shows only what is new, and what you already allowed in one line.
 
 ## Turn off or remove a plugin
 
-- To turn a plugin off, point at it and select **Turn off**. **Turn on** starts it again without asking for anything you already allowed.
-- To remove a plugin, select it, then **Remove…**. You can keep its data, so that it finds your settings if you install it again, or remove it with its data.
+- To turn a plugin off or on, use the switch next to it. Turning it on again does not ask for anything you already allowed.
+- To remove a plugin, select **⋯** next to it, then **Remove…**. You can keep its data, so that it finds your settings if you install it again, or remove it with its data.
+- To see everything a plugin may do, select **⋯**, then **About plugin…**.
 
 ## Next steps
 
@@ -62,7 +63,7 @@ Plugins update by themselves. If a new version asks for something new, it waits 
 ### A plugin stopped by itself
 
 When a plugin fails, Angelica turns it off and the game keeps running. The plugin is listed under **Needs attention** with the reason.
-Select **Try again**, or **Keep it off**. To tell the plugin's author, select the plugin, then **Copy report**, and paste the report in your message to them.
+Select **Try again**, or leave its switch off. To tell the plugin's author, select the plugin, then **Copy report for the author**, and paste the report in your message to them.
 
 ### The link cannot be installed
 

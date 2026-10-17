@@ -9,8 +9,9 @@ use crate::{
     menu::{self, Look, Menu},
 };
 use angelica_view::{
-    Action as EntryAction, ActionKind, Choice, Chosen, Edited, Entry, Fact, Icon,
-    Mark as EntryMark, Number, NumberSet, Table, Tabs, TextInput, Toggled, Widget, WidgetRef,
+    Action as EntryAction, ActionKind, Checkbox, Choice, Chosen, Edited, Entry, Fact, Icon,
+    Mark as EntryMark, Number, NumberSet, Split, Table, Tabs, TextInput, Toggled, Widget,
+    WidgetRef,
 };
 use std::{
     collections::HashMap,
@@ -245,6 +246,12 @@ pub(crate) struct Drawer<'a> {
     pub(crate) index: usize,
     /// When tabs changed, so the parts after them fade in.
     pub(crate) faded: Option<f64>,
+    /// Whether a split fills the rest of its window, each side scrolling
+    /// in it; otherwise it is as tall as its sides.
+    pub(crate) fill: bool,
+    /// Where a split starts and the height its taller side needs,
+    /// measured as it is drawn.
+    pub(crate) needed: Option<(f32, f32)>,
 }
 
 /// How long the parts after tabs take to fade in after a change.
@@ -358,6 +365,18 @@ impl Drawer<'_> {
                 self.table(ui, widgets, table, position);
                 self.last = None;
             }
+            Widget::BeginSplit(split) => {
+                self.split(ui, widgets, split, position);
+                self.last = None;
+            }
+            Widget::Checkbox(_) | Widget::Choice(_) if !ui.layout().is_horizontal() => {
+                let above = widgets[..*position - 1]
+                    .iter()
+                    .rev()
+                    .find(|w| !matches!(w, Widget::Tooltip(_)));
+                let line = matches!(above, Some(Widget::Checkbox(_) | Widget::Choice(_)));
+                self.last = Some(self.setting(ui, widget, line));
+            }
             Widget::Tooltip(text) => {
                 if let Some(response) = self.last.take() {
                     response.on_hover_text(text);
@@ -435,6 +454,204 @@ impl Drawer<'_> {
             });
     }
 
+    /// Draws a split: its sections in a column at the left, on the color of
+    /// Angelica's own section column with a line at its right, and the
+    /// chosen section's parts up to `end` beside it. Filling a window, each
+    /// side scrolls on its own.
+    fn split(
+        &mut self,
+        ui: &mut egui::Ui,
+        widgets: &[Widget],
+        split: &Split,
+        position: &mut usize,
+    ) {
+        let look = self.look;
+        let p = look.p;
+        let fill = self.fill;
+        let side = look.at(f32::from(split.width));
+        let height = if fill {
+            ui.available_height().max(look.at(48.0))
+        } else {
+            f32::INFINITY
+        };
+        // The column is painted under both sides once their height is known.
+        let backdrop = ui.painter().add(egui::Shape::Noop);
+        let top = ui.cursor().min;
+        let mut tall: f32 = 0.0;
+        let row = ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            let shrink = [false, !fill];
+            let sections = ui.allocate_ui_with_layout(
+                egui::vec2(side, height.min(1.0e6)),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(side);
+                    egui::ScrollArea::vertical()
+                        .id_salt(("angelica-split-side", self.plugin, self.window, &split.id))
+                        .max_height(height)
+                        .auto_shrink(shrink)
+                        .show(ui, |ui| self.split_sections(ui, split))
+                        .content_size
+                        .y
+                },
+            );
+            tall = tall.max(sections.inner);
+            ui.add_space(look.at(16.0));
+            let rest = ui.available_width().max(look.at(48.0));
+            let main = ui.allocate_ui_with_layout(
+                egui::vec2(rest, height.min(1.0e6)),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("angelica-split-main", self.plugin, self.window, &split.id))
+                        .max_height(height)
+                        .auto_shrink(shrink)
+                        .show(ui, |ui| {
+                            ui.set_width(rest);
+                            ui.add_space(look.at(6.0));
+                            ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(8.0));
+                            self.widgets(ui, widgets, position);
+                            ui.add_space(look.at(6.0));
+                        })
+                        .content_size
+                        .y
+                },
+            );
+            tall = tall.max(main.inner);
+        });
+        self.needed = Some((top.y, tall));
+        // Filling a window, the column reaches the window's left and bottom
+        // edges, as Angelica's own section column does.
+        let (left, bottom) = if fill {
+            (
+                top.x - look.at(16.0),
+                row.response.rect.bottom() + look.at(12.0),
+            )
+        } else {
+            (top.x, top.y + tall)
+        };
+        let column =
+            egui::Rect::from_min_max(egui::pos2(left, top.y), egui::pos2(top.x + side, bottom));
+        let corner = egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: if fill { 6 } else { 0 },
+            se: 0,
+        };
+        ui.painter().set(
+            backdrop,
+            egui::Shape::Vec(vec![
+                egui::Shape::rect_filled(column, corner, p.column),
+                egui::Shape::line_segment(
+                    [column.right_top(), column.right_bottom()],
+                    egui::Stroke::new(1.0, p.line),
+                ),
+            ]),
+        );
+    }
+
+    /// The sections of a split, with their group headings and its action.
+    fn split_sections(&mut self, ui: &mut egui::Ui, split: &Split) {
+        let look = self.look;
+        let p = look.p;
+        ui.add_space(look.at(6.0));
+        for (index, label) in split.labels.iter().enumerate() {
+            if let Some(group) = split.groups.get(index).filter(|group| !group.is_empty()) {
+                ui.add_space(look.at(6.0));
+                let (line, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), look.at(20.0)),
+                    egui::Sense::hover(),
+                );
+                ui.painter().text(
+                    egui::pos2(line.left() + look.at(14.0), line.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    group,
+                    theme::sans(look.at(11.5)),
+                    p.secondary,
+                );
+            }
+            let at = u32::try_from(index).unwrap_or(u32::MAX);
+            let (row, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), look.at(30.0)),
+                egui::Sense::click(),
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let chosen = split.selected == at;
+            let plate = row.shrink2(egui::vec2(look.at(6.0), look.at(1.0)));
+            let painter = ui.painter();
+            if chosen {
+                painter.rect_filled(plate, egui::CornerRadius::same(4), p.chosen);
+                painter.rect_stroke(
+                    plate,
+                    egui::CornerRadius::same(4),
+                    egui::Stroke::new(1.0, p.line),
+                    egui::StrokeKind::Inside,
+                );
+            } else if response.hovered() {
+                painter.rect_filled(plate, egui::CornerRadius::same(4), p.hover);
+            }
+            let value = split.values.get(index).map_or("", String::as_str);
+            let value_width = if value.is_empty() {
+                0.0
+            } else {
+                let galley = painter.layout_no_wrap(
+                    value.to_owned(),
+                    theme::sans(look.at(12.5)),
+                    p.secondary,
+                );
+                let width = galley.size().x;
+                painter.galley(
+                    egui::pos2(
+                        plate.right() - look.at(8.0) - width,
+                        row.center().y - galley.size().y / 2.0,
+                    ),
+                    galley,
+                    p.secondary,
+                );
+                width + look.at(8.0)
+            };
+            let font = if chosen {
+                theme::medium(look.at(13.0))
+            } else {
+                theme::sans(look.at(13.0))
+            };
+            let room = (plate.width() - look.at(16.0) - value_width).max(0.0);
+            let mut job = egui::text::LayoutJob::simple_singleline(label.clone(), font, p.text);
+            job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+            let galley = painter.layout_job(job);
+            painter.galley(
+                egui::pos2(
+                    plate.left() + look.at(8.0),
+                    row.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                p.text,
+            );
+            if response.clicked() && !chosen {
+                self.host.queue_event(
+                    self.plugin,
+                    Event::Chosen(Chosen {
+                        window: self.window.into(),
+                        id: split.id.clone(),
+                        index: at,
+                    }),
+                );
+            }
+            ui.add_space(look.at(2.0));
+        }
+        if !split.action.is_empty() {
+            ui.add_space(look.at(4.0));
+            ui.horizontal(|ui| {
+                ui.add_space(look.at(10.0));
+                if theme::word(ui, &split.action, Word::Action, true, look.k).clicked() {
+                    self.host
+                        .queue_event(self.plugin, Event::Clicked(self.reference(&split.id)));
+                }
+            });
+        }
+        ui.add_space(look.at(6.0));
+    }
+
     fn reference(&self, id: &str) -> WidgetRef {
         WidgetRef {
             window: self.window.into(),
@@ -464,23 +681,11 @@ impl Drawer<'_> {
                 response
             }
             Widget::Checkbox(checkbox) => {
-                let words = [self.strings.word_on, self.strings.word_off];
-                let chosen = usize::from(!checkbox.checked);
-                let row = ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
                     ui.label(self.rich(&checkbox.label, self.look.p.text));
-                    theme::choice(ui, &words, chosen, self.look.k)
-                });
-                if let Some(picked) = row.inner {
-                    self.host.queue_event(
-                        self.plugin,
-                        Event::Toggled(Toggled {
-                            window: self.window.into(),
-                            id: checkbox.id.clone(),
-                            checked: picked == 0,
-                        }),
-                    );
-                }
-                row.response
+                    self.checkbox_value(ui, checkbox);
+                })
+                .response
             }
             Widget::TextInput(input) => self.text_input(ui, input),
             Widget::Choice(choice) => self.choice(ui, choice),
@@ -527,6 +732,8 @@ impl Drawer<'_> {
             | Widget::EndSection
             | Widget::BeginTable(_)
             | Widget::EndTable
+            | Widget::BeginSplit(_)
+            | Widget::EndSplit
             | Widget::Spacer
             | Widget::Tooltip(_) => return None,
         })
@@ -602,85 +809,89 @@ impl Drawer<'_> {
             .queue_event(self.plugin, Event::Clicked(self.reference(&action.id)));
     }
 
-    /// What follows an entry's title: its actions under the pointer,
-    /// otherwise its value and its progress or note. Returns whether an
-    /// action was pressed.
+    /// What follows an entry's title: its actions at the right, its value
+    /// before them, and its progress or note, which starts at `note` (its
+    /// left edge and middle). Returns whether an action was pressed.
     fn entry_side(
         &mut self,
         ui: &mut egui::Ui,
         entry: &Entry,
         row: egui::Rect,
         left: f32,
+        note: egui::Pos2,
         mut right: f32,
-        hovered: bool,
     ) -> bool {
         let look = self.look;
         let p = look.p;
         let painter = ui.painter().clone();
         let y = row.center().y;
         let mut acted = false;
-        if hovered && !entry.actions.is_empty() && entry.progress.is_none() {
+        if !entry.actions.is_empty() {
             let room = egui::Rect::from_min_max(
                 egui::pos2(left, row.top()),
                 egui::pos2(right, row.bottom()),
             );
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(room)
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = look.at(8.0);
-                    for action in entry.actions.iter().rev() {
-                        let word = theme::word(
-                            ui,
-                            &action.label,
-                            word_of(action.kind),
-                            action.enabled,
-                            look.k,
-                        );
-                        if word.clicked() {
-                            self.act(action);
-                            acted = true;
+            let used = ui
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(room)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = look.at(12.0);
+                        for action in entry.actions.iter().rev() {
+                            let word = theme::word(
+                                ui,
+                                &action.label,
+                                word_of(action.kind),
+                                action.enabled,
+                                look.k,
+                            );
+                            if word.clicked() {
+                                self.act(action);
+                                acted = true;
+                            }
                         }
-                    }
-                },
+                    },
+                )
+                .response
+                .rect;
+            right = used.left() - look.at(12.0);
+        }
+        if !entry.value.is_empty() && right > left {
+            let value = painter.text(
+                egui::pos2(right, y),
+                egui::Align2::RIGHT_CENTER,
+                &entry.value,
+                theme::sans(look.at(12.5)),
+                p.muted,
             );
-        } else {
-            if !entry.value.is_empty() {
-                let value = painter.text(
-                    egui::pos2(right, y),
-                    egui::Align2::RIGHT_CENTER,
-                    &entry.value,
-                    theme::sans(look.at(12.5)),
-                    p.muted,
-                );
-                right = value.left() - look.at(10.0);
-            }
-            if let Some(fraction) = entry.progress {
-                let line = egui::Rect::from_min_max(
-                    egui::pos2(left, y - 1.0),
-                    egui::pos2(right.max(left), y + 1.0),
-                );
-                painter.rect_filled(line, 1.0, p.line);
-                painter.rect_filled(
-                    line.with_max_x(line.left() + line.width() * fraction.clamp(0.0, 1.0)),
-                    1.0,
-                    p.action,
-                );
-            } else if !entry.note.is_empty() && right - left > look.at(24.0) {
-                let mut job = egui::text::LayoutJob::simple_singleline(
-                    entry.note.clone(),
-                    theme::sans(look.at(13.0)),
-                    p.secondary,
-                );
-                job.wrap = egui::text::TextWrapping::truncate_at_width(right - left);
-                let galley = painter.layout_job(job);
-                painter.galley(
-                    egui::pos2(left, y - galley.size().y / 2.0),
-                    galley,
-                    p.secondary,
-                );
-            }
+            right = value.left() - look.at(10.0);
+        }
+        let (left, y) = (note.x, note.y);
+        if let Some(fraction) = entry.progress {
+            let line = egui::Rect::from_min_max(
+                egui::pos2(left, y - 1.0),
+                egui::pos2(right.max(left), y + 1.0),
+            );
+            painter.rect_filled(line, 1.0, p.line);
+            painter.rect_filled(
+                line.with_max_x(line.left() + line.width() * fraction.clamp(0.0, 1.0)),
+                1.0,
+                p.action,
+            );
+        } else if !entry.note.is_empty() && right - left > look.at(24.0) {
+            let mut job = egui::text::LayoutJob::simple_singleline(
+                entry.note.clone(),
+                theme::sans(look.at(13.0)),
+                p.secondary,
+            );
+            job.wrap = egui::text::TextWrapping::truncate_at_width(right - left);
+            let galley = painter.layout_job(job);
+            painter.galley(
+                egui::pos2(left, y - galley.size().y / 2.0),
+                galley,
+                p.secondary,
+            );
         }
         acted
     }
@@ -734,10 +945,18 @@ impl Drawer<'_> {
     fn entry(&mut self, ui: &mut egui::Ui, entry: &Entry) -> egui::Response {
         let look = self.look;
         let p = look.p;
+        // A game icon in place of the letter tile; an empty frame until it
+        // is read, or for an icon the game does not have.
+        let icon = entry
+            .icon
+            .map(|icon| self.icons.texture(self.host, ui.ctx(), icon));
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             let (row, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), look.at(40.0)),
+                egui::vec2(
+                    ui.available_width(),
+                    look.at(if two_lines(entry) { 48.0 } else { 40.0 }),
+                ),
                 egui::Sense::click(),
             );
             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -785,25 +1004,8 @@ impl Drawer<'_> {
             } else if hover > 0.0 {
                 painter.rect_filled(row, corners, crate::theme::alpha(p.hover, hover));
             }
-            let faded = entry.mark == EntryMark::Off;
             let y = row.center().y;
-            let tile = egui::Rect::from_center_size(
-                egui::pos2(row.left() + look.at(20.0), y),
-                egui::Vec2::splat(look.at(24.0)),
-            );
-            theme::tile(&painter, tile, &entry.title, faded, false, p);
-            let name = painter.text(
-                egui::pos2(row.left() + look.at(42.0), y),
-                egui::Align2::LEFT_CENTER,
-                &entry.title,
-                if entry.chosen {
-                    theme::medium(look.at(13.5))
-                } else {
-                    theme::sans(look.at(13.5))
-                },
-                if faded { p.secondary } else { p.text },
-            );
-            let left = name.right() + look.at(10.0);
+            let (left, note) = entry_head(&painter, look, row, entry, icon.as_ref());
             let mut right = row.right() - look.at(10.0);
             let center = egui::pos2(right - look.at(4.0), y);
             match entry.mark {
@@ -815,7 +1017,7 @@ impl Drawer<'_> {
             if entry.mark != EntryMark::None {
                 right -= look.at(22.0);
             }
-            let acted = self.entry_side(ui, entry, row, left, right, hovered);
+            let acted = self.entry_side(ui, entry, row, left, note, right);
             if response.clicked() && !acted {
                 self.host
                     .queue_event(self.plugin, Event::Clicked(self.reference(&entry.id)));
@@ -892,8 +1094,7 @@ impl Drawer<'_> {
         response
     }
 
-    /// Tabs like the menu's: the chosen one is a light plate on the line
-    /// under the row.
+    /// Tabs like the menu's (`theme::tab_strip`).
     fn tabs(&mut self, ui: &mut egui::Ui, tabs: &Tabs) -> egui::Response {
         let look = self.look;
         let p = look.p;
@@ -908,74 +1109,23 @@ impl Drawer<'_> {
             at
         });
         self.faded = Some(changed);
-        let (row, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), look.at(32.0)),
-            egui::Sense::hover(),
-        );
-        let painter = ui.painter().clone();
-        painter.line_segment(
-            [row.left_bottom(), row.right_bottom()],
-            egui::Stroke::new(1.0, p.line),
-        );
-        let mut x = row.left();
-        for (index, label) in tabs.labels.iter().enumerate() {
-            let index = u32::try_from(index).unwrap_or(u32::MAX);
-            let active = tabs.selected == index;
-            let galley = painter.layout_no_wrap(label.clone(), theme::sans(look.at(13.0)), p.text);
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(x, row.bottom() - look.at(26.0)),
-                egui::vec2(galley.size().x + look.at(28.0), look.at(26.0)),
+        let labels: Vec<&str> = tabs.labels.iter().map(String::as_str).collect();
+        let selected = usize::try_from(tabs.selected).unwrap_or(usize::MAX);
+        let id = egui::Id::new(("angelica-tabs", self.plugin, self.window, &tabs.id));
+        let strip = ui.horizontal(|ui| {
+            theme::tab_strip(ui, p, &|value| look.at(value), id, &labels, selected)
+        });
+        if let Some(index) = strip.inner.and_then(|index| u32::try_from(index).ok()) {
+            self.host.queue_event(
+                self.plugin,
+                Event::Chosen(Chosen {
+                    window: self.window.into(),
+                    id: tabs.id.clone(),
+                    index,
+                }),
             );
-            let tab = ui
-                .interact(
-                    rect,
-                    egui::Id::new(("angelica-tabs", self.plugin, self.window, &tabs.id, index)),
-                    egui::Sense::click(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if active {
-                let plate = rect.with_max_y(rect.bottom() + 1.0);
-                let corner = egui::CornerRadius {
-                    nw: 4,
-                    ne: 4,
-                    sw: 0,
-                    se: 0,
-                };
-                painter.rect_filled(plate, corner, p.window);
-                painter.rect_filled(plate, corner, p.chosen);
-                painter.add(egui::Shape::line(
-                    vec![
-                        plate.left_bottom(),
-                        plate.left_top(),
-                        plate.right_top(),
-                        plate.right_bottom(),
-                    ],
-                    egui::Stroke::new(1.0, p.border),
-                ));
-            }
-            let color = if active || tab.hovered() {
-                p.text
-            } else {
-                p.secondary
-            };
-            painter.galley_with_override_text_color(
-                rect.center() - galley.size() / 2.0,
-                galley,
-                color,
-            );
-            if tab.clicked() && !active {
-                self.host.queue_event(
-                    self.plugin,
-                    Event::Chosen(Chosen {
-                        window: self.window.into(),
-                        id: tabs.id.clone(),
-                        index,
-                    }),
-                );
-            }
-            x = rect.right() + look.at(4.0);
         }
-        response
+        strip.response
     }
 
     fn text_input(&mut self, ui: &mut egui::Ui, input: &TextInput) -> egui::Response {
@@ -1028,27 +1178,106 @@ impl Drawer<'_> {
     }
 
     fn choice(&mut self, ui: &mut egui::Ui, choice: &Choice) -> egui::Response {
+        ui.horizontal(|ui| {
+            if !choice.label.is_empty() {
+                ui.label(self.rich(&choice.label, self.look.p.text));
+            }
+            self.choice_value(ui, choice)
+        })
+        .inner
+    }
+
+    /// A checkbox's two words.
+    fn checkbox_value(&mut self, ui: &mut egui::Ui, checkbox: &Checkbox) {
+        let words = match &checkbox.words {
+            Some([on, off]) => [on.as_str(), off.as_str()],
+            None => [self.strings.word_on, self.strings.word_off],
+        };
+        let chosen = usize::from(!checkbox.checked);
+        if let Some(picked) = theme::choice(ui, &words, chosen, self.look.k) {
+            self.host.queue_event(
+                self.plugin,
+                Event::Toggled(Toggled {
+                    window: self.window.into(),
+                    id: checkbox.id.clone(),
+                    checked: picked == 0,
+                }),
+            );
+        }
+    }
+
+    /// A checkbox or choice among parts under each other, drawn as a
+    /// setting: its label on the left, its value at the right edge, its hint
+    /// under them, and a thin line above when a setting is right above.
+    fn setting(&mut self, ui: &mut egui::Ui, widget: &Widget, line: bool) -> egui::Response {
+        let look = self.look;
+        let p = look.p;
+        let (label, hint) = match widget {
+            Widget::Checkbox(c) => (c.label.as_str(), c.hint.as_str()),
+            Widget::Choice(c) => (c.label.as_str(), c.hint.as_str()),
+            _ => ("", ""),
+        };
+        // The value's width last frame puts it at the right edge.
+        let id = self.id("setting");
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if line {
+                let (rule, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 1.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().hline(
+                    rule.x_range(),
+                    rule.center().y,
+                    egui::Stroke::new(1.0, p.line),
+                );
+            }
+            ui.horizontal(|ui| {
+                ui.set_min_height(look.at(34.0));
+                ui.label(self.rich(label, p.text));
+                let width = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
+                ui.add_space((ui.available_width() - width).max(look.at(12.0)));
+                let start = ui.cursor().left();
+                match widget {
+                    Widget::Checkbox(checkbox) => self.checkbox_value(ui, checkbox),
+                    Widget::Choice(choice) => {
+                        self.choice_value(ui, choice);
+                    }
+                    _ => {}
+                }
+                let used = ui.min_rect().right() - start;
+                ui.data_mut(|data| data.insert_temp(id, used));
+            });
+            if !hint.is_empty() {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(hint)
+                            .font(theme::sans(look.at(12.5)))
+                            .color(p.muted),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(look.at(8.0));
+            }
+        })
+        .response
+    }
+
+    /// A choice's current value, which opens the menu of its options.
+    fn choice_value(&mut self, ui: &mut egui::Ui, choice: &Choice) -> egui::Response {
         let selected = choice
             .selected
             .and_then(|index| choice.options.get(index as usize));
         let look = self.look;
         let mut picked = None;
-        let response = ui
-            .horizontal(|ui| {
-                if !choice.label.is_empty() {
-                    ui.label(self.rich(&choice.label, look.p.text));
+        let response = theme::value(ui, selected.map_or("—", String::as_str), look.k);
+        egui::Popup::menu(&response).show(|ui| {
+            for (index, option) in choice.options.iter().enumerate() {
+                if menu::popup_item(ui, &look, None, option, look.p.text) {
+                    picked = u32::try_from(index).ok();
                 }
-                let response = theme::value(ui, selected.map_or("—", String::as_str), look.k);
-                egui::Popup::menu(&response).show(|ui| {
-                    for (index, option) in choice.options.iter().enumerate() {
-                        if menu::popup_item(ui, &look, None, option, look.p.text) {
-                            picked = u32::try_from(index).ok();
-                        }
-                    }
-                });
-                response
-            })
-            .inner;
+            }
+        });
         if let Some(index) = picked
             && choice.selected != Some(index)
         {
@@ -1075,6 +1304,94 @@ fn word_of(kind: ActionKind) -> Word {
     }
 }
 
+/// Whether the entry is a plain one with its note or progress under the
+/// title.
+fn two_lines(entry: &Entry) -> bool {
+    entry.plain && (!entry.note.is_empty() || entry.progress.is_some())
+}
+
+/// Draws an entry's tile and title. Returns where what follows the title
+/// starts, and where the note starts (its left edge and middle): after the
+/// title, or under it in a plain row, which has no tile and is one line
+/// without a note.
+fn entry_head(
+    painter: &egui::Painter,
+    look: Look,
+    row: egui::Rect,
+    entry: &Entry,
+    icon: Option<&Option<egui::TextureId>>,
+) -> (f32, egui::Pos2) {
+    let p = look.p;
+    let faded = entry.mark == EntryMark::Off;
+    let y = row.center().y;
+    let (start, title_y) = if entry.plain {
+        let shift = if two_lines(entry) { look.at(8.0) } else { 0.0 };
+        (row.left() + look.at(10.0), y - shift)
+    } else {
+        let tile = egui::Rect::from_center_size(
+            egui::pos2(row.left() + look.at(20.0), y),
+            egui::Vec2::splat(look.at(24.0)),
+        );
+        entry_tile(painter, tile, entry, icon, faded, p);
+        (row.left() + look.at(42.0), y)
+    };
+    let name = painter.text(
+        egui::pos2(start, title_y),
+        egui::Align2::LEFT_CENTER,
+        &entry.title,
+        if entry.chosen {
+            theme::medium(look.at(13.5))
+        } else {
+            theme::sans(look.at(13.5))
+        },
+        if faded { p.secondary } else { p.text },
+    );
+    let left = name.right() + look.at(10.0);
+    let note = if two_lines(entry) {
+        egui::pos2(start, y + look.at(9.0))
+    } else {
+        egui::pos2(left, y)
+    };
+    (left, note)
+}
+
+/// An entry's tile: the first letter of its title, or the game's icon it
+/// names; an empty frame for an icon not read yet or that the game does not
+/// have.
+fn entry_tile(
+    painter: &egui::Painter,
+    tile: egui::Rect,
+    entry: &Entry,
+    icon: Option<&Option<egui::TextureId>>,
+    faded: bool,
+    p: &theme::Palette,
+) {
+    match icon {
+        None => theme::tile(painter, tile, &entry.title, faded, false, p),
+        Some(Some(texture)) => {
+            let tint = if faded {
+                egui::Color32::from_white_alpha(140)
+            } else {
+                egui::Color32::WHITE
+            };
+            painter.image(
+                *texture,
+                tile,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                tint,
+            );
+        }
+        Some(None) => {
+            painter.rect_stroke(
+                tile,
+                2.0,
+                egui::Stroke::new(1.0, p.line),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
 /// Whether the widget ends a container.
 fn is_end(widget: &Widget) -> bool {
     matches!(
@@ -1084,6 +1401,7 @@ fn is_end(widget: &Widget) -> bool {
             | Widget::EndGrid
             | Widget::EndSection
             | Widget::EndTable
+            | Widget::EndSplit
     )
 }
 
@@ -1097,7 +1415,8 @@ fn skip(widgets: &[Widget], mut position: usize) -> usize {
             | Widget::BeginColumn
             | Widget::BeginGrid(_)
             | Widget::BeginSection(_)
-            | Widget::BeginTable(_) => depth += 1,
+            | Widget::BeginTable(_)
+            | Widget::BeginSplit(_) => depth += 1,
             end if is_end(end) => {
                 depth -= 1;
                 if depth == 0 {
@@ -1120,12 +1439,14 @@ fn row_has_spacer(widgets: &[Widget], position: usize) -> bool {
             | Widget::BeginColumn
             | Widget::BeginGrid(_)
             | Widget::BeginSection(_)
-            | Widget::BeginTable(_) => depth += 1,
+            | Widget::BeginTable(_)
+            | Widget::BeginSplit(_) => depth += 1,
             Widget::EndRow
             | Widget::EndColumn
             | Widget::EndGrid
             | Widget::EndSection
-            | Widget::EndTable => {
+            | Widget::EndTable
+            | Widget::EndSplit => {
                 if depth == 0 {
                     return false;
                 }

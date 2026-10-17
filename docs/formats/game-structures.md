@@ -86,6 +86,20 @@ The game's windows are objects of the map's object model (`types/ui.toml`), read
 
 The fields of the manager, the window, the widget, and the element are located in the code of the game's own lookups: `ui.unit_manager.get_unit_by_name`, which finds a window by its name, and `ui.unit_base.get_node_by_id` and `ui.unit_base.get_text_node_by_id`, which walk a window's elements for an id, the second only for elements of type 3. Element ids come from the game map's [window schemas](./game-map-v2.md#window-schemas), never from a plugin. Plugins change an element only through `set_visible` and `set_text`, on the game's main thread between frames, and the host applies those values again once per frame while a plugin holds them.
 
+## System menu
+
+The HUD agent's `OpenSystemMenu` builds the System menu from the values of the main menu bar's event and the number of entries: each entry is a `MainCommand` row in an int value, from value 5 on, and the text shown for it in the value 20 places later, from value 25 on, when that value holds text; otherwise the game names the row. The menu holds at most 20 entries. The adapter detours it: with fewer than 20 entries, it gives the original a copy of the values with Angelica's entry first — its command, `0x41470001`, which no `MainCommand` row has, and the text `U+E071 Angelica`, the game's boxed letter A — and the game's entries after it, and the number of entries plus one; the copy lives until the original returns, which copies the texts it keeps. With 20 entries, or when the copy cannot be made, the original runs with the game's values.
+
+Choosing an entry runs the UI module's `ExecuteMainCommand` with its command. The adapter detours it: Angelica's command opens or closes the menu and does not reach the original; every other command goes to the original unchanged.
+
+| Entry | Kind | Use |
+| --- | --- | --- |
+| `ui.agent_hud.open_system_menu` | function `(ptr agent, ptr values, u32 entries)` | detoured; its checks confirm that values are 16 bytes, the commands start at value 5 and the texts at value 25, and the limit of 20 entries |
+| `ui.ui_module.execute_main_command` | slot 206 of the `ui.ui_module` vtable, `(ptr ui_module, u32 command)` | detoured |
+| `ui.atk_value.kind` (`u8`), `.integer` (`i32`), `.text` (`ptr`) | fields of a value | an entry's command (kind 3, int) and its text (kind 8, text) |
+
+Without one of these entries, the System menu has no Angelica entry, and the menu key and `/angelica` still open the menu. Both detours stay installed until the process exits; the command's is enabled first, so an entry the menu shows is always answered.
+
 ## Chat
 
 The game runs a line the player sends from the chat box or a macro with the command module's `ExecuteCommandInner`, which looks the first word up in its command list. The adapter detours it: when the line's first word is a plugin's command, the host takes the line and the original is not called; every other line, and every line while no plugin has commands, goes to the original unchanged. Plugin messages are added to the chat log with the log module's `PrintMessage`, on the game's main thread.
@@ -116,6 +130,36 @@ The message is the game's encoded text: `[<plugin name>]` in color row 500, a sp
 | `warning` | 506 |
 | `bad` | 508 |
 
+An item link is the game's link macro around the item's name, as the game writes an item the player links:
+
+| Part | Encoding |
+| --- | --- |
+| the color of the item's rarity | `0x48` with `UIColor` row `0x223 + 2 × rarity`, and `0x49` (`UIGlow`) with row `0x224 + 2 × rarity` |
+| the link | macro `0x27` with the integers 2 (an item), the item's row (plus 1 000 000 for high quality), 1, and 0 |
+| the arrow | `U+E0BB` in color row 500 and glow row 501, both reset to 0 after it |
+| the name | the `name` cell of the item's `Item` row, then a space and `U+E03C` for high quality |
+| the end of the link | macro `0x27` with the integers 206, 0, 0, 0 and an empty text: `02 27 07 CF 01 01 01 FF 01 03` |
+| the colors restored | `0x49` and `0x48` with row 0 |
+
+The game shows the item's tooltip when the player clicks the link, as for its own links.
+
 The adapter does not detour `PrintMessage`: plugins see the messages the log receives through a Lens watch of the map's `chat_message_added` event at the same function. While the adapter prints, watches on its thread record nothing, so a plugin never hears its own message.
 
 Without one of the command entries, `commands.define` returns `unavailable`; without one of the printing entries, `chat.print` and the host's answers to commands are unavailable. The detour stays installed until the process exits.
+
+## Item menus
+
+The menu of an item the player carries belongs to the game's item menu agent, which fills it with the entries the item allows and then opens it. The adapter detours the function that opens it and the agent's event function:
+
+| Entry | Kind | Use |
+| --- | --- | --- |
+| `ui.agent_inventory_context.open_menu` | function `(ptr agent, bool, u8)` | detoured: the plugins' entries are added before the game opens the menu |
+| `ui.agent_inventory_context.add_menu_item` | function `(ptr agent, u8 event, u32 addon_text, bool disabled, bool submenu)` | adds each entry as the game adds its own |
+| `ui.agent_inventory_context.receive_event` | function `(ptr agent, ptr answer, ptr values, u32 count, u64 kind) -> ptr` | detoured: notes a chosen entry, then runs unchanged |
+| `ui.agent_inventory_context.entry_start`, `.entry_count` (`i32`) | fields | the first entry's position among the events and values, and the number of entries |
+| `ui.agent_inventory_context.events` (`u8`) | field | the first of the bytes that hold each position's event |
+| `ui.agent_inventory_context.values` (`struct`) | field | the first of the 16-byte values that hold each position's text |
+| `ui.agent_inventory_context.item` (`ptr`) | field | the inventory item whose menu it is |
+| `inventory.inventory_item.item_id` (`u32`) | field | the item's row of `Item` |
+
+When the game opens the menu, the adapter reads the number of entries. Unless one of them already holds an event of a plugin (0xF0 and up), as when the game opens the same menu again, it adds each plugin's entry with `add_menu_item`, event 0xF0 plus its position among the plugins' entries and Addon row 0x97A, while the menu has fewer than 32 entries, which the agent's masks hold. The function writes the entry's text as a value of kind 8, which the game never frees; the adapter then points the value at the label, the game's text in color row 500 and NUL-terminated, which it keeps until two menus later. A chosen entry reaches the event function with the kind 0x47 or 0x48 and the integer values 0 and the entry's position; the adapter reads the event at `entry_start` plus the position, and for an event of a plugin it notes the plugin's entry with the item's row, read from the agent's item. Then the game's function runs: the game's handler does nothing for an event it does not know, and closes the menu.

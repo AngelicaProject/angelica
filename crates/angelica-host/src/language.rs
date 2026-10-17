@@ -46,7 +46,7 @@ strings! {
     catalog_failed: "The catalog did not load: {reason}", "Каталог не загрузился: {reason}";
     catalog_empty: "The catalog has no plugins yet.", "В каталоге пока нет плагинов.";
     catalog_install: "Install", "Установить";
-    catalog_installed: "Installed", "Установлен";
+    catalog_installing: "installing…", "установка…";
     catalog_withdrawn: "{name} is turned off: the catalog withdrew it. {reason}", "{name} выключен: каталог отозвал его. {reason}";
     tab_settings: "Settings", "Настройки";
     close: "Close", "Закрыть";
@@ -76,10 +76,6 @@ strings! {
     plugins_few: "{n} plugins", "{n} плагина";
     plugins_many: "{n} plugins", "{n} плагинов";
     find: "Search", "Поиск";
-    filter_all: "All permissions", "Все права";
-    column_plugin: "Plugin", "Плагин";
-    column_permissions: "Permissions", "Права";
-    column_version: "Version", "Версия";
     group_attention: "Needs attention", "Требуют внимания";
     group_on: "On", "Включены";
     group_off: "Off", "Выключены";
@@ -97,24 +93,33 @@ strings! {
     lens_change_ungranted: "Wants to change {domain}, which the game map does not offer: not allowed", "Хочет менять {domain}, чего карта игры не даёт: не разрешено";
     acts_warning: "Acting for you in the game breaks its terms of service: the game's company can suspend your account for it.", "Действия за вас в игре нарушают её пользовательское соглашение: компания игры может за это заблокировать аккаунт.";
     source_author: "from its author", "от автора";
-    source_authors: "from {authors}", "от {authors}";
-    version: "version {version}", "версия {version}";
-    dialog_new: "Turning on", "Включение";
-    dialog_more: "New permissions", "Новые права";
-    asks: "Will be able to", "Сможет";
-    asks_first: "Asks for the first time", "Просит впервые";
-    already: "Already allowed", "Уже разрешено";
+    source_authors: "Author: {authors}", "Автор: {authors}";
+    source_authors_many: "Authors: {authors}", "Авторы: {authors}";
+    version: "Version {version}", "Версия {version}";
+    page_turn_on: "Turn on {name}?", "Включить {name}?";
+    page_more: "{name} asks for more", "{name} просит больше";
+    page_more_line: "updated to {version} · not running until you decide", "обновился до {version} · не работает, пока вы не решите";
+    page_wait: "Installing…", "Устанавливается…";
+    page_turned_on: "Turned on. Open it here or from its row in the list any time.", "Включён. Открыть его можно здесь или из его строки в списке в любое время.";
+    asks: "What it will be able to do", "Что ему будет можно";
+    asks_first: "New", "Новое";
+    already: "Already allowed: {classes}", "Уже разрешено: {classes}";
+    allowed: "Plugin permissions", "Разрешения плагина";
     asks_nothing: "Only its own windows and files", "Только свои окна и файлы";
     allow: "Allow and turn on", "Разрешить и включить";
+    allow_more: "Allow the new", "Разрешить новое";
     not_now: "Not now", "Не сейчас";
-    review: "Review permissions…", "Посмотреть права…";
+    review: "Allow…", "Разрешить…";
+    manage: "Plugin management", "Управление плагином";
+    manage_item: "About plugin…", "О плагине…";
+    about: "About plugin", "О плагине";
+    plugin_actions: "Plugin actions", "Действия с плагином";
     open: "Open", "Открыть";
     turn_off: "Turn off", "Выключить";
     turn_on: "Turn on", "Включить";
     retry: "Try again", "Попробовать снова";
-    keep_off: "Keep it off", "Оставить выключенным";
-    open_folder: "Open folder", "Открыть папку";
-    copy_report: "Copy report", "Скопировать отчёт";
+    open_folder: "Open plugin folder", "Открыть папку плагина";
+    copy_report: "Copy report for the author", "Скопировать отчёт для автора";
     report_copied: "Report copied", "Отчёт скопирован";
     remove: "Remove…", "Удалить…";
     remove_title: "Removing", "Удаление";
@@ -122,7 +127,7 @@ strings! {
     remove_all: "Remove with its data", "Удалить вместе с данными";
     remove_note: "Its data are its settings and the files it saved. Kept data come back if you install it again.", "Данные плагина — его настройки и сохранённые файлы. Оставленные данные вернутся, если установить его снова.";
     cancel: "Cancel", "Отмена";
-    history: "This session", "В этой сессии";
+    history: "In this session", "В этой сессии";
     history_installed: "installed, version {version}", "установлен, версия {version}";
     history_updated: "updated from {from} to {to}", "обновлён с {from} до {to}";
     history_compiled: "compiled again for this version of Angelica", "собран заново для этой версии Angelica";
@@ -131,6 +136,8 @@ strings! {
     state_running: "Running", "Работает";
     state_off: "Off", "Выключен";
     state_waiting: "Waiting for your permission", "Ждёт вашего разрешения";
+    row_more: "Updated and asks for more", "Обновился и просит больше";
+    row_stopped: "Stopped after an error", "Остановлен после ошибки";
     state_stopped: "Stopped after an error. The game was not affected.", "Остановлен после ошибки. Игра не пострадала.";
     section_general: "General", "Общие";
     section_updates: "Updates", "Обновления";
@@ -277,21 +284,24 @@ impl Language {
             Self::English => permission.description(),
             Self::Russian => match permission {
                 Permission::FilesReplace => {
-                    "Заменяет файлы игры: шрифты, текстуры, материалы и модели"
+                    "Заменять файлы игры: шрифты, текстуры, материалы и модели"
                 }
-                Permission::ChatCommands => "Добавляет свои команды чата",
-                Permission::ChatPrint => "Пишет свои сообщения в ваш чат",
-                Permission::HttpGet => "Скачивает с этих сайтов",
-                Permission::HttpSend => "Отправляет данные на эти сайты",
-                Permission::DrawWorld => "Рисует метки, линии и надписи поверх мира игры",
-                Permission::MessagesSend => "Отправляет сообщения этим плагинам",
-                Permission::ClipboardWrite => "Копирует текст в буфер обмена, когда вы просите",
+                Permission::ChatCommands => "Добавлять свои команды чата",
+                Permission::ChatPrint => "Писать свои сообщения в ваш чат",
+                Permission::HttpGet => "Скачивать с этих сайтов",
+                Permission::HttpSend => "Отправлять данные на эти сайты",
+                Permission::DrawWorld => "Рисовать метки, линии и надписи поверх мира игры",
+                Permission::MessagesSend => "Отправлять сообщения этим плагинам",
+                Permission::ClipboardWrite => "Копировать текст в буфер обмена, когда вы просите",
                 Permission::Notifications => {
-                    "Показывает уведомления и мигает игрой на панели задач"
+                    "Показывать уведомления и мигать игрой на панели задач"
                 }
-                Permission::SoundPlay => "Проигрывает звуки",
-                Permission::StorageCache => "Хранит кеш файлов на вашем диске",
-                Permission::HttpWebsocket => "Держит постоянные соединения с этими сайтами",
+                Permission::SoundPlay => "Проигрывать звуки",
+                Permission::StorageCache => "Хранить кеш файлов на вашем диске",
+                Permission::HttpWebsocket => "Держать постоянные соединения с этими сайтами",
+                Permission::LinksOpen => {
+                    "Открывать страницы этих сайтов в вашем браузере, когда вы просите"
+                }
             },
         }
     }
@@ -326,11 +336,11 @@ impl Language {
         match self {
             Self::English => class.title(),
             Self::Russian => match class {
-                Class::Acts => "Действует в игре за вас",
-                Class::Network => "Выходит в интернет",
-                Class::OtherPlayers => "Видит других игроков",
-                Class::WhatYouSee => "Меняет то, что вы видите",
-                Class::YoursOnly => "Только для вас",
+                Class::Acts => "Действовать в игре за вас",
+                Class::Network => "Выходить в интернет",
+                Class::OtherPlayers => "Видеть других игроков",
+                Class::WhatYouSee => "Менять то, что вы видите",
+                Class::YoursOnly => "Остальное",
             },
         }
     }
@@ -453,6 +463,7 @@ mod tests {
             Permission::SoundPlay,
             Permission::StorageCache,
             Permission::HttpWebsocket,
+            Permission::LinksOpen,
         ];
         for permission in permissions {
             assert_ne!(

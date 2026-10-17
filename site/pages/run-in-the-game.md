@@ -47,7 +47,7 @@ You can do this while the game is running. Angelica picks up the plugin within a
 ## Turn it on
 
 1. In the game, press <kbd>Insert</kbd>. The plugin is under **Needs attention**.
-1. Select it, then **Review permissions…**, and check that it asks for what you expect.
+1. Select **Allow…** next to it, and check that it asks for what you expect.
 1. Select **Allow and turn on**.
 
 ## Change it and try again
@@ -59,7 +59,7 @@ If the new version asks for a new permission, it waits under **Needs attention**
 
 Open the menu next to the window's close button, then **For developers**. For each plugin, it shows its state, its folder, and the last lines of its log, including why it stopped.
 
-Write to the log what the plugin did and why something failed. When a player has a problem, they send you the plugin's report from **Copy report**, and the report ends with the same log.
+Write to the log what the plugin did and why something failed. When a player has a problem, they send you the plugin's report from **Copy report for the author**, and the report ends with the same log.
 
 ## Troubleshooting
 

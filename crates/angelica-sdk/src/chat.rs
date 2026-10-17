@@ -8,14 +8,18 @@
 //!     .accent("Russian 1.4")
 //!     .muted(" (12 MB)")
 //!     .print()?;
+//!
+//! // An item link the player clicks for the item's tooltip: Iron Ingot,
+//! // high quality, named in English.
+//! Message::new().text("Found ").item(5057, true, 2).print()?;
 //! ```
 use crate::api::chat as api;
 pub use api::Tone;
 
-/// A message of spans in tones.
+/// A message of spans in tones and item links.
 #[derive(Debug, Clone, Default)]
 pub struct Message {
-    spans: Vec<api::Span>,
+    pieces: Vec<api::Piece>,
 }
 
 impl Message {
@@ -28,20 +32,31 @@ impl Message {
     /// A span in a tone.
     #[must_use]
     pub fn span(mut self, text: impl Into<String>, tone: Tone) -> Self {
-        self.spans.push(api::Span {
+        self.pieces.push(api::Piece::Span(api::Span {
             text: text.into(),
             tone,
             italic: false,
-        });
+        }));
         self
     }
 
     /// Makes the last span italic.
     #[must_use]
     pub fn italic(mut self) -> Self {
-        if let Some(span) = self.spans.last_mut() {
+        if let Some(api::Piece::Span(span)) = self.pieces.last_mut() {
             span.italic = true;
         }
+        self
+    }
+
+    /// A link to the item of the `Item` sheet's row `item`, its high-quality
+    /// version with `hq`: the host writes the item's name in `language` (the
+    /// game's number, as `excel` takes it) in the color of its rarity, and
+    /// the player clicks it for the item's tooltip.
+    #[must_use]
+    pub fn item(mut self, item: u32, hq: bool, language: u8) -> Self {
+        self.pieces
+            .push(api::Piece::Item(api::ItemLink { item, hq, language }));
         self
     }
 
@@ -90,9 +105,20 @@ impl Message {
     /// Prints the message in the chat log.
     ///
     /// # Errors
-    /// See `chat.print`.
+    /// See `chat.print` and, with item links, `chat.print-pieces`.
     pub fn print(&self) -> Result<(), crate::Error> {
-        api::print(&self.spans)
+        let spans: Option<Vec<api::Span>> = self
+            .pieces
+            .iter()
+            .map(|piece| match piece {
+                api::Piece::Span(span) => Some(span.clone()),
+                api::Piece::Item(_) => None,
+            })
+            .collect();
+        match spans {
+            Some(spans) => api::print(&spans),
+            None => api::print_pieces(&self.pieces),
+        }
     }
 }
 

@@ -242,7 +242,7 @@ pub fn review(
 }
 
 /// Why a new plugin waits for a maintainer: it asks for something in a class
-/// above **Changes what you see** (acting for the player, the internet, or
+/// above **Change what you see** (acting for the player, the internet, or
 /// other players), or names a domain the released map does not describe as
 /// it asks for it. Without the map, every new plugin waits.
 fn new_plugin(manifest: &Manifest, domains: Option<&Domains>) -> Vec<String> {
@@ -270,8 +270,13 @@ fn new_plugin(manifest: &Manifest, domains: Option<&Domains>) -> Vec<String> {
         }
     }
     for name in manifest.lens_act() {
+        let local = domains.get(&name).is_some_and(|domain| domain.act_local);
         by_class
-            .entry(Class::Acts)
+            .entry(if local {
+                Class::WhatYouSee
+            } else {
+                Class::Acts
+            })
             .or_default()
             .push(format!("{name}.act"));
     }
@@ -339,6 +344,9 @@ pub struct Listed {
     pub link: String,
     pub sha256: String,
     pub source: String,
+    /// The plugin's icon made small, in hexadecimal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// The catalog link of a plugin.
@@ -367,6 +375,11 @@ pub fn listed(entry: &Entry, file: &[u8], release: &[u8; 32]) -> Result<Listed, 
         ));
     }
     let declared = Declared::of(&manifest);
+    let icon = runtime::author::open(file)?
+        .icon
+        .map(|icon| runtime::author::small_icon(&icon))
+        .transpose()?
+        .map(|icon| runtime::package::hex(&icon));
     Ok(Listed {
         id: entry.id.clone(),
         name: manifest.plugin.name.clone(),
@@ -378,6 +391,7 @@ pub fn listed(entry: &Entry, file: &[u8], release: &[u8; 32]) -> Result<Listed, 
         link: link(&entry.id),
         sha256: runtime::package::hex(&sha2::Sha256::digest(file)),
         source: format!("https://github.com/{}/tree/{}", entry.repository, entry.tag),
+        icon,
     })
 }
 
@@ -520,6 +534,7 @@ mod tests {
             read: words.clone(),
             change: change.then(|| words.clone()),
             act: None,
+            act_local: false,
         }
     }
 
@@ -555,12 +570,12 @@ mod tests {
         let others = new("[lens]\nread = [\"inventory\", \"chat\"]\n");
         assert_eq!(
             others.reasons,
-            vec!["a new plugin in the class Sees other players: chat.read"]
+            vec!["a new plugin in the class See other players: chat.read"]
         );
         let acts = new("[lens]\nact = [\"inventory\"]\n");
         assert_eq!(
             acts.reasons,
-            vec!["a new plugin in the class Acts in the game for you: inventory.act"]
+            vec!["a new plugin in the class Act in the game for you: inventory.act"]
         );
         let unknown = new("[lens]\nread = [\"retainers\"]\nchange = [\"inventory\"]\n");
         assert_eq!(
@@ -583,7 +598,7 @@ mod tests {
         let internet = review(&entry("v1.0.0", &key), &internet, None, Some(&domains)).unwrap();
         assert_eq!(
             internet.reasons,
-            vec!["a new plugin in the class Uses the internet: http.get"]
+            vec!["a new plugin in the class Use the internet: http.get"]
         );
     }
 

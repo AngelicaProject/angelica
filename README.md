@@ -2,7 +2,7 @@
 
 A plugin platform for FINAL FANTASY XIV (FFXIV).
 
-[Website](https://angelicaproject.github.io/angelica/) · [Build a plugin with an agent](https://angelicaproject.github.io/angelica/agent.html) · [Write your first plugin](https://angelicaproject.github.io/angelica/first-plugin.html) · [Download for Windows](https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe) · [Discord](https://discord.gg/mv24mq53h2)
+[Website](https://angelicaproject.github.io/angelica/) · [Build a plugin with an agent](https://angelicaproject.github.io/angelica/agent.html) · [Write your first plugin](https://angelicaproject.github.io/angelica/first-plugin.html) · [Download for Windows](https://github.com/AngelicaProject/angelica/releases/download/nightly/angelica-setup.exe)
 
 ## Build a plugin with your agent
 

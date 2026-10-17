@@ -1,6 +1,6 @@
 //! The Angelica menu over the game: a small window with the player's plugins
-//! in a dense list, a dialog for what a plugin asks, settings, and the
-//! details for developers. While the menu is closed, short notes at the top
+//! in a list, each plugin's About page with what it asks for, settings,
+//! and the details for developers. While the menu is closed, short notes at the top
 //! right tell what happened (`docs/architecture/ui.md`).
 #![forbid(unsafe_code)]
 use crate::{
@@ -51,8 +51,6 @@ pub struct Entry<'a> {
     pub name: &'a str,
     pub description: &'a str,
     pub group: Group,
-    /// The classes of the permissions it holds or asks for.
-    pub classes: Vec<Class>,
 }
 
 /// A line of the list: a group's heading with how many it holds, or a
@@ -64,10 +62,9 @@ pub enum Line {
 }
 
 /// The list's lines: the plugins whose name or description contains
-/// `query` and, with a `class`, that hold or ask for a permission of it,
-/// in groups, each by name.
+/// `query`, in groups, each by name.
 #[must_use]
-pub fn lines(entries: &[Entry<'_>], query: &str, class: Option<Class>) -> Vec<Line> {
+pub fn lines(entries: &[Entry<'_>], query: &str) -> Vec<Line> {
     let query = query.trim().to_lowercase();
     let mut lines = Vec::new();
     for group in [Group::Attention, Group::On, Group::Off] {
@@ -76,7 +73,6 @@ pub fn lines(entries: &[Entry<'_>], query: &str, class: Option<Class>) -> Vec<Li
             .enumerate()
             .filter(|(_, entry)| {
                 entry.group == group
-                    && class.is_none_or(|class| entry.classes.contains(&class))
                     && (query.is_empty()
                         || entry.name.to_lowercase().contains(&query)
                         || entry.description.to_lowercase().contains(&query))
@@ -113,15 +109,6 @@ pub fn class_icon(class: Class) -> Icon {
     }
 }
 
-/// The classes of `held`, each once, in the order they are shown.
-fn classes_of(held: impl IntoIterator<Item = Class>) -> Vec<Class> {
-    let held: Vec<Class> = held.into_iter().collect();
-    CLASSES
-        .into_iter()
-        .filter(|class| held.contains(class))
-        .collect()
-}
-
 /// A key the player can choose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyFor {
@@ -150,31 +137,31 @@ const START_TIME: f64 = 12.0;
 /// The width of the menu's window, in points at the normal size.
 const WIDTH: f32 = 640.0;
 /// The height of a line of the list.
-const ROW: f32 = 36.0;
+const ROW: f32 = 50.0;
 /// How many lines the list shows before it scrolls; the list keeps this
 /// height with fewer plugins, so the window does not change its size.
-const VISIBLE_ROWS: f32 = 9.0;
-/// The height of the columns' header over the list.
-const COLUMNS: f32 = 18.0;
+const VISIBLE_ROWS: f32 = 7.0;
+
 /// The narrowest and widest the player can make the menu: its tabs are
 /// laid out for the normal width, so it only grows.
 const MIN_WIDTH: f32 = WIDTH;
 const MAX_WIDTH: f32 = 1200.0;
 /// The height of the tabs' content before the player resizes the menu.
-const BODY: f32 = COLUMNS + ROW * VISIBLE_ROWS + AROUND_LIST;
-/// The least height of the tabs' content: four lines of the list.
-const MIN_BODY: f32 = COLUMNS + ROW * 4.0 + AROUND_LIST;
+const BODY: f32 = ROW * VISIBLE_ROWS + AROUND_LIST;
+/// The least height of the tabs' content: three lines of the list.
+const MIN_BODY: f32 = ROW * 3.0 + AROUND_LIST;
 /// The height of Installed around the list: the search, the link field,
 /// and the footer. Settings take the same height as Installed.
 const AROUND_LIST: f32 = 44.0 + 44.0 + 28.0;
 
-/// What the player can do with a plugin from its row.
+/// What the player can do with a plugin from its row or its page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowAction {
     Open,
     TurnOn,
     TurnOff,
-    Review,
+    /// Its About page, which also asks what a waiting plugin may do.
+    Manage,
     Folder,
     Report,
     Remove,
@@ -207,12 +194,18 @@ pub struct Menu {
     tab: Tab,
     section: Section,
     query: String,
-    filter: Option<Class>,
     link: String,
     link_invalid: bool,
+    /// The plugin whose row is open.
     selected: Option<String>,
-    /// The plugin whose permissions the dialog shows.
-    dialog: Option<String>,
+    /// The plugin whose About page the menu shows in place of its
+    /// tabs, and since when.
+    page: Option<(String, f64)>,
+    /// The plugin the player turned on on its page, which says so.
+    approved: Option<String>,
+    /// The catalog plugin being installed, which goes to its page once
+    /// installed.
+    installing: Option<String>,
     /// The plugin the removal dialog asks about.
     removing: Option<String>,
     /// The plugin the player opened, whose windows go to the front.
@@ -328,11 +321,12 @@ impl Menu {
             tab: Tab::Installed,
             section: Section::General,
             query: String::new(),
-            filter: None,
             link: String::new(),
             link_invalid: false,
             selected: None,
-            dialog: None,
+            page: None,
+            approved: None,
+            installing: None,
             removing: None,
             raised: None,
             report: None,
@@ -500,7 +494,6 @@ impl Menu {
         if open {
             self.draw_menu(context, &view)
         } else {
-            self.dialog = None;
             self.removing = None;
             self.choosing = None;
             self.draw_notes(context, &view);
@@ -510,7 +503,12 @@ impl Menu {
 
     fn draw_menu(&mut self, context: &egui::Context, view: &View<'_>) -> bool {
         let typing = context.memory(|memory| memory.focused().is_some());
-        let mut keep = typing || !context.input(|input| input.key_pressed(egui::Key::Escape));
+        let escape = !typing && context.input(|input| input.key_pressed(egui::Key::Escape));
+        // Esc leaves a plugin's page first, then closes the menu.
+        let mut keep = !escape || self.page.is_some();
+        if escape {
+            self.page = None;
+        }
         let look = view.look();
         if let Some(place) = self.size.restore.filter(|_| self.size.rect.is_none()) {
             self.size.pos = Some(pos2(
@@ -542,10 +540,14 @@ impl Menu {
                 keep = false;
             }
             self.draw_tabs(ui, view);
-            match self.tab {
-                Tab::Installed => self.draw_installed(ui, view),
-                Tab::Catalog => self.draw_catalog(ui, view),
-                Tab::Settings => self.draw_settings(ui, view),
+            if self.page.is_some() {
+                self.draw_page(ui, view);
+            } else {
+                match self.tab {
+                    Tab::Installed => self.draw_installed(ui, view),
+                    Tab::Catalog => self.draw_catalog(ui, view),
+                    Tab::Settings => self.draw_settings(ui, view),
+                }
             }
             let frame = ui.min_rect();
             (resized, stopped) =
@@ -563,9 +565,6 @@ impl Menu {
         self.apply_withdrawals(view);
         if self.tab != Tab::Settings || self.section != Section::General {
             self.choosing = None;
-        }
-        if self.dialog.is_some() {
-            self.draw_dialog(context, view);
         }
         if self.removing.is_some() {
             self.draw_removal(context, view);
@@ -633,6 +632,16 @@ impl Menu {
             .iter()
             .any(|status| Group::of(status) == Group::Attention);
         let pulse = self.pulse(view.statuses);
+        let path: Vec<String> = self
+            .page
+            .as_ref()
+            .map(|(id, _)| {
+                view.host
+                    .plugin(id)
+                    .map_or_else(|| id.clone(), |plugin| plugin.manifest.plugin.name.clone())
+            })
+            .into_iter()
+            .collect();
         let mark = if waiting {
             Mark::Attention
         } else if view.statuses.contains(&Status::Running) {
@@ -646,13 +655,16 @@ impl Menu {
             &Bar {
                 wordmark: true,
                 title: "",
-                path: &[],
+                path: &path,
                 status: Some((&pulse, mark)),
                 collapsed: None,
                 menu: true,
                 strings: s,
             },
         );
+        if pressed.navigate.is_some() {
+            self.page = None;
+        }
         if let Some(button) = &pressed.menu {
             let installer = view.host.plugin_installer();
             egui::Popup::menu(button).show(|ui| {
@@ -666,10 +678,12 @@ impl Menu {
                     self.arrange = true;
                 }
                 if menu_item(ui, view, None, s.tab_settings, view.p.text) {
+                    self.page = None;
                     self.tab = Tab::Settings;
                     self.section = Section::General;
                 }
                 if menu_item(ui, view, None, s.section_developers, view.p.text) {
+                    self.page = None;
                     self.tab = Tab::Settings;
                     self.section = Section::Developers;
                 }
@@ -680,63 +694,41 @@ impl Menu {
 
     fn draw_tabs(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
-        let p = view.p;
-        let (row, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), view.at(34.0)), Sense::hover());
-        let painter = ui.painter().clone();
-        painter.line_segment(
-            [row.left_bottom(), row.right_bottom()],
-            Stroke::new(1.0, p.line),
+        let tabs = [Tab::Installed, Tab::Catalog, Tab::Settings];
+        let labels = [s.tab_installed, s.tab_catalog, s.tab_settings];
+        // A plugin's page belongs to no tab: none is chosen, and any of
+        // them leads back.
+        let selected = if self.page.is_some() {
+            usize::MAX
+        } else {
+            tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0)
+        };
+        ui.add_space(view.at(8.0));
+        let clicked = ui
+            .horizontal(|ui| {
+                ui.add_space(view.at(10.0));
+                theme::tab_strip(
+                    ui,
+                    view.p,
+                    &|value| view.at(value),
+                    Id::new("angelica-tab"),
+                    &labels,
+                    selected,
+                )
+            })
+            .inner;
+        ui.add_space(view.at(8.0));
+        // The row stands apart from the tab's content, which may start
+        // with the column of sections in the track's color.
+        let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+        ui.painter().hline(
+            line.x_range(),
+            line.center().y,
+            Stroke::new(1.0, view.p.line),
         );
-        let mut x = row.left() + view.at(10.0);
-        for (tab, title) in [
-            (Tab::Installed, s.tab_installed),
-            (Tab::Catalog, s.tab_catalog),
-            (Tab::Settings, s.tab_settings),
-        ] {
-            let active = self.tab == tab;
-            let galley = painter.layout_no_wrap(title.to_owned(), sans(view.at(13.0)), p.text);
-            let rect = Rect::from_min_size(
-                pos2(x, row.bottom() - view.at(26.0)),
-                vec2(galley.size().x + view.at(28.0), view.at(26.0)),
-            );
-            let response = ui
-                .interact(rect, Id::new(("angelica-tab", title)), Sense::click())
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let color = if active || response.hovered() {
-                p.text
-            } else {
-                p.secondary
-            };
-            if active {
-                let tab = rect.with_max_y(rect.bottom() + 1.0);
-                let corner = CornerRadius {
-                    nw: 4,
-                    ne: 4,
-                    sw: 0,
-                    se: 0,
-                };
-                painter.rect_filled(tab, corner, p.window);
-                painter.rect_filled(tab, corner, p.chosen);
-                painter.add(egui::Shape::line(
-                    vec![
-                        tab.left_bottom(),
-                        tab.left_top(),
-                        tab.right_top(),
-                        tab.right_bottom(),
-                    ],
-                    Stroke::new(1.0, p.border),
-                ));
-            }
-            painter.galley_with_override_text_color(
-                rect.center() - galley.size() / 2.0,
-                galley,
-                color,
-            );
-            if response.clicked() {
-                self.tab = tab;
-            }
-            x = rect.right() + view.at(4.0);
+        if let Some(index) = clicked {
+            self.page = None;
+            self.tab = tabs[index];
         }
     }
 
@@ -751,10 +743,9 @@ impl Menu {
                 name: &plugin.manifest.plugin.name,
                 description: &plugin.manifest.plugin.description,
                 group: Group::of(status),
-                classes: plugin_classes(plugin, status),
             })
             .collect();
-        let lines = lines(&entries, &self.query, self.filter);
+        let lines = lines(&entries, &self.query);
         self.draw_list(ui, view, &lines);
         if let Some(installer) = view.host.plugin_installer() {
             self.draw_link(ui, view, installer);
@@ -820,20 +811,22 @@ impl Menu {
                     let present = view
                         .plugins
                         .iter()
-                        .any(|installed| installed.manifest.id() == plugin.id);
+                        .position(|installed| installed.manifest.id() == plugin.id);
                     self.catalog_row(ui, view, plugin, present, installer.as_deref());
                 }
             });
     }
 
     /// A plugin of the catalog: its tile, name, version and description, and
-    /// Install, or Installed when it is.
+    /// Install; while it installs, a thin moving line; once installed,
+    /// **About plugin**. `present` is its index
+    /// among the installed plugins.
     fn catalog_row(
-        &self,
+        &mut self,
         ui: &mut Ui,
         view: &View<'_>,
         plugin: &crate::catalog_index::Listed,
-        present: bool,
+        present: Option<usize>,
         installer: Option<&PluginInstaller>,
     ) {
         let s = self.strings();
@@ -849,7 +842,20 @@ impl Menu {
             pos2(row.left(), row.center().y - view.at(12.0)),
             vec2(view.at(24.0), view.at(24.0)),
         );
-        theme::tile(painter, tile, &plugin.name, false, false, p);
+        match plugin
+            .icon_bytes()
+            .and_then(|icon| icon_texture(ui.ctx(), &plugin.id, &icon))
+        {
+            Some(texture) => {
+                painter.image(
+                    texture,
+                    tile,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            None => theme::tile(painter, tile, &plugin.name, false, false, p),
+        }
         let left = row.left() + view.at(36.0);
         let action_width = view.at(96.0);
         let width = row.right() - action_width - left - view.at(8.0);
@@ -867,13 +873,19 @@ impl Menu {
             pos2(row.right() - action_width, row.top()),
             row.right_bottom(),
         );
+        let installing = self.installing.as_deref() == Some(plugin.id.as_str());
+        let mut chosen = None;
         ui.scope_builder(
             UiBuilder::new()
                 .max_rect(action)
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
             |ui| {
-                if present {
-                    theme::word(ui, s.catalog_installed, Word::Secondary, false, view.k);
+                if let Some(index) = present {
+                    if theme::word(ui, s.about, Word::Action, true, view.k).clicked() {
+                        chosen = Some((index, RowAction::Manage));
+                    }
+                } else if installing {
+                    installing_line(ui, view, s.catalog_installing);
                 } else if let Some(installer) = installer
                     && theme::word(
                         ui,
@@ -883,11 +895,15 @@ impl Menu {
                         view.k,
                     )
                     .clicked()
+                    && installer.install(&plugin.link).is_ok()
                 {
-                    let _ = installer.install(&plugin.link);
+                    self.installing = Some(plugin.id.clone());
                 }
             },
         );
+        if let Some((index, then)) = chosen {
+            self.act(view, &view.plugins[index], then);
+        }
     }
 
     /// Turns off installed catalog plugins the index withdrew, once each,
@@ -916,61 +932,16 @@ impl Menu {
         }
     }
 
-    /// The search field and the filter by class.
+    /// The search field.
     fn toolbar(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
-        let p = view.p;
         let (row, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), view.at(44.0)), Sense::hover());
-        let filter_text = self
-            .filter
-            .map_or(s.filter_all, |class| self.language.class(class));
-        let filter_width = ui
-            .painter()
-            .layout_no_wrap(filter_text.to_owned(), medium(view.at(13.5)), p.action)
-            .size()
-            .x
-            + view.at(26.0);
         let field = Rect::from_min_max(
             pos2(row.left() + view.at(10.0), row.top() + view.at(9.0)),
-            pos2(
-                row.right() - view.at(22.0) - filter_width,
-                row.bottom() - view.at(9.0),
-            ),
+            pos2(row.right() - view.at(10.0), row.bottom() - view.at(9.0)),
         );
         search_field(ui, view, field, &mut self.query, s.find, "angelica-find");
-        let filter = Rect::from_min_max(
-            pos2(field.right() + view.at(12.0), row.top()),
-            pos2(row.right() - view.at(10.0), row.bottom()),
-        );
-        let mut choose = None;
-        ui.scope_builder(
-            UiBuilder::new()
-                .max_rect(filter)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            |ui| {
-                let response = theme::value(ui, filter_text, view.k);
-                egui::Popup::menu(&response).show(|ui| {
-                    if menu_item(ui, view, None, s.filter_all, p.text) {
-                        choose = Some(None);
-                    }
-                    for class in CLASSES {
-                        if menu_item(
-                            ui,
-                            view,
-                            Some(class_icon(class)),
-                            self.language.class(class),
-                            p.text,
-                        ) {
-                            choose = Some(Some(class));
-                        }
-                    }
-                });
-            },
-        );
-        if let Some(filter) = choose {
-            self.filter = filter;
-        }
     }
 
     /// The list.
@@ -987,7 +958,7 @@ impl Menu {
         let list_height = view.at(self.size.body - AROUND_LIST);
         if lines.is_empty() {
             let top = ui.cursor().top();
-            let text = if self.query.trim().is_empty() && self.filter.is_none() {
+            let text = if self.query.trim().is_empty() {
                 s.empty
             } else {
                 s.nothing_found
@@ -1008,12 +979,11 @@ impl Menu {
             ui.add_space((list_height - used).max(0.0));
             return;
         }
-        columns_header(ui, view, s);
         let height = view.at(ROW);
         egui::ScrollArea::vertical()
             .id_salt("angelica-installed")
             .auto_shrink([false, false])
-            .max_height(view.at(self.size.body - AROUND_LIST - COLUMNS))
+            .max_height(list_height)
             .show(ui, |ui| {
                 for line in lines {
                     match *line {
@@ -1023,19 +993,30 @@ impl Menu {
                                 Group::On => p.secondary,
                                 Group::Off => p.muted,
                             };
-                            ui.add_space(height - view.at(26.0));
+                            ui.add_space(view.at(4.0));
                             theme::header(ui, group.title(s), Some(count), color, view.k);
                         }
-                        Line::Plugin(index) => self.plugin_row(ui, view, index, height),
+                        Line::Plugin(index) => {
+                            ui.horizontal(|ui| {
+                                ui.add_space(view.at(6.0));
+                                ui.vertical(|ui| {
+                                    ui.set_width(ui.available_width() - view.at(6.0));
+                                    self.plugin_row(ui, view, index, height);
+                                });
+                            });
+                        }
                     }
                 }
+                ui.add_space(view.at(6.0));
             });
     }
 
-    /// A plugin's row: its tile, name, permissions, version, and state,
-    /// with its actions under the pointer, a menu on the right click, and
-    /// its details when it is chosen.
+    /// A plugin's row: its tile, its name over its description or what it
+    /// waits for, and at its right its main action, a switch, and the
+    /// button of its menu, all always shown. A click opens the row under
+    /// it; for a plugin waiting for the player, its page.
     fn plugin_row(&mut self, ui: &mut Ui, view: &View<'_>, index: usize, height: f32) {
+        let s = self.strings();
         let p = view.p;
         let plugin = &view.plugins[index];
         let status = &view.statuses[index];
@@ -1046,64 +1027,48 @@ impl Menu {
         let painter = ui.painter().clone();
         let chosen = self.selected.as_deref() == Some(id);
         let pointed = ui.rect_contains_pointer(rect);
+        let corners = if chosen {
+            CornerRadius {
+                nw: 5,
+                ne: 5,
+                sw: 0,
+                se: 0,
+            }
+        } else {
+            CornerRadius::same(5)
+        };
         if chosen {
-            painter.rect_filled(rect, CornerRadius::ZERO, p.selection);
+            painter.rect_filled(rect, corners, p.selection);
         } else if pointed {
-            painter.rect_filled(rect, CornerRadius::ZERO, p.hover);
+            painter.rect_filled(rect, corners, p.hover);
         }
         let off = *status == Status::Disabled;
-        let columns = Columns::of(rect, view);
+        let y = rect.center().y;
         let tile = Rect::from_center_size(
-            pos2(columns.tile, rect.center().y),
-            vec2(view.at(24.0), view.at(24.0)),
+            pos2(rect.left() + view.at(24.0), y),
+            vec2(view.at(30.0), view.at(30.0)),
         );
-        let development = plugin.manifest.origin == Origin::Development;
         plugin_tile(&painter, tile, plugin, off, p);
-        let token = if development { view.at(40.0) } else { 0.0 };
-        let name = elided(
+
+        // From the right edge: the menu, the switch, the main action.
+        let (acted, right) = self.row_controls(ui, &painter, view, plugin, status, rect);
+        row_text(
             &painter,
-            &plugin.manifest.plugin.name,
-            sans(view.at(13.5)),
-            if off { p.muted } else { p.text },
-            columns.permissions - view.at(12.0) - columns.name - token,
+            view,
+            s,
+            plugin,
+            status,
+            rect.left() + view.at(50.0),
+            right,
+            y,
         );
-        let name_width = name.size().x;
-        painter.galley(
-            pos2(columns.name, rect.center().y - name.size().y / 2.0),
-            name,
-            p.text,
-        );
-        if development {
-            theme::development_token(
-                &painter,
-                columns.name + name_width + view.at(8.0),
-                rect.center().y,
-                view.k,
-                off,
-                p,
-            );
-        }
-        let mut acted = false;
-        if pointed && !chosen {
-            acted = self.action_words(ui, &painter, view, plugin, status, rect, &columns);
-        } else {
-            row_facts(&painter, view, plugin, status, rect, &columns);
-        }
-        let mark = pos2(columns.state, rect.center().y);
-        match status {
-            Status::AwaitingApproval | Status::Faulted(_) => {
-                theme::attention(&painter, mark, view.k, p);
-            }
-            Status::Running => theme::running(&painter, mark, view.k, p),
-            Status::Disabled => theme::off(&painter, mark, view.k, p),
-        }
+
         if !acted {
             if response.double_clicked() && *status == Status::Running {
                 self.act(view, plugin, RowAction::Open);
             } else if response.clicked() {
                 if *status == Status::AwaitingApproval {
-                    self.selected = Some(id.to_owned());
-                    self.dialog = Some(id.to_owned());
+                    self.act(view, plugin, RowAction::Manage);
                 } else if chosen {
                     self.selected = None;
                 } else {
@@ -1112,18 +1077,17 @@ impl Menu {
             }
         }
         response.context_menu(|ui| {
-            self.selected = Some(id.to_owned());
-            self.row_menu(ui, view, plugin, status);
+            self.plugin_menu(ui, view, plugin, status);
         });
         if chosen {
-            self.details(ui, view, plugin, status);
+            self.expansion(ui, view, plugin, status);
         }
     }
 
-    /// The actions of a pointed row, as words at its right. Returns whether
-    /// the player used one.
-    #[allow(clippy::too_many_arguments)]
-    fn action_words(
+    /// The menu button, the switch, and the main action at the right of a
+    /// plugin's row. Returns whether the player used one, and where they
+    /// begin.
+    fn row_controls(
         &mut self,
         ui: &mut Ui,
         painter: &egui::Painter,
@@ -1131,73 +1095,74 @@ impl Menu {
         plugin: &Plugin,
         status: &Status,
         rect: Rect,
-        columns: &Columns,
-    ) -> bool {
-        let p = view.p;
+    ) -> (bool, f32) {
+        let s = self.strings();
         let id = plugin.manifest.id();
+        let y = rect.center().y;
         let mut acted = false;
-        let mut right = columns.version;
-        for (index, (text, action)) in self.row_actions(status).into_iter().enumerate().rev() {
-            let kind = if index == 0 {
-                Word::Action
-            } else {
-                Word::Secondary
+        let more_center = pos2(rect.right() - view.at(16.0), y);
+        let more = icon_button(
+            ui,
+            &view.look(),
+            more_center,
+            Icon::More,
+            s.plugin_actions,
+            Id::new(("angelica-row-more", id)),
+        );
+        if more.clicked() {
+            acted = true;
+        }
+        egui::Popup::menu(&more).show(|ui| {
+            self.plugin_menu(ui, view, plugin, status);
+        });
+        let half = view.at(theme::SWITCH.x / 2.0);
+        let switch_center = pos2(more_center.x - view.at(18.0) - half, y);
+        let on = *status == Status::Running;
+        let switch = theme::switch(
+            ui,
+            switch_center,
+            Id::new(("angelica-row-switch", id)),
+            on,
+            if on { s.turn_off } else { s.turn_on },
+            view.k,
+        );
+        if switch.clicked() {
+            acted = true;
+            let action = match status {
+                Status::Running => RowAction::TurnOff,
+                Status::AwaitingApproval => RowAction::Manage,
+                Status::Disabled | Status::Faulted(_) => RowAction::TurnOn,
             };
-            let galley = painter.layout_no_wrap(
-                text.to_owned(),
-                if kind == Word::Action {
-                    medium(view.at(13.0))
-                } else {
-                    sans(view.at(13.0))
-                },
-                p.text,
+            self.act(view, plugin, action);
+        }
+        let mut right = switch_center.x - half - view.at(14.0);
+        if let Some((text, action)) = self.main_action(status) {
+            let (word, left) = row_word(
+                ui,
+                painter,
+                view,
+                text,
+                pos2(right, y),
+                Id::new(("angelica-row-action", id)),
             );
-            let word = Rect::from_min_max(
-                pos2(right - galley.size().x, rect.top()),
-                pos2(right, rect.bottom()),
-            );
-            let hit = ui
-                .interact(
-                    word.expand2(vec2(view.at(4.0), 0.0)),
-                    Id::new(("angelica-row-action", id, index)),
-                    Sense::click(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let color = match kind {
-                Word::Action => p.action,
-                _ if hit.hovered() => p.text,
-                _ => p.secondary,
-            };
-            let at = pos2(word.left(), rect.center().y - galley.size().y / 2.0);
-            let width = galley.size().x;
-            let bottom = at.y + galley.size().y;
-            painter.galley_with_override_text_color(at, galley, color);
-            if hit.hovered() {
-                painter.line_segment(
-                    [pos2(at.x, bottom), pos2(at.x + width, bottom)],
-                    Stroke::new(1.0, theme::alpha(color, 0.6)),
-                );
-            }
-            if hit.clicked() {
+            if word.clicked() {
                 acted = true;
                 self.act(view, plugin, action);
             }
-            right = word.left() - view.at(14.0);
+            right = left - view.at(14.0);
         }
-        acted
+
+        (acted, right)
     }
 
-    /// What can be done with a plugin in its state, the main action first.
-    fn row_actions(&self, status: &Status) -> Vec<(&'static str, RowAction)> {
+    /// The action a plugin's row shows for what the player is waited for:
+    /// decide on a waiting plugin, retry one that stopped.
+    fn main_action(&self, status: &Status) -> Option<(&'static str, RowAction)> {
         let s = self.strings();
         match status {
-            Status::Running => vec![(s.open, RowAction::Open), (s.turn_off, RowAction::TurnOff)],
-            Status::Disabled => vec![(s.turn_on, RowAction::TurnOn)],
-            Status::AwaitingApproval => vec![(s.review, RowAction::Review)],
-            Status::Faulted(_) => vec![
-                (s.retry, RowAction::TurnOn),
-                (s.keep_off, RowAction::TurnOff),
-            ],
+            Status::AwaitingApproval => Some((s.review, RowAction::Manage)),
+            Status::Faulted(_) => Some((s.retry, RowAction::TurnOn)),
+            Status::Running | Status::Disabled => None,
         }
     }
 
@@ -1212,9 +1177,9 @@ impl Menu {
             }
             RowAction::TurnOn => view.host.queue(Action::Enable(id.to_owned())),
             RowAction::TurnOff => view.host.queue(Action::Disable(id.to_owned())),
-            RowAction::Review => {
+            RowAction::Manage => {
                 self.selected = Some(id.to_owned());
-                self.dialog = Some(id.to_owned());
+                self.page = Some((id.to_owned(), view.time));
             }
             RowAction::Folder => view.host.queue(Action::OpenFolder(id.to_owned())),
             RowAction::Report => {
@@ -1249,28 +1214,46 @@ impl Menu {
         }
     }
 
-    /// The chosen plugin's details under its row: what it does, what it may
-    /// do, where it comes from, and every action.
-    fn details(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
+    /// What **Copy report for the author** reads, once the report is copied.
+    fn report_label(&self, plugin: &Plugin) -> &'static str {
+        let s = self.strings();
+        if self.copied.as_deref() == Some(plugin.manifest.id()) {
+            s.report_copied
+        } else {
+            s.copy_report
+        }
+    }
+
+    /// Under the open row: the whole description, why the plugin stopped
+    /// with the report for its author, and the way to its page.
+    fn expansion(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
         let s = self.strings();
         let p = view.p;
-        let manifest = &plugin.manifest;
+        let description = &plugin.manifest.plugin.description;
         let mut action = None;
         egui::Frame::new()
-            .fill(p.hover)
+            .fill(p.selection)
+            .corner_radius(CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 5,
+                se: 5,
+            })
             .inner_margin(egui::Margin {
                 left: num_u8(view.at(46.0)),
                 right: num_u8(view.at(16.0)),
-                top: num_u8(view.at(4.0)),
-                bottom: num_u8(view.at(12.0)),
+                top: 0,
+                bottom: num_u8(view.at(8.0)),
             })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = view.at(6.0);
-                if !manifest.plugin.description.is_empty() {
+                ui.spacing_mut().item_spacing.y = view.at(4.0);
+                // The row shows the description, unless it shows why the
+                // plugin stopped.
+                if matches!(status, Status::Faulted(_)) && !description.is_empty() {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(&manifest.plugin.description)
+                            RichText::new(description)
                                 .font(sans(view.at(13.0)))
                                 .color(p.secondary),
                         )
@@ -1286,129 +1269,106 @@ impl Menu {
                         )
                         .wrap(),
                     );
+                    let label = self.report_label(plugin);
+                    if theme::word(ui, label, Word::Action, true, view.k).clicked() {
+                        action = Some(RowAction::Report);
+                    }
                 }
-                self.held(ui, view, plugin);
                 ui.label(
                     RichText::new(format!(
-                        "{}, {}",
-                        fill(s.version, &[("version", &manifest.plugin.version)]),
+                        "{} · {}",
+                        fill(s.version, &[("version", &plugin.manifest.plugin.version)]),
                         self.source(plugin)
                     ))
-                    .font(sans(view.at(12.0)))
+                    .font(sans(view.at(12.5)))
                     .color(p.muted),
                 );
-                self.history(ui, view, plugin);
+                // The plugin's own window on the left, its page on the right.
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = view.at(14.0);
-                    let mut actions = self.row_actions(status);
-                    if *status != Status::AwaitingApproval {
-                        actions.push((s.open_folder, RowAction::Folder));
-                    }
-                    let copied = self.copied.as_deref() == Some(manifest.id());
-                    actions.push((
-                        if copied {
-                            s.report_copied
-                        } else {
-                            s.copy_report
-                        },
-                        RowAction::Report,
-                    ));
-                    actions.push((s.remove, RowAction::Remove));
-                    for (index, (text, row_action)) in actions.into_iter().enumerate() {
-                        let kind = if row_action == RowAction::Remove {
-                            Word::Danger
-                        } else if index == 0 {
-                            Word::Main
-                        } else {
-                            Word::Secondary
-                        };
-                        if theme::word(ui, text, kind, true, view.k).clicked() {
-                            action = Some(row_action);
+                    if *status == Status::Running {
+                        let manage = format!("{} →", s.manage);
+                        if theme::word(ui, &manage, Word::Action, true, view.k).clicked() {
+                            action = Some(RowAction::Open);
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::word(ui, s.about, Word::Secondary, true, view.k).clicked() {
+                            action = Some(RowAction::Manage);
+                        }
+                    });
                 });
             });
+        ui.add_space(view.at(4.0));
         if let Some(action) = action {
             self.act(view, plugin, action);
         }
         self.copy_report(ui);
     }
 
-    /// The menu of a row's right click.
-    fn row_menu(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
+    /// The menu of a plugin's `⋯` button and right click, headed by its
+    /// tile, name, and state: its About page first, then the report
+    /// for its author, its folder, and removing it.
+    fn plugin_menu(&mut self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, status: &Status) {
         let s = self.strings();
         let p = view.p;
-        let id = plugin.manifest.id();
         ui.set_min_width(view.at(250.0));
         ui.set_max_width(view.at(280.0));
-        ui.horizontal(|ui| {
-            ui.add_space(view.at(6.0));
-            let (tile, _) =
-                ui.allocate_exact_size(vec2(view.at(30.0), view.at(30.0)), Sense::hover());
-            plugin_tile(ui.painter(), tile, plugin, false, p);
-            ui.add_space(view.at(4.0));
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(&plugin.manifest.plugin.name)
-                        .font(strong(view.at(13.5)))
-                        .color(p.text),
-                );
-                let (state, color) = self.state_line(status, p);
-                ui.label(RichText::new(state).font(sans(view.at(12.0))).color(color));
-            });
-        });
-        ui.add_space(view.at(4.0));
-        let mut opened = false;
+        // The head lines up with the items: the tile where their words begin.
+        let (head, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), view.at(44.0)), Sense::hover());
+        let painter = ui.painter();
+        let tile = Rect::from_min_size(
+            pos2(head.left() + view.at(8.0), head.center().y - view.at(15.0)),
+            vec2(view.at(30.0), view.at(30.0)),
+        );
+        plugin_tile(painter, tile, plugin, false, p);
+        let left = tile.right() + view.at(10.0);
+        let width = head.right() - left - view.at(8.0);
+        let name = elided(
+            painter,
+            &plugin.manifest.plugin.name,
+            strong(view.at(13.5)),
+            p.text,
+            width,
+        );
+        painter.galley(
+            pos2(left, head.center().y - view.at(8.0) - name.size().y / 2.0),
+            name,
+            p.text,
+        );
+        let (state, color) = self.state_line(status, p);
+        painter.text(
+            pos2(left, head.center().y + view.at(9.0)),
+            Align2::LEFT_CENTER,
+            state,
+            sans(view.at(12.0)),
+            color,
+        );
+        ui.add_space(view.at(2.0));
         let separate = |ui: &mut Ui| {
             ui.add_space(view.at(3.0));
             theme::rule(ui);
             ui.add_space(view.at(3.0));
         };
         separate(ui);
-        match status {
-            Status::AwaitingApproval => {
-                if menu_item(ui, view, None, s.review, p.action) {
-                    self.dialog = Some(id.to_owned());
-                }
-            }
-            Status::Running => {
-                if menu_item(ui, view, None, s.open, p.action) {
-                    opened = true;
-                }
-                if menu_item(ui, view, None, s.turn_off, p.text) {
-                    view.host.queue(Action::Disable(id.to_owned()));
-                }
-            }
-            Status::Disabled => {
-                if menu_item(ui, view, None, s.turn_on, p.action) {
-                    view.host.queue(Action::Enable(id.to_owned()));
-                }
-            }
-            Status::Faulted(_) => {
-                if menu_item(ui, view, None, s.retry, p.action) {
-                    view.host.queue(Action::Enable(id.to_owned()));
-                }
-                if menu_item(ui, view, None, s.keep_off, p.text) {
-                    view.host.queue(Action::Disable(id.to_owned()));
-                }
-            }
+        let mut action = None;
+        if menu_item(ui, view, None, s.manage_item, p.action) {
+            action = Some(RowAction::Manage);
         }
-        if *status != Status::AwaitingApproval {
-            separate(ui);
-            if menu_item(ui, view, None, s.open_folder, p.text) {
-                view.host.queue(Action::OpenFolder(id.to_owned()));
-            }
+        separate(ui);
+        if menu_item(ui, view, None, self.report_label(plugin), p.text) {
+            action = Some(RowAction::Report);
         }
-        if menu_item(ui, view, None, s.copy_report, p.text) {
-            self.act(view, plugin, RowAction::Report);
-            self.copy_report(ui);
+        if *status != Status::AwaitingApproval && menu_item(ui, view, None, s.open_folder, p.text) {
+            action = Some(RowAction::Folder);
         }
         separate(ui);
         if menu_item(ui, view, None, s.remove, p.danger) {
-            self.removing = Some(id.to_owned());
+            action = Some(RowAction::Remove);
         }
-        if opened {
-            self.act(view, plugin, RowAction::Open);
+        if let Some(action) = action {
+            self.act(view, plugin, action);
+            self.copy_report(ui);
         }
     }
 
@@ -1419,54 +1379,34 @@ impl Menu {
             Status::Running => (s.state_running, p.on),
             Status::Disabled => (s.state_off, p.secondary),
             Status::AwaitingApproval => (s.state_waiting, p.attention),
-            Status::Faulted(_) => (s.state_stopped, p.attention),
+            Status::Faulted(_) => (s.row_stopped, p.attention),
         }
     }
 
-    /// Where a plugin comes from: the catalog, or its authors.
+    /// Who made a plugin and where it comes from: its authors, and the
+    /// catalog or this computer.
     fn source(&self, plugin: &Plugin) -> String {
         let s = self.strings();
         let manifest = &plugin.manifest;
-        match manifest.origin {
-            Origin::Catalog => s.source_catalog.to_owned(),
-            Origin::Development => s.source_development.to_owned(),
-            Origin::Author if manifest.plugin.authors.is_empty() => s.source_author.to_owned(),
-            Origin::Author => fill(
-                s.source_authors,
-                &[("authors", &manifest.plugin.authors.join(", "))],
-            ),
-        }
-    }
-
-    /// What a plugin may do, one line each, and the domains it asks for that
-    /// are not granted.
-    fn held(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin) {
-        let s = self.strings();
-        let p = view.p;
-        let asked = plugin.asked();
-        let ungranted = plugin.ungranted();
-        if asked.is_empty() && ungranted.is_empty() {
-            permission_line(ui, view, None, s.asks_nothing, p.secondary);
-        }
-        for asked in &asked {
-            permission_line(
-                ui,
-                view,
-                Some(class_icon(asked.class())),
-                &self.permission_text(plugin, asked),
-                p.text,
-            );
-        }
-        for domain in &ungranted {
-            let text = if let Some(acting) = domain.strip_suffix(".act") {
-                fill(s.lens_act_ungranted, &[("domain", acting)])
-            } else if let Some(changing) = domain.strip_suffix(".change") {
-                fill(s.lens_change_ungranted, &[("domain", changing)])
+        let authors = &manifest.plugin.authors;
+        let by = (!authors.is_empty()).then(|| {
+            let template = if authors.len() > 1 {
+                s.source_authors_many
             } else {
-                fill(s.lens_ungranted, &[("domain", domain)])
+                s.source_authors
             };
-            permission_line(ui, view, None, &text, p.secondary);
-        }
+            fill(template, &[("authors", &authors.join(", "))])
+        });
+        let origin = match manifest.origin {
+            Origin::Catalog => Some(s.source_catalog),
+            Origin::Development => Some(s.source_development),
+            Origin::Author if by.is_none() => Some(s.source_author),
+            Origin::Author => None,
+        };
+        by.into_iter()
+            .chain(origin.map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 
     /// A permission in plain words, with the sites of a network one.
@@ -1475,6 +1415,9 @@ impl Menu {
         if *asked == Asked::Permission(Permission::HttpGet) {
             let hosts: Vec<String> = plugin.manifest.http_hosts().into_iter().collect();
             format!("{text}: {}", hosts.join(", "))
+        } else if *asked == Asked::Permission(Permission::LinksOpen) {
+            let sites: Vec<String> = plugin.manifest.link_hosts().into_iter().collect();
+            format!("{text}: {}", sites.join(", "))
         } else if *asked == Asked::Permission(Permission::MessagesSend) {
             let receivers: Vec<String> = plugin.manifest.message_to().into_iter().collect();
             format!("{text}: {}", receivers.join(", "))
@@ -1599,189 +1542,348 @@ impl Menu {
         }
     }
 
-    /// The dialog of what a plugin waiting for approval asks.
-    fn draw_dialog(&mut self, context: &egui::Context, view: &View<'_>) {
+    /// A plugin's About page, under the tabs in place of their
+    /// content and in its height: what the plugin is, its main action and switch, what it may
+    /// do, what the plugin installer did with it, and the rare actions. For
+    /// a plugin waiting for the player, the page asks: what it would be
+    /// able to do, or what a new version asks for the first time, and the
+    /// choice. A permission is granted only here.
+    fn draw_page(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
         let p = view.p;
-        let plugin = self.dialog.as_deref().and_then(|id| {
-            view.plugins
-                .iter()
-                .find(|plugin| plugin.manifest.id() == id)
-        });
-        let Some(plugin) = plugin.filter(|plugin| plugin.status() == Status::AwaitingApproval)
-        else {
-            self.dialog = None;
+        let Some((id, since)) = self.page.clone() else {
             return;
         };
-        let id = plugin.manifest.id().to_owned();
-        let more = plugin.approved_before();
-        let heading = if more { s.dialog_more } else { s.dialog_new };
-        let width = view.at(420.0);
-        let mut close = false;
-        egui::Window::new("angelica-dialog")
-            .id(Id::new(("angelica-dialog", &id)))
-            .title_bar(false)
-            .resizable(false)
-            .collapsible(false)
-            .order(egui::Order::Foreground)
-            .frame(window_frame(context, p))
-            .default_pos(pos2(
-                view.screen.center().x - width / 2.0,
-                view.screen.top() + view.screen.height() * 0.22,
-            ))
-            .show(context, |ui| {
-                ui.set_width(width);
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                if title_bar(ui, &view.look(), heading, s) {
-                    close = true;
-                }
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(
-                        num_u8(view.at(16.0)),
-                        num_u8(view.at(14.0)),
-                    ))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = view.at(6.0);
-                        ui.horizontal(|ui| {
-                            let (tile, _) = ui.allocate_exact_size(
-                                vec2(view.at(40.0), view.at(40.0)),
-                                Sense::hover(),
-                            );
-                            plugin_tile(ui.painter(), tile, plugin, false, p);
-                            ui.add_space(view.at(12.0));
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(&plugin.manifest.plugin.name)
-                                        .font(strong(view.at(14.0)))
-                                        .color(p.text),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{}, {}",
-                                        fill(
-                                            s.version,
-                                            &[("version", &plugin.manifest.plugin.version)]
-                                        ),
-                                        self.source(plugin)
-                                    ))
-                                    .font(sans(view.at(12.0)))
-                                    .color(p.secondary),
-                                );
-                            });
-                        });
-                        ui.add_space(view.at(8.0));
-                        self.dialog_requests(ui, view, plugin, more);
-                    });
-                let (row, _) = ui
-                    .allocate_exact_size(vec2(ui.available_width(), view.at(40.0)), Sense::hover());
-                ui.painter()
-                    .line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, p.line));
-                ui.scope_builder(
-                    UiBuilder::new()
-                        .max_rect(row.shrink2(vec2(view.at(10.0), 0.0)))
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = view.at(14.0);
-                        if theme::word(ui, s.allow, Word::Main, true, view.k).clicked() {
-                            view.host.queue(Action::Approve(id.clone()));
-                            close = true;
-                        }
-                        if theme::word(ui, s.not_now, Word::Secondary, true, view.k).clicked() {
-                            close = true;
-                        }
-                    },
+        let height = view.at(self.size.body);
+        let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let mut ui = ui.new_child(UiBuilder::new().max_rect(area));
+        let Some(index) = view
+            .plugins
+            .iter()
+            .position(|plugin| plugin.manifest.id() == id)
+        else {
+            // A plugin just installed shows up in a second.
+            if view.time - since > 10.0 {
+                self.page = None;
+                return;
+            }
+            ui.add_space(view.at(18.0));
+            ui.horizontal(|ui| {
+                ui.add_space(view.at(16.0));
+                ui.label(
+                    RichText::new(s.page_wait)
+                        .font(sans(view.at(13.5)))
+                        .color(p.secondary),
                 );
             });
-        if close {
-            self.dialog = None;
+            return;
+        };
+        let plugin = &view.plugins[index];
+        let status = &view.statuses[index];
+        let mut action = None;
+        egui::ScrollArea::vertical()
+            .id_salt(("angelica-page", &id))
+            .auto_shrink([false, false])
+            .max_height(height)
+            .show(&mut ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(
+                        num_u8(view.at(18.0)),
+                        num_u8(view.at(16.0)),
+                    ))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = view.at(6.0);
+                        action = self.page_content(ui, view, plugin, status);
+                    });
+            });
+        if let Some(action) = action {
+            self.act(view, plugin, action);
         }
+        self.copy_report(&ui);
     }
 
-    /// What the plugin asks for, highlighted, and, for a new version, what
-    /// it already has.
-    fn dialog_requests(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, more: bool) {
+    /// What a plugin's page shows. Returns what the player chose.
+    fn page_content(
+        &mut self,
+        ui: &mut Ui,
+        view: &View<'_>,
+        plugin: &Plugin,
+        status: &Status,
+    ) -> Option<RowAction> {
+        let s = self.strings();
+        let p = view.p;
+        let manifest = &plugin.manifest;
+        let id = manifest.id().to_owned();
+        let waiting = *status == Status::AwaitingApproval;
+        let more = waiting && plugin.approved_before();
+        let mut action = self.page_head(ui, view, plugin, status);
+        ui.add_space(view.at(4.0));
+        if self.approved.as_deref() == Some(id.as_str()) && *status == Status::Running {
+            banner(ui, view, s.page_turned_on, p.on);
+        }
+        if let Status::Faulted(reason) = status {
+            banner(
+                ui,
+                view,
+                &format!("{} {reason}", s.state_stopped),
+                p.attention,
+            );
+        }
+        if !manifest.plugin.description.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&manifest.plugin.description)
+                        .font(sans(view.at(13.5)))
+                        .color(p.secondary),
+                )
+                .wrap(),
+            );
+        }
+
+        if waiting {
+            self.page_requests(ui, view, plugin, more);
+            ui.add_space(view.at(8.0));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = view.at(16.0);
+                let allow = if more { s.allow_more } else { s.allow };
+                if theme::word(ui, allow, Word::Main, true, view.k).clicked() {
+                    view.host.queue(Action::Approve(id.clone()));
+                    self.approved = Some(id.clone());
+                }
+                if theme::word(ui, s.not_now, Word::Secondary, true, view.k).clicked() {
+                    self.page = None;
+                }
+            });
+            return action;
+        }
+
+        page_section(ui, view, s.allowed, p.secondary);
+        self.rights(ui, view, plugin);
+        ui.add_space(view.at(4.0));
+        self.history(ui, view, plugin);
+        ui.add_space(view.at(10.0));
+        theme::rule(ui);
+        ui.add_space(view.at(4.0));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = view.at(14.0);
+            let label = self.report_label(plugin);
+            if theme::word(ui, label, Word::Secondary, true, view.k).clicked() {
+                action = Some(RowAction::Report);
+            }
+            if theme::word(ui, s.open_folder, Word::Secondary, true, view.k).clicked() {
+                action = Some(RowAction::Folder);
+            }
+            if theme::word(ui, s.remove, Word::Danger, true, view.k).clicked() {
+                action = Some(RowAction::Remove);
+            }
+        });
+        action
+    }
+
+    /// The head of a plugin's page: the tile, the name or the question,
+    /// where it comes from, and for a plugin that does not wait, its main
+    /// action and switch. Returns what the player chose.
+    fn page_head(
+        &self,
+        ui: &mut Ui,
+        view: &View<'_>,
+        plugin: &Plugin,
+        status: &Status,
+    ) -> Option<RowAction> {
+        let s = self.strings();
+        let p = view.p;
+        let manifest = &plugin.manifest;
+        let id = manifest.id();
+        let name = manifest.plugin.name.as_str();
+        let waiting = *status == Status::AwaitingApproval;
+        let more = waiting && plugin.approved_before();
+        let mut action = None;
+        ui.horizontal(|ui| {
+            let (tile, _) =
+                ui.allocate_exact_size(vec2(view.at(44.0), view.at(44.0)), Sense::hover());
+            plugin_tile(ui.painter(), tile, plugin, false, p);
+            ui.add_space(view.at(12.0));
+            ui.vertical(|ui| {
+                let heading = if more {
+                    fill(s.page_more, &[("name", name)])
+                } else if waiting {
+                    fill(s.page_turn_on, &[("name", name)])
+                } else {
+                    name.to_owned()
+                };
+                ui.label(
+                    RichText::new(heading)
+                        .font(strong(view.at(16.0)))
+                        .color(p.text),
+                );
+                let line = if more {
+                    fill(s.page_more_line, &[("version", &manifest.plugin.version)])
+                } else {
+                    format!(
+                        "{} · {}",
+                        fill(s.version, &[("version", &manifest.plugin.version)]),
+                        self.source(plugin)
+                    )
+                };
+                ui.label(
+                    RichText::new(line)
+                        .font(sans(view.at(12.5)))
+                        .color(p.secondary),
+                );
+            });
+            if !waiting {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let size = theme::SWITCH * view.k;
+                    let (place, _) = ui.allocate_exact_size(size, Sense::hover());
+                    let on = *status == Status::Running;
+                    let switch = theme::switch(
+                        ui,
+                        place.center(),
+                        Id::new(("angelica-page-switch", id)),
+                        on,
+                        if on { s.turn_off } else { s.turn_on },
+                        view.k,
+                    );
+                    if switch.clicked() {
+                        action = Some(if on {
+                            RowAction::TurnOff
+                        } else {
+                            RowAction::TurnOn
+                        });
+                    }
+                    ui.add_space(view.at(10.0));
+                    let main = if *status == Status::Running {
+                        Some((s.manage, RowAction::Open))
+                    } else {
+                        self.main_action(status)
+                    };
+                    if let Some((text, main)) = main
+                        && theme::word(ui, text, Word::Action, true, view.k).clicked()
+                    {
+                        action = Some(main);
+                    }
+                });
+            }
+        });
+        action
+    }
+
+    /// What a waiting plugin asks for, under the name of each class with
+    /// the sites it reaches, and the warning for acting in the game; for a
+    /// new version, only what it asks for the first time, and in one line
+    /// what is already allowed.
+    fn page_requests(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin, more: bool) {
         let s = self.strings();
         let p = view.p;
         let requests = plugin.requests();
-        let asked: Vec<&Asked> = requests
-            .iter()
-            .flat_map(|(_, requests)| requests.iter().map(|request| &request.asked))
-            .collect();
-        let title = if more { s.asks_first } else { s.asks };
-        theme::header(
+        page_section(
             ui,
-            title,
-            None,
+            view,
+            if more { s.asks_first } else { s.asks },
             if more { p.attention } else { p.secondary },
-            view.k,
         );
-        let tint = if more { p.attention } else { p.line };
-        egui::Frame::new()
-            .fill(theme::alpha(tint, if more { 0.08 } else { 0.0 }))
-            .stroke(Stroke::new(
-                1.0,
-                theme::alpha(tint, if more { 0.35 } else { 0.0 }),
-            ))
-            .corner_radius(CornerRadius::same(4))
-            .inner_margin(egui::Margin::symmetric(
-                num_u8(view.at(10.0)),
-                num_u8(view.at(8.0)),
-            ))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = view.at(6.0);
-                if requests.is_empty() {
-                    permission_line(ui, view, None, s.asks_nothing, p.secondary);
-                }
-                for (class, requests) in &requests {
-                    for request in requests {
-                        permission_line(
-                            ui,
-                            view,
-                            Some(class_icon(*class)),
-                            &self.language.asked(&request.asked),
-                            p.text,
-                        );
-                        if !request.hosts.is_empty() {
-                            ui.horizontal(|ui| {
-                                ui.add_space(view.at(24.0));
-                                ui.label(
-                                    RichText::new(request.hosts.join("  "))
-                                        .font(mono(view.at(12.0)))
-                                        .color(p.secondary),
-                                );
-                            });
-                        }
-                    }
-                }
-                if requests.iter().any(|(class, _)| *class == Class::Acts) {
-                    ui.label(
-                        RichText::new(s.acts_warning)
-                            .size(view.at(12.0))
-                            .color(p.attention),
-                    );
-                }
-            });
-        let already: Vec<Asked> = plugin
-            .asked()
-            .into_iter()
-            .filter(|held| !asked.contains(&held))
-            .collect();
-        if more && !already.is_empty() {
-            ui.add_space(view.at(6.0));
-            theme::header(ui, s.already, None, p.secondary, view.k);
-            for permission in already {
-                ui.horizontal(|ui| {
-                    ui.add_space(view.at(10.0));
-                    permission_line(
-                        ui,
-                        view,
-                        Some(class_icon(permission.class())),
-                        &self.permission_text(plugin, &permission),
-                        p.secondary,
-                    );
-                });
+        if requests.is_empty() {
+            permission_line(ui, view, None, s.asks_nothing, p.secondary);
+        }
+        for (class, requests) in &requests {
+            class_label(ui, view, self.language.class(*class));
+            for request in requests {
+                permission_line(
+                    ui,
+                    view,
+                    Some(class_icon(*class)),
+                    &self.language.asked(&request.asked),
+                    p.text,
+                );
+                hosts_line(ui, view, &request.hosts);
             }
+        }
+        if requests.iter().any(|(class, _)| *class == Class::Acts) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(s.acts_warning)
+                        .font(sans(view.at(12.0)))
+                        .color(p.attention),
+                )
+                .wrap(),
+            );
+        }
+        if more {
+            let asked: Vec<&Asked> = requests
+                .iter()
+                .flat_map(|(_, requests)| requests.iter().map(|request| &request.asked))
+                .collect();
+            let already: Vec<Class> = plugin
+                .asked()
+                .into_iter()
+                .filter(|held| !asked.contains(&held))
+                .map(|held| held.class())
+                .collect();
+            let classes: Vec<&str> = CLASSES
+                .into_iter()
+                .filter(|class| already.contains(class))
+                .map(|class| self.language.class(class))
+                .collect();
+            if !classes.is_empty() {
+                ui.add_space(view.at(4.0));
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(fill(s.already, &[("classes", &classes.join(", "))]))
+                            .font(sans(view.at(12.5)))
+                            .color(p.muted),
+                    )
+                    .wrap(),
+                );
+            }
+        }
+    }
+
+    /// What a plugin may do, under the name of each class, the most serious
+    /// first, with the sites it reaches; then what it asks for that the
+    /// game map does not offer.
+    fn rights(&self, ui: &mut Ui, view: &View<'_>, plugin: &Plugin) {
+        let s = self.strings();
+        let p = view.p;
+        let asked = plugin.asked();
+        let ungranted = plugin.ungranted();
+        if asked.is_empty() && ungranted.is_empty() {
+            permission_line(ui, view, None, s.asks_nothing, p.secondary);
+        }
+        for class in CLASSES {
+            let of: Vec<&Asked> = asked.iter().filter(|held| held.class() == class).collect();
+            if of.is_empty() {
+                continue;
+            }
+            class_label(ui, view, self.language.class(class));
+            for held in of {
+                let hosts: Vec<String> = match held {
+                    Asked::Permission(Permission::HttpGet) => {
+                        plugin.manifest.http_hosts().into_iter().collect()
+                    }
+                    Asked::Permission(Permission::LinksOpen) => {
+                        plugin.manifest.link_hosts().into_iter().collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let text = if hosts.is_empty() {
+                    self.permission_text(plugin, held)
+                } else {
+                    self.language.asked(held)
+                };
+                permission_line(ui, view, Some(class_icon(class)), &text, p.text);
+                hosts_line(ui, view, &hosts);
+            }
+        }
+        for domain in &ungranted {
+            let text = if let Some(acting) = domain.strip_suffix(".act") {
+                fill(s.lens_act_ungranted, &[("domain", acting)])
+            } else if let Some(changing) = domain.strip_suffix(".change") {
+                fill(s.lens_change_ungranted, &[("domain", changing)])
+            } else {
+                fill(s.lens_ungranted, &[("domain", domain)])
+            };
+            permission_line(ui, view, None, &text, p.secondary);
         }
     }
 
@@ -2265,6 +2367,9 @@ impl Menu {
         if removed && self.selected.as_deref() == Some(id.as_str()) {
             self.selected = None;
         }
+        if removed && self.page.as_ref().is_some_and(|(page, _)| *page == id) {
+            self.page = None;
+        }
     }
 
     /// The details for developers: the game map, each plugin with its id,
@@ -2343,6 +2448,17 @@ impl Menu {
                 continue;
             }
             self.seen = number;
+            // A plugin just installed waits for the player on its page,
+            // where the menu opens next.
+            match &report {
+                Report::Installed { plugin, .. } => {
+                    self.installing = None;
+                    self.selected = Some(plugin.clone());
+                    self.page = Some((plugin.clone(), time));
+                }
+                Report::Failed(Failure::Install(_), _) => self.installing = None,
+                _ => {}
+            }
             if matches!(
                 report,
                 Report::Installed { .. }
@@ -2462,22 +2578,16 @@ impl Menu {
             context.request_repaint();
         }
         for (index, ((text, tone, fade, hint), head)) in notes.into_iter().zip(heads).enumerate() {
-            // Notes sway a little, each a moment after the one above.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-            let sway = (1.0
-                - (std::f64::consts::TAU * (view.time - index as f64 * 0.6) / 5.0).cos())
-                as f32
-                * view.at(2.0);
             let area = egui::Area::new(Id::new(("angelica-note", index)))
                 .order(egui::Order::Foreground)
                 .interactable(false)
                 .pivot(Align2::RIGHT_TOP)
-                .fixed_pos(pos2(view.screen.right() - view.at(24.0), top + sway))
+                .fixed_pos(pos2(view.screen.right() - view.at(24.0), top))
                 .show(context, |ui| {
                     ui.multiply_opacity(fade);
                     note(ui, view, head.as_deref(), &text, tone, &hint);
                 });
-            top = area.response.rect.bottom() - sway + view.at(8.0);
+            top = area.response.rect.bottom() + view.at(8.0);
         }
         self.notes_bottom = top;
     }
@@ -2624,6 +2734,20 @@ fn report_text<'a>(
 
 /// A plugin's tile, striped while the plugin is in development.
 fn plugin_tile(painter: &egui::Painter, rect: Rect, plugin: &Plugin, faded: bool, p: &Palette) {
+    if let Some(texture) = plugin_icon(painter.ctx(), plugin) {
+        let tint = if faded {
+            Color32::from_white_alpha(115)
+        } else {
+            Color32::WHITE
+        };
+        painter.image(
+            texture,
+            rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            tint,
+        );
+        return;
+    }
     let development = plugin.manifest.origin == Origin::Development;
     theme::tile(
         painter,
@@ -2633,6 +2757,39 @@ fn plugin_tile(painter: &egui::Painter, rect: Rect, plugin: &Plugin, faded: bool
         development,
         p,
     );
+}
+
+/// The texture of a plugin's icon, decoded once per icon; `None` for a
+/// plugin without one, whose tile shows its first letter.
+fn plugin_icon(context: &egui::Context, plugin: &Plugin) -> Option<egui::TextureId> {
+    let icon = plugin.manifest.icon.as_ref()?;
+    icon_texture(context, plugin.manifest.id(), icon)
+}
+
+/// The texture of the icon `icon` of plugin `id`, decoded once per icon.
+fn icon_texture(context: &egui::Context, id: &str, icon: &[u8]) -> Option<egui::TextureId> {
+    let key = Id::new((
+        "angelica-plugin-icon",
+        id,
+        icon.len(),
+        icon.get(icon.len().saturating_sub(16)..)
+            .unwrap_or_default(),
+    ));
+    if let Some(texture) = context.data(|data| data.get_temp::<Option<egui::TextureHandle>>(key)) {
+        return texture.map(|texture| texture.id());
+    }
+    let texture = crate::author::decode_icon(icon).ok().map(|(side, rgba)| {
+        let side = usize::try_from(side).unwrap_or_default();
+        let (side, rgba) = crate::author::shrink_icon(side, &rgba, crate::author::ICON_PIXELS);
+        context.load_texture(
+            format!("angelica-plugin-icon-{id}"),
+            egui::ColorImage::from_rgba_unmultiplied([side, side], &rgba),
+            egui::TextureOptions::LINEAR,
+        )
+    });
+    let id = texture.as_ref().map(egui::TextureHandle::id);
+    context.data_mut(|data| data.insert_temp(key, texture));
+    id
 }
 
 /// A plugin at the top of a dialog: its tile, its name, and one line.
@@ -2718,27 +2875,38 @@ pub(crate) struct Pressed {
 
 /// A small square button of a title bar.
 fn bar_button(ui: &mut Ui, view: &Look, center: Pos2, icon: Icon, hint: &str) -> egui::Response {
+    let id = ui.id().with(("angelica-bar", hint));
+    icon_button(ui, view, center, icon, hint, id)
+}
+
+/// A word in place of a button while something installs, over a thin line
+/// with a moving stretch.
+fn installing_line(ui: &mut Ui, view: &View<'_>, text: &str) {
     let p = view.p;
-    let button = Rect::from_center_size(center, vec2(view.at(24.0), view.at(24.0)));
-    let response = ui
-        .interact(button, ui.id().with(("angelica-bar", hint)), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(hint);
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(button, CornerRadius::same(4), p.hover);
-    }
-    theme::icon(
-        ui.painter(),
-        icon,
-        Rect::from_center_size(button.center(), vec2(view.at(11.0), view.at(11.0))),
-        if response.hovered() {
-            p.text
-        } else {
-            p.secondary
-        },
+    let (rect, _) = ui.allocate_exact_size(vec2(view.at(96.0), view.at(30.0)), Sense::hover());
+    let painter = ui.painter();
+    painter.text(
+        pos2(rect.right(), rect.center().y - view.at(4.0)),
+        Align2::RIGHT_CENTER,
+        text,
+        sans(view.at(12.5)),
+        p.secondary,
     );
-    response
+    let line = Rect::from_min_max(
+        pos2(rect.left() + view.at(16.0), rect.center().y + view.at(8.0)),
+        pos2(rect.right(), rect.center().y + view.at(10.0)),
+    );
+    painter.rect_filled(line, 1.0, p.line);
+    #[allow(clippy::cast_possible_truncation)]
+    let at = (view.time * 0.8).fract() as f32;
+    let width = line.width() * 0.35;
+    let start = line.left() + (line.width() + width) * at - width;
+    let moving = Rect::from_min_max(
+        pos2(start.max(line.left()), line.top()),
+        pos2((start + width).min(line.right()), line.bottom()),
+    );
+    painter.rect_filled(moving, 1.0, p.action);
+    ui.ctx().request_repaint();
 }
 
 /// The title and the path with a way back, from `x`. Returns where they end.
@@ -2894,6 +3062,14 @@ pub(crate) fn bar(ui: &mut Ui, view: &Look, bar: &Bar<'_>) -> Pressed {
     // Where the player is, from the left edge.
     let mut x = rect.left() + view.at(12.0);
     if bar.wordmark {
+        // The menu's own pages follow the word, with a way back.
+        if !bar.path.is_empty() {
+            let back = bar_button(ui, view, pos2(x + view.at(4.0), y), Icon::Back, s.bar_back);
+            if back.clicked() {
+                pressed.navigate = Some(0);
+            }
+            x += view.at(20.0);
+        }
         let word = painter.text(
             pos2(x, y),
             Align2::LEFT_CENTER,
@@ -2902,6 +3078,25 @@ pub(crate) fn bar(ui: &mut Ui, view: &Look, bar: &Bar<'_>) -> Pressed {
             p.secondary,
         );
         x = word.right();
+        for part in bar.path {
+            let mark = painter.text(
+                pos2(x + view.at(6.0), y),
+                Align2::LEFT_CENTER,
+                "›",
+                sans(view.at(13.0)),
+                p.muted,
+            );
+            let galley = elided(
+                &painter,
+                part,
+                medium(view.at(13.0)),
+                p.text,
+                ((controls - mark.right()) * 0.5).max(view.at(24.0)),
+            );
+            let at = pos2(mark.right() + view.at(6.0), y - galley.size().y / 2.0);
+            x = at.x + galley.size().x;
+            painter.galley(at, galley, p.text);
+        }
     } else {
         x = bar_path(ui, view, bar, x, controls, y, &mut pressed);
     }
@@ -2919,113 +3114,198 @@ pub(crate) fn title_bar(ui: &mut Ui, view: &Look, title: &str, strings: &Strings
     bar(ui, view, &Bar::titled(title, strings)).close
 }
 
-/// Where the columns of a row are: the tile's center, where the name and
-/// the permissions begin, where the version ends, and the state's center.
-struct Columns {
-    tile: f32,
-    name: f32,
-    permissions: f32,
-    version: f32,
-    state: f32,
-}
-
-impl Columns {
-    fn of(row: Rect, view: &View<'_>) -> Self {
-        let state = row.right() - view.at(24.0);
-        let version = state - view.at(20.0);
-        Self {
-            tile: row.left() + view.at(24.0),
-            name: row.left() + view.at(46.0),
-            permissions: version - view.at(56.0) - view.at(80.0),
-            version,
-            state,
-        }
-    }
-}
-
-fn columns_header(ui: &mut Ui, view: &View<'_>, s: &Strings) {
-    let p = view.p;
-    let (row, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), view.at(18.0)), Sense::hover());
-    let columns = Columns::of(row, view);
-    let painter = ui.painter();
-    let font = sans(view.at(11.0));
-    painter.text(
-        pos2(columns.name, row.center().y),
-        Align2::LEFT_CENTER,
-        s.column_plugin,
-        font.clone(),
-        p.muted,
-    );
-    painter.text(
-        pos2(columns.permissions, row.center().y),
-        Align2::LEFT_CENTER,
-        s.column_permissions,
-        font.clone(),
-        p.muted,
-    );
-    painter.text(
-        pos2(columns.version, row.center().y),
-        Align2::RIGHT_CENTER,
-        s.column_version,
-        font,
-        p.muted,
-    );
-}
-
-/// The permissions and the version in a row.
-fn row_facts(
+/// A plugin's name over its description, or over what the player is
+/// waited for, between `left` and `right` around the row's middle `y`.
+#[allow(clippy::too_many_arguments)]
+fn row_text(
     painter: &egui::Painter,
     view: &View<'_>,
+    s: &Strings,
     plugin: &Plugin,
     status: &Status,
-    rect: Rect,
-    columns: &Columns,
+    left: f32,
+    right: f32,
+    y: f32,
 ) {
     let p = view.p;
     let off = *status == Status::Disabled;
-    let asked: Vec<Class> = if *status == Status::AwaitingApproval {
-        plugin
-            .requests()
-            .into_iter()
-            .map(|(class, _)| class)
-            .collect()
-    } else {
-        Vec::new()
+    let (line, line_color) = match status {
+        Status::AwaitingApproval if plugin.approved_before() => (s.row_more, p.attention),
+        Status::AwaitingApproval => (s.state_waiting, p.attention),
+        Status::Faulted(_) => (s.row_stopped, p.attention),
+        _ => (plugin.manifest.plugin.description.as_str(), p.secondary),
     };
-    for (at, class) in plugin_classes(plugin, status).into_iter().enumerate() {
-        let color = if asked.contains(&class) {
-            p.attention
-        } else if off {
-            p.muted
-        } else {
-            p.secondary
-        };
-        let x = columns.permissions + view.at(20.0) * f32_of(at) + view.at(7.0);
-        theme::icon(
+    let name_y = if line.is_empty() { y } else { y - view.at(8.5) };
+    let development = plugin.manifest.origin == Origin::Development;
+    let token = if development { view.at(40.0) } else { 0.0 };
+    let name = elided(
+        painter,
+        &plugin.manifest.plugin.name,
+        sans(view.at(13.5)),
+        if off { p.muted } else { p.text },
+        (right - left - token).max(view.at(24.0)),
+    );
+    let name_width = name.size().x;
+    painter.galley(pos2(left, name_y - name.size().y / 2.0), name, p.text);
+    if development {
+        theme::development_token(
             painter,
-            class_icon(class),
-            Rect::from_center_size(pos2(x, rect.center().y), vec2(view.at(14.0), view.at(14.0))),
-            color,
+            left + name_width + view.at(8.0),
+            name_y,
+            view.k,
+            off,
+            p,
         );
     }
-    painter.text(
-        pos2(columns.version, rect.center().y),
-        Align2::RIGHT_CENTER,
-        &plugin.manifest.plugin.version,
+    if !line.is_empty() {
+        let galley = elided(
+            painter,
+            line,
+            sans(view.at(12.5)),
+            line_color,
+            (right - left).max(view.at(24.0)),
+        );
+        painter.galley(
+            pos2(left, y + view.at(8.5) - galley.size().y / 2.0),
+            galley,
+            line_color,
+        );
+    }
+}
+
+/// A small square button with an icon, centered on `center`; `hint` shows
+/// under the pointer.
+fn icon_button(
+    ui: &mut Ui,
+    view: &Look,
+    center: Pos2,
+    icon: Icon,
+    hint: &str,
+    id: Id,
+) -> egui::Response {
+    let p = view.p;
+    let button = Rect::from_center_size(center, vec2(view.at(24.0), view.at(24.0)));
+    let response = ui
+        .interact(button, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hint);
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(button, CornerRadius::same(4), p.hover);
+    }
+    theme::icon(
+        ui.painter(),
+        icon,
+        Rect::from_center_size(button.center(), vec2(view.at(11.0), view.at(11.0))),
+        if response.hovered() {
+            p.text
+        } else {
+            p.secondary
+        },
+    );
+    response
+}
+
+/// An action word of a row, its right edge at `at`, underlined under the
+/// pointer. Returns its response and where it begins.
+fn row_word(
+    ui: &mut Ui,
+    painter: &egui::Painter,
+    view: &View<'_>,
+    text: &str,
+    at: Pos2,
+    id: Id,
+) -> (egui::Response, f32) {
+    let p = view.p;
+    let galley = painter.layout_no_wrap(text.to_owned(), medium(view.at(13.0)), p.action);
+    let size = galley.size();
+    let word = Rect::from_min_size(pos2(at.x - size.x, at.y - size.y / 2.0), size);
+    let hit = ui
+        .interact(
+            word.expand2(vec2(view.at(4.0), view.at(6.0))),
+            id,
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    painter.galley_with_override_text_color(word.min, galley, p.action);
+    if hit.hovered() {
+        painter.line_segment(
+            [word.left_bottom(), word.right_bottom()],
+            Stroke::new(1.0, theme::alpha(p.action, 0.6)),
+        );
+    }
+    (hit, word.left())
+}
+
+/// A small heading of a plugin's page with a thin rule after it.
+fn page_section(ui: &mut Ui, view: &View<'_>, title: &str, color: Color32) {
+    let p = view.p;
+    ui.add_space(view.at(8.0));
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), view.at(18.0)), Sense::hover());
+    let painter = ui.painter();
+    let text = painter.text(
+        rect.left_center(),
+        Align2::LEFT_CENTER,
+        title,
         sans(view.at(12.5)),
-        p.muted,
+        color,
+    );
+    if text.right() + view.at(10.0) < rect.right() {
+        painter.line_segment(
+            [
+                pos2(text.right() + view.at(10.0), rect.center().y),
+                pos2(rect.right(), rect.center().y),
+            ],
+            Stroke::new(1.0, p.line),
+        );
+    }
+}
+
+/// The name of a class of permissions over its lines.
+fn class_label(ui: &mut Ui, view: &View<'_>, text: &str) {
+    ui.add_space(view.at(2.0));
+    ui.label(
+        RichText::new(text)
+            .font(sans(view.at(12.0)))
+            .color(view.p.muted),
     );
 }
 
-/// The classes a plugin holds, and for one waiting for approval, also
-/// those it asks for.
-fn plugin_classes(plugin: &Plugin, status: &Status) -> Vec<Class> {
-    let mut classes: Vec<Class> = plugin.asked().iter().map(Asked::class).collect();
-    if *status == Status::AwaitingApproval {
-        classes.extend(plugin.requests().into_iter().map(|(class, _)| class));
+/// The sites a permission reaches, under its line.
+fn hosts_line(ui: &mut Ui, view: &View<'_>, hosts: &[String]) {
+    if hosts.is_empty() {
+        return;
     }
-    classes_of(classes)
+    ui.horizontal(|ui| {
+        ui.add_space(view.at(24.0));
+        ui.add(
+            egui::Label::new(
+                RichText::new(hosts.join(", "))
+                    .font(sans(view.at(12.0)))
+                    .color(view.p.muted),
+            )
+            .wrap(),
+        );
+    });
+}
+
+/// A line on a tinted plate: what just happened, or why a plugin stopped.
+fn banner(ui: &mut Ui, view: &View<'_>, text: &str, color: Color32) {
+    egui::Frame::new()
+        .fill(theme::alpha(color, 0.08))
+        .stroke(Stroke::new(1.0, theme::alpha(color, 0.35)))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(egui::Margin::symmetric(
+            num_u8(view.at(10.0)),
+            num_u8(view.at(8.0)),
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(
+                egui::Label::new(RichText::new(text).font(sans(view.at(13.0))).color(color)).wrap(),
+            );
+        });
 }
 
 /// A search field: a plain field with a thin border and a magnifier.
@@ -3362,10 +3642,6 @@ fn fraction(value: f64) -> f32 {
     num_traits::cast::<f64, f32>(value.clamp(0.0, 1.0)).unwrap_or(0.0)
 }
 
-fn f32_of(value: usize) -> f32 {
-    num_traits::cast(value).unwrap_or(0.0)
-}
-
 /// A margin in whole points.
 pub(crate) fn num_u8(value: f32) -> i8 {
     num_traits::cast(value.round()).unwrap_or(i8::MAX)
@@ -3380,7 +3656,6 @@ mod tests {
             name,
             description,
             group,
-            classes: Vec::new(),
         }
     }
 
@@ -3393,7 +3668,7 @@ mod tests {
             entry("Harmonia", "The game in another language", Group::On),
         ];
         assert_eq!(
-            lines(&entries, "", None),
+            lines(&entries, ""),
             vec![
                 Line::Heading(Group::Attention, 1),
                 Line::Plugin(2),
@@ -3414,29 +3689,14 @@ mod tests {
             entry("Market", "Prices and your sales", Group::Off),
         ];
         assert_eq!(
-            lines(&entries, "  ОХОТА ", None),
+            lines(&entries, "  ОХОТА "),
             vec![Line::Heading(Group::On, 1), Line::Plugin(0)]
         );
         assert_eq!(
-            lines(&entries, "items", None),
+            lines(&entries, "items"),
             vec![Line::Heading(Group::Attention, 1), Line::Plugin(1)]
         );
-        assert!(lines(&entries, "nothing like it", None).is_empty());
-    }
-
-    #[test]
-    fn the_filter_keeps_plugins_with_a_permission_of_the_class() {
-        let mut online = entry("Market", "Prices", Group::On);
-        online.classes = vec![Class::Network, Class::WhatYouSee];
-        let mut local = entry("Timers", "Resets", Group::On);
-        local.classes = vec![Class::YoursOnly];
-        let entries = [online, local];
-        assert_eq!(
-            lines(&entries, "", Some(Class::Network)),
-            vec![Line::Heading(Group::On, 1), Line::Plugin(0)]
-        );
-        assert!(lines(&entries, "", Some(Class::OtherPlayers)).is_empty());
-        assert_eq!(lines(&entries, "", None).len(), 3);
+        assert!(lines(&entries, "nothing like it").is_empty());
     }
 
     #[test]
@@ -3480,6 +3740,25 @@ mod tests {
     }
 
     #[test]
+    fn icons_shrink_by_the_average_of_what_each_pixel_covers() {
+        // 4×4: the left half red and opaque, the right half transparent.
+        let rgba: Vec<u8> = (0..16)
+            .flat_map(|at| {
+                if at % 4 < 2 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 0]
+                }
+            })
+            .collect();
+        let (side, small) = crate::author::shrink_icon(4, &rgba, 2);
+        assert_eq!(side, 2);
+        assert_eq!(&small[..4], &[255, 0, 0, 255]);
+        assert_eq!(small[7], 0, "transparent stays transparent");
+        assert_eq!(crate::author::shrink_icon(4, &rgba, 8), (4, rgba));
+    }
+
+    #[test]
     fn faulted_plugins_need_attention() {
         assert_eq!(Group::of(&Status::Faulted("trap".into())), Group::Attention);
         assert_eq!(Group::of(&Status::AwaitingApproval), Group::Attention);
@@ -3488,19 +3767,7 @@ mod tests {
     }
 
     #[test]
-    fn classes_come_once_in_their_order() {
-        assert_eq!(
-            classes_of(
-                [
-                    Permission::ChatPrint,
-                    Permission::DrawWorld,
-                    Permission::HttpGet,
-                    Permission::FilesReplace,
-                ]
-                .map(Permission::class)
-            ),
-            vec![Class::Network, Class::WhatYouSee, Class::YoursOnly]
-        );
+    fn every_class_has_its_own_icon() {
         for class in CLASSES {
             for other in CLASSES.iter().filter(|other| **other != class) {
                 assert_ne!(class_icon(class), class_icon(*other));

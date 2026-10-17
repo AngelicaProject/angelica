@@ -20,8 +20,8 @@ use angelica_sdk::{
         table::{Column, Variant, Writer},
     },
     ui::{
-        ActionKind, Countdown, Dialog, Event, Meter, Panel, Popup, Readout, Ring, Role, Shown,
-        Sparkline, Tone, Window,
+        ActionKind, Countdown, Dialog, Event, MenuEntry, Meter, Panel, Popup, Readout, Ring, Role,
+        Shown, Sparkline, Tone, Window,
     },
 };
 
@@ -421,7 +421,7 @@ fn replace_texture() -> String {
 }
 
 /// What the buttons of the host's services beside Lens say: drawing,
-/// messages, the clipboard, notifications, sound, and sockets.
+/// messages, the clipboard, links, notifications, sound, and sockets.
 fn around_lens(id: &str) -> Option<String> {
     match id {
         "mark" => Some(mark_where_i_am()),
@@ -435,6 +435,11 @@ fn around_lens(id: &str) -> Option<String> {
             angelica_sdk::clipboard::copy("Hello from Angelica"),
             "copied",
             "cannot copy",
+        )),
+        "link" => Some(said(
+            angelica_sdk::links::open("https://example.com/hello"),
+            "opened",
+            "cannot open",
         )),
         "notify" => Some(said(
             angelica_sdk::notifications::show("Hello from Angelica"),
@@ -569,6 +574,21 @@ fn commands() -> Command {
                 .parameter(Parameter::switch("on", "Whether to use capitals")),
         )
         .subcommand(Command::new("colors", "Shows every tone"))
+        .subcommand(
+            Command::new("item", "Links an item in the chat log")
+                .parameter(Parameter::integer(
+                    "row",
+                    "The item's row of the Item sheet",
+                    1,
+                    99_999,
+                ))
+                .parameter(Parameter::switch("hq", "Whether it is high quality").optional()),
+        )
+        .subcommand(
+            Command::new("tryon", "Opens the Try On window with an item").parameter(
+                Parameter::integer("row", "The item's row of the Item sheet", 1, 99_999),
+            ),
+        )
         .subcommand(Command::new("fail", "Always fails"))
 }
 
@@ -750,6 +770,8 @@ impl Plugin for Hello {
         Ok(())
     }
 
+    // One button for every interface the example shows.
+    #[allow(clippy::too_many_lines)]
     fn ui(&mut self) -> Vec<Window> {
         if !self.open {
             return Vec::new();
@@ -798,6 +820,7 @@ impl Plugin for Hello {
                                 .button("mark", "Mark where I am")
                                 .button("ping", "Ping myself")
                                 .button("copy", "Copy a greeting")
+                                .button("link", "Open example.com")
                                 .button("notify", "Notify me")
                                 .button("beep", "Beep")
                                 .button("cache", "Fill the cache")
@@ -853,6 +876,10 @@ impl Plugin for Hello {
         windows
     }
 
+    fn menu_entries(&mut self) -> Vec<MenuEntry> {
+        vec![MenuEntry::item("row", "Hello: say its row")]
+    }
+
     fn panels(&mut self) -> Vec<Panel> {
         if !self.panel {
             return Vec::new();
@@ -877,6 +904,7 @@ impl Plugin for Hello {
     fn ui_event(&mut self, event: Event) {
         match event {
             Event::OpenRequested => self.open = true,
+            Event::MenuChosen(chosen) => self.say(format!("item {} from its menu", chosen.value)),
             Event::Closed(place) if place == "reset" => self.asking = None,
             Event::Clicked(target) if target.window == "reset" => self.reset(&target.id),
             Event::Closed(_) => self.open = false,
@@ -979,6 +1007,20 @@ impl Plugin for Hello {
                 })
                 .span("italic", ChatTone::Normal)
                 .italic()
+        } else if invocation.is(&["hello", "item"]) {
+            let row = u32::try_from(invocation.integer("row").unwrap_or(1)).unwrap_or(1);
+            // The name in English, the game's language 2.
+            Message::new()
+                .text("Here is ")
+                .item(row, invocation.switch("hq").unwrap_or(false), 2)
+        } else if invocation.is(&["hello", "tryon"]) {
+            let row = u32::try_from(invocation.integer("row").unwrap_or(1)).unwrap_or(1);
+            match lens::act("try_on", &[("item", row.into())]) {
+                Ok(()) => Message::new()
+                    .text("Trying on item ")
+                    .accent(row.to_string()),
+                Err(error) => Message::new().bad(format!("cannot try on: {}", error.message)),
+            }
         } else if invocation.is(&["hello", "fail"]) {
             return Err("this command always fails".into());
         } else {

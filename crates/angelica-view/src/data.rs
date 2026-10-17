@@ -5,9 +5,10 @@
 //! the same way with [`encode_event`] and [`decode_event`].
 use crate::{
     Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Chosen, Countdown, Dialog,
-    Edited, Entry, Event, Fact, Icon, Mark, Meter, Navigated, Number, NumberSet, Panel, Place,
-    Popup, PopupAt, Readout, Ring, Role, Section, Shown, Sparkline, Status, Table, Tabs, Text,
-    TextInput, Toggled, Tone, Widget, WidgetRef, Window,
+    Edited, Entry, Event, Fact, Icon, Mark, MenuChosen, MenuEntry, MenuFor, Meter, Navigated,
+    Number, NumberSet, Panel, Place, Popup, PopupAt, Readout, Ring, Role, Section, Shown,
+    Sparkline, Split, Status, Table, Tabs, Text, TextInput, Toggled, Tone, Widget, WidgetRef,
+    Window,
 };
 
 /// The value of a property.
@@ -85,6 +86,7 @@ const KINDS: &[Kind] = &[
         &[("at", 0), ("panel", 0), ("seconds", 0), ("attention", 0)],
     ),
     ("dialog", 0, &[("title", 0), ("window", 0)]),
+    ("menu-entry", 0, &[("label", 0), ("for", 0)]),
     ("row", 0, &[]),
     ("column", 0, &[]),
     ("grid", 0, &[("columns", 0)]),
@@ -100,12 +102,26 @@ const KINDS: &[Kind] = &[
             ("mark", 0),
             ("chosen", 0),
             ("progress", 0),
+            ("icon", 0),
+            ("plain", 0),
         ],
     ),
     ("end", 0, &[]),
     ("spacer", 0, &[]),
     ("separator", 0, &[]),
     ("tabs", 0, &[("labels", 0), ("selected", 0)]),
+    (
+        "split",
+        0,
+        &[
+            ("labels", 0),
+            ("values", 0),
+            ("groups", 0),
+            ("selected", 0),
+            ("width", 0),
+            ("action", 0),
+        ],
+    ),
     ("text", 0, &[("text", 0), ("role", 0), ("tone", 0)]),
     ("heading", 0, &[("text", 0)]),
     ("fact", 0, &[("name", 0), ("value", 0)]),
@@ -154,12 +170,16 @@ const KINDS: &[Kind] = &[
         0,
         &[("label", 0), ("style", 0), ("enabled", 0), ("in-row", 0)],
     ),
-    ("checkbox", 0, &[("label", 0), ("checked", 0)]),
+    (
+        "checkbox",
+        0,
+        &[("label", 0), ("checked", 0), ("words", 0), ("hint", 0)],
+    ),
     ("text-field", 0, &[("label", 0), ("value", 0), ("hint", 0)]),
     (
         "choice",
         0,
-        &[("label", 0), ("options", 0), ("selected", 0)],
+        &[("label", 0), ("options", 0), ("selected", 0), ("hint", 0)],
     ),
     (
         "number",
@@ -176,12 +196,16 @@ const KINDS: &[Kind] = &[
     ),
 ];
 
+/// A split's side width when the plugin gives none, in points.
+pub const SPLIT_WIDTH: u16 = 160;
+
 /// The parts that take an id.
 const ID_KINDS: &[&str] = &[
     "section",
     "table",
     "entry",
     "tabs",
+    "split",
     "readout",
     "button",
     "checkbox",
@@ -200,6 +224,7 @@ const EVENTS: &[&str] = &[
     "navigated",
     "closed",
     "open-requested",
+    "menu-chosen",
 ];
 
 // ---------------------------------------------------------------- encode
@@ -333,9 +358,13 @@ fn encode_entry(e: &Entry, parts: &mut Vec<RawPart>) {
         .text("note", &e.note)
         .text("value", &e.value)
         .word("mark", mark_word(e.mark), "none")
-        .flag("chosen", e.chosen, false);
+        .flag("chosen", e.chosen, false)
+        .flag("plain", e.plain, false);
     if let Some(progress) = e.progress {
         props = props.number("progress", f64::from(progress));
+    }
+    if let Some(icon) = e.icon {
+        props = props.integer("icon", i64::from(icon), -1);
     }
     parts.push(props.part("entry", &e.id));
     parts.extend(e.actions.iter().map(|a| button(a, true)));
@@ -415,10 +444,16 @@ fn encode_input(widget: &Widget) -> Option<RawPart> {
             },
             false,
         ),
-        Widget::Checkbox(c) => p()
-            .required("label", &c.label)
-            .flag("checked", c.checked, false)
-            .part("checkbox", &c.id),
+        Widget::Checkbox(c) => {
+            let mut props = p()
+                .required("label", &c.label)
+                .flag("checked", c.checked, false)
+                .text("hint", &c.hint);
+            if let Some(words) = &c.words {
+                props = props.texts("words", words);
+            }
+            props.part("checkbox", &c.id)
+        }
         Widget::TextInput(t) => p()
             .text("label", &t.label)
             .text("value", &t.value)
@@ -428,6 +463,7 @@ fn encode_input(widget: &Widget) -> Option<RawPart> {
             .text("label", &c.label)
             .texts("options", &c.options)
             .integer("selected", c.selected.map_or(-1, i64::from), -1)
+            .text("hint", &c.hint)
             .part("choice", &c.id),
         Widget::Number(n) => p()
             .text("label", &n.label)
@@ -474,11 +510,26 @@ fn encode_widget(widget: &Widget, parts: &mut Vec<RawPart>) {
             .flag("open", s.open_by_default, true)
             .part("section", &s.id),
         Widget::BeginTable(t) => p().texts("columns", &t.columns).part("table", &t.id),
+        Widget::BeginSplit(s) => {
+            let mut props = p().texts("labels", &s.labels);
+            if !s.values.is_empty() {
+                props = props.texts("values", &s.values);
+            }
+            if !s.groups.is_empty() {
+                props = props.texts("groups", &s.groups);
+            }
+            props
+                .integer("selected", i64::from(s.selected), 0)
+                .integer("width", i64::from(s.width), i64::from(SPLIT_WIDTH))
+                .text("action", &s.action)
+                .part("split", &s.id)
+        }
         Widget::EndRow
         | Widget::EndColumn
         | Widget::EndGrid
         | Widget::EndSection
-        | Widget::EndTable => p().part("end", ""),
+        | Widget::EndTable
+        | Widget::EndSplit => p().part("end", ""),
         Widget::Spacer => p().part("spacer", ""),
         Widget::Tooltip(text) => p().required("text", text).part("tooltip", ""),
         Widget::Tile(text) => p().required("text", text).part("tile", ""),
@@ -552,6 +603,21 @@ pub fn encode(place: &Place) -> RawPlace {
                 .word("shown", shown_word(panel.shown), "always")
                 .0,
             parts: encode_widgets(&panel.widgets),
+        },
+        Place::MenuEntry(entry) => RawPlace {
+            kind: "menu-entry".into(),
+            id: entry.id.clone(),
+            properties: Props::default()
+                .required("label", &entry.label)
+                .word(
+                    "for",
+                    match entry.target {
+                        MenuFor::Item => "item",
+                    },
+                    "item",
+                )
+                .0,
+            parts: Vec::new(),
         },
     }
 }
@@ -639,6 +705,12 @@ pub fn encode_event(event: &Event) -> RawEvent {
             Some(Value::Integer(i64::from(n.depth))),
         ),
         Event::OpenRequested => raw("open-requested", "", "", None),
+        Event::MenuChosen(chosen) => raw(
+            "menu-chosen",
+            &chosen.entry,
+            "",
+            Some(Value::Integer(i64::from(chosen.value))),
+        ),
     }
 }
 
@@ -676,6 +748,10 @@ pub fn decode_event(raw: &RawEvent) -> Option<Event> {
             depth: u32::try_from(*depth).ok()?,
         }),
         ("open-requested", _) => Event::OpenRequested,
+        ("menu-chosen", Some(Value::Integer(value))) => Event::MenuChosen(MenuChosen {
+            entry: window,
+            value: u32::try_from(*value).ok()?,
+        }),
         _ => return None,
     })
 }
@@ -895,6 +971,7 @@ enum Open {
     Grid,
     Section,
     Table,
+    Split,
     Entry,
 }
 
@@ -959,12 +1036,25 @@ fn read_container(
                 columns: r.texts("columns")?.ok_or_else(|| r.missing("columns"))?,
             })
         }
+        "split" => {
+            open.push(Open::Split);
+            Widget::BeginSplit(Split {
+                id: id.into(),
+                labels: r.texts("labels")?.ok_or_else(|| r.missing("labels"))?,
+                values: r.texts("values")?.unwrap_or_default(),
+                groups: r.texts("groups")?.unwrap_or_default(),
+                selected: r.ranged("selected", 0..=i64::from(u32::MAX), 0)?,
+                width: r.ranged("width", 96..=320, SPLIT_WIDTH)?,
+                action: r.text_or("action", "")?,
+            })
+        }
         "end" => match open.pop() {
             Some(Open::Row) => Widget::EndRow,
             Some(Open::Column) => Widget::EndColumn,
             Some(Open::Grid) => Widget::EndGrid,
             Some(Open::Section) => Widget::EndSection,
             Some(Open::Table) => Widget::EndTable,
+            Some(Open::Split) => Widget::EndSplit,
             Some(Open::Entry) | None => return Err(format!("{}: an end closes nothing", r.what)),
         },
         _ => return Ok(None),
@@ -1064,11 +1154,24 @@ fn read_input(kind: &str, r: &mut Reader<'_>, id: &str) -> Result<Option<Widget>
                 kind: action.kind,
             })
         }
-        "checkbox" => Widget::Checkbox(Checkbox {
-            id,
-            label: r.required_text("label")?,
-            checked: r.flag("checked", false)?,
-        }),
+        "checkbox" => {
+            let label = r.required_text("label")?;
+            let checked = r.flag("checked", false)?;
+            let words = match r.texts("words")? {
+                None => None,
+                Some(words) => match <[String; 2]>::try_from(words) {
+                    Ok(words) => Some(words),
+                    Err(_) => return Err(format!("{}: a checkbox has 2 words", r.what)),
+                },
+            };
+            Widget::Checkbox(Checkbox {
+                id,
+                label,
+                checked,
+                words,
+                hint: r.text_or("hint", "")?,
+            })
+        }
         "text-field" => Widget::TextInput(TextInput {
             id,
             label: r.text_or("label", "")?,
@@ -1084,6 +1187,7 @@ fn read_input(kind: &str, r: &mut Reader<'_>, id: &str) -> Result<Option<Widget>
                 label,
                 options,
                 selected: u32::try_from(selected).ok(),
+                hint: r.text_or("hint", "")?,
             })
         }
         "number" => Widget::Number(Number {
@@ -1120,6 +1224,14 @@ fn read_entry(r: &mut Reader<'_>, id: &str) -> Result<Entry, String> {
         chosen: r.flag("chosen", false)?,
         #[allow(clippy::cast_possible_truncation)]
         progress: progress.map(|p| p as f32),
+        icon: r
+            .integer("icon")?
+            .map(|icon| {
+                u32::try_from(icon)
+                    .map_err(|_| format!("{}: an entry's icon is 0 to {}", r.what, u32::MAX))
+            })
+            .transpose()?,
+        plain: r.flag("plain", false)?,
         id: id.into(),
         actions: Vec::new(),
         facts: Vec::new(),
@@ -1260,45 +1372,21 @@ pub fn decode(places: &[RawPlace], minor: u16) -> Result<Vec<Place>, String> {
                 ));
                 continue;
             }
-            "panel" => Place::Panel(Panel {
-                id: place.id.clone(),
-                name: r.required_text("name")?,
-                backing: [Backing::Plate, Backing::Bare][r.word("backing", &["plate", "bare"])?],
-                anchor: {
-                    const ANCHORS: [Anchor; 9] = [
-                        Anchor::BottomLeft,
-                        Anchor::TopLeft,
-                        Anchor::Top,
-                        Anchor::TopRight,
-                        Anchor::Left,
-                        Anchor::Center,
-                        Anchor::Right,
-                        Anchor::Bottom,
-                        Anchor::BottomRight,
-                    ];
-                    ANCHORS[r.word(
-                        "anchor",
-                        &[
-                            "bottom-left",
-                            "top-left",
-                            "top",
-                            "top-right",
-                            "left",
-                            "center",
-                            "right",
-                            "bottom",
-                            "bottom-right",
-                        ],
-                    )?]
-                },
-                shown: [Shown::Always, Shown::InCombat, Shown::OutOfCombat]
-                    [r.word("shown", &["always", "in-combat", "out-of-combat"])?],
-                widgets,
-            }),
+            "panel" => read_panel(&mut r, &place.id, widgets)?,
             "popup" => {
                 return Err(format!(
                     "{what}: a popup is shown with notifications.pop-up"
                 ));
+            }
+            "menu-entry" => {
+                if !widgets.is_empty() {
+                    return Err(format!("{what}: a menu entry holds no parts"));
+                }
+                Place::MenuEntry(MenuEntry {
+                    id: place.id.clone(),
+                    label: r.required_text("label")?,
+                    target: [MenuFor::Item][r.word("for", &["item"])?],
+                })
             }
             other => return Err(format!("{what}: {other} is a part, not a place")),
         });
@@ -1307,6 +1395,45 @@ pub fn decode(places: &[RawPlace], minor: u16) -> Result<Vec<Place>, String> {
     attach_dialogs(&mut decoded, dialogs)?;
     crate::check::places(&decoded)?;
     Ok(decoded)
+}
+
+/// A panel's properties, after its parts.
+fn read_panel(r: &mut Reader<'_>, id: &str, widgets: Vec<Widget>) -> Result<Place, String> {
+    Ok(Place::Panel(Panel {
+        id: id.to_owned(),
+        name: r.required_text("name")?,
+        backing: [Backing::Plate, Backing::Bare][r.word("backing", &["plate", "bare"])?],
+        anchor: {
+            const ANCHORS: [Anchor; 9] = [
+                Anchor::BottomLeft,
+                Anchor::TopLeft,
+                Anchor::Top,
+                Anchor::TopRight,
+                Anchor::Left,
+                Anchor::Center,
+                Anchor::Right,
+                Anchor::Bottom,
+                Anchor::BottomRight,
+            ];
+            ANCHORS[r.word(
+                "anchor",
+                &[
+                    "bottom-left",
+                    "top-left",
+                    "top",
+                    "top-right",
+                    "left",
+                    "center",
+                    "right",
+                    "bottom",
+                    "bottom-right",
+                ],
+            )?]
+        },
+        shown: [Shown::Always, Shown::InCombat, Shown::OutOfCombat]
+            [r.word("shown", &["always", "in-combat", "out-of-combat"])?],
+        widgets,
+    }))
 }
 
 /// Gives each dialog to the window it names, which `ui` returned with it.

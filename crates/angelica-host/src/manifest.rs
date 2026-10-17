@@ -57,6 +57,10 @@ pub enum Permission {
     /// Keep WebSocket connections to the hosts the manifest lists.
     #[serde(rename = "http.websocket")]
     HttpWebsocket,
+    /// Open pages of the sites `[links] hosts` lists in the player's
+    /// browser, for the player's action.
+    #[serde(rename = "links.open")]
+    LinksOpen,
 }
 
 impl Permission {
@@ -75,6 +79,7 @@ impl Permission {
             Self::SoundPlay => "sound.play",
             Self::StorageCache => "storage.cache",
             Self::HttpWebsocket => "http.websocket",
+            Self::LinksOpen => "links.open",
         }
     }
 
@@ -82,18 +87,19 @@ impl Permission {
     #[must_use]
     pub fn description(self) -> &'static str {
         match self {
-            Self::FilesReplace => "Replaces game files: fonts, textures, materials, and models",
-            Self::ChatCommands => "Adds its own chat commands",
-            Self::ChatPrint => "Prints its messages in your chat log",
-            Self::HttpGet => "Downloads from these internet hosts",
-            Self::HttpSend => "Sends data to these internet hosts",
-            Self::DrawWorld => "Draws marks, lines, and text over the game world",
-            Self::MessagesSend => "Sends messages to these plugins",
-            Self::ClipboardWrite => "Copies text to your clipboard when you ask it to",
-            Self::Notifications => "Shows notifications and flashes the game on the taskbar",
-            Self::SoundPlay => "Plays sounds",
-            Self::StorageCache => "Keeps a cache of files on your disk",
-            Self::HttpWebsocket => "Keeps live connections to these internet hosts",
+            Self::FilesReplace => "Replace game files: fonts, textures, materials, and models",
+            Self::ChatCommands => "Add its own chat commands",
+            Self::ChatPrint => "Print its messages in your chat log",
+            Self::HttpGet => "Download from these sites",
+            Self::HttpSend => "Send data to these sites",
+            Self::DrawWorld => "Draw marks, lines, and text over the game world",
+            Self::MessagesSend => "Send messages to these plugins",
+            Self::ClipboardWrite => "Copy text to your clipboard when you ask it to",
+            Self::Notifications => "Show notifications and flash the game on the taskbar",
+            Self::SoundPlay => "Play sounds",
+            Self::StorageCache => "Keep a cache of files on your disk",
+            Self::HttpWebsocket => "Keep live connections to these sites",
+            Self::LinksOpen => "Open pages of these sites in your browser when you ask it to",
         }
     }
 
@@ -101,7 +107,9 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
-            Self::HttpGet | Self::HttpSend | Self::HttpWebsocket => Class::Network,
+            Self::HttpGet | Self::HttpSend | Self::HttpWebsocket | Self::LinksOpen => {
+                Class::Network
+            }
             Self::FilesReplace | Self::DrawWorld => Class::WhatYouSee,
             Self::ChatCommands
             | Self::ChatPrint
@@ -134,11 +142,11 @@ impl Class {
     #[must_use]
     pub fn title(self) -> &'static str {
         match self {
-            Self::Network => "Uses the internet",
-            Self::Acts => "Acts in the game for you",
-            Self::OtherPlayers => "Sees other players",
-            Self::WhatYouSee => "Changes what you see",
-            Self::YoursOnly => "Only for you",
+            Self::Network => "Use the internet",
+            Self::Acts => "Act in the game for you",
+            Self::OtherPlayers => "See other players",
+            Self::WhatYouSee => "Change what you see",
+            Self::YoursOnly => "Other",
         }
     }
 }
@@ -178,6 +186,7 @@ impl Asked {
         match self {
             Self::Permission(permission) => permission.class(),
             Self::Read(domain) => domain_class(domain.class).unwrap_or(Class::YoursOnly),
+            Self::Act(domain) if domain.act_local => Class::WhatYouSee,
             Self::Act(_) => Class::Acts,
             Self::Change(_) => Class::WhatYouSee,
         }
@@ -314,6 +323,14 @@ pub fn requests(
                             granted.is_none_or(|grants| !grants.http_hosts.contains(host))
                         })
                         .collect()
+                } else if *permission == Permission::LinksOpen {
+                    manifest
+                        .link_hosts()
+                        .into_iter()
+                        .filter(|host| {
+                            granted.is_none_or(|grants| !grants.link_hosts.contains(host))
+                        })
+                        .collect()
                 } else if *permission == Permission::MessagesSend {
                     manifest
                         .message_to()
@@ -385,7 +402,7 @@ pub struct Plugin {
     pub memory_bytes: Option<u64>,
 }
 
-/// The hosts `http.get` reaches.
+/// The hosts `http.get` reaches, or whose pages `links.open` opens.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Http {
@@ -420,6 +437,8 @@ pub struct Manifest {
     #[serde(default)]
     http: Option<Http>,
     #[serde(default)]
+    links: Option<Http>,
+    #[serde(default)]
     messages: Option<MessagesTo>,
     #[serde(default)]
     storage: Option<StorageSection>,
@@ -430,6 +449,10 @@ pub struct Manifest {
     /// Where the package came from; the loader sets it, the file has none.
     #[serde(skip)]
     pub origin: Origin,
+    /// The plugin's icon, a square PNG, from its package; the loader sets
+    /// it.
+    #[serde(skip)]
+    pub icon: Option<std::sync::Arc<[u8]>>,
 }
 
 /// Where a plugin's package came from.
@@ -447,6 +470,10 @@ pub enum Origin {
     /// package. The menu marks it so a developer tells it from the rest.
     Development,
 }
+
+/// The id no plugin has: Angelica's own name in its layout and its chat
+/// command `/angelica`.
+pub const RESERVED_ID: &str = "angelica";
 
 /// A plugin id: 1 to 64 lowercase letters, digits, and inner hyphens.
 #[must_use]
@@ -498,6 +525,9 @@ impl Manifest {
                 "plugin.id has 1 to 64 lowercase letters, digits, and inner hyphens".into(),
             );
         }
+        if plugin.id == RESERVED_ID {
+            return fail(format!("plugin.id {RESERVED_ID} is Angelica's own"));
+        }
         for (field, value) in [("name", &plugin.name), ("description", &plugin.description)] {
             if value.trim().is_empty() || value.len() > 1024 {
                 return fail(format!("plugin.{field} is empty or longer than 1024 bytes"));
@@ -544,10 +574,18 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Checks the tables that come with permissions: `[http]`,
+    /// Checks the tables that come with permissions: `[http]`, `[links]`,
     /// `[messages]`, and `[storage]`.
     fn check_sections(&self, declared: &BTreeSet<Permission>) -> Result<(), ManifestError> {
         let fail = |message: String| Err(ManifestError(message));
+        let sites = self
+            .links
+            .as_ref()
+            .map_or(&[][..], |links| &links.hosts[..]);
+        if declared.contains(&Permission::LinksOpen) == sites.is_empty() {
+            return fail("links.open and a non-empty links.hosts come together".into());
+        }
+        check_hosts("links.hosts", sites)?;
         let hosts = self.http.as_ref().map_or(&[][..], |http| &http.hosts[..]);
         if declared.contains(&Permission::HttpGet) == hosts.is_empty() {
             return fail("http.get and a non-empty http.hosts come together".into());
@@ -585,18 +623,7 @@ impl Manifest {
         if cache.is_some_and(|gib| !(1..=MOST_CACHE_GIB).contains(&gib)) {
             return fail(format!("storage.cache is 1 to {MOST_CACHE_GIB} GiB"));
         }
-        if hosts.len() > MAX_HOSTS {
-            return fail(format!("http.hosts lists at most {MAX_HOSTS} hosts"));
-        }
-        let mut unique = BTreeSet::new();
-        for host in hosts {
-            crate::http::check_host_pattern(host)
-                .map_err(|problem| ManifestError(format!("http.hosts: {host:?} {problem}")))?;
-            if !unique.insert(host) {
-                return fail(format!("http.hosts lists {host} twice"));
-            }
-        }
-        Ok(())
+        check_hosts("http.hosts", hosts)
     }
 
     /// The hosts `http.get` reaches, as the manifest lists them.
@@ -605,6 +632,15 @@ impl Manifest {
         self.http
             .iter()
             .flat_map(|http| http.hosts.iter().cloned())
+            .collect()
+    }
+
+    /// The sites whose pages `links.open` opens, as the manifest lists them.
+    #[must_use]
+    pub fn link_hosts(&self) -> BTreeSet<String> {
+        self.links
+            .iter()
+            .flat_map(|links| links.hosts.iter().cloned())
             .collect()
     }
 
@@ -662,6 +698,25 @@ impl Manifest {
     }
 }
 
+/// Checks a list of host names, called `what`: at most [`MAX_HOSTS`]
+/// distinct names a manifest may list.
+fn check_hosts(what: &str, hosts: &[String]) -> Result<(), ManifestError> {
+    if hosts.len() > MAX_HOSTS {
+        return Err(ManifestError(format!(
+            "{what} lists at most {MAX_HOSTS} hosts"
+        )));
+    }
+    let mut unique = BTreeSet::new();
+    for host in hosts {
+        crate::http::check_host_pattern(host)
+            .map_err(|problem| ManifestError(format!("{what}: {host:?} {problem}")))?;
+        if !unique.insert(host) {
+            return Err(ManifestError(format!("{what} lists {host} twice")));
+        }
+    }
+    Ok(())
+}
+
 /// Checks a list of domain names of `[lens]`, called `what`.
 fn check_domains(what: &str, listed: &[String]) -> Result<(), ManifestError> {
     if listed.len() > MAX_DOMAINS {
@@ -702,6 +757,9 @@ pub struct Grants {
     /// The hosts approved for `http.get`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub http_hosts: BTreeSet<String>,
+    /// The sites approved for `links.open`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub link_hosts: BTreeSet<String>,
     /// The plugins approved for `messages.send`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub message_to: BTreeSet<String>,
@@ -740,6 +798,7 @@ impl Grants {
             plugin_id: manifest.id().into(),
             permissions: manifest.permissions().clone(),
             http_hosts: manifest.http_hosts(),
+            link_hosts: manifest.link_hosts(),
             message_to: manifest.message_to(),
             cache_gib: manifest.cache_gib(),
             lens_read: grantable(manifest, domains)
@@ -765,6 +824,7 @@ impl Grants {
             && self.plugin_id == manifest.id()
             && manifest.permissions().is_subset(&self.permissions)
             && manifest.http_hosts().is_subset(&self.http_hosts)
+            && manifest.link_hosts().is_subset(&self.link_hosts)
             && manifest.message_to().is_subset(&self.message_to)
             && manifest
                 .cache_gib()
@@ -821,6 +881,7 @@ description = "Community translations."
             read: wording("Sees the items you carry"),
             change: None,
             act: None,
+            act_local: false,
         })
     }
 
@@ -1041,6 +1102,7 @@ hosts = [\"example.com\"]
         for (from, to) in [
             ("manifest = 1", "manifest = 2"),
             ("id = \"harmonia\"", "id = \"Harmonia\""),
+            ("id = \"harmonia\"", "id = \"angelica\""),
             ("api = \"1.0\"", "api = \"1.5\""),
             ("version = \"0.2.0\"", "version = \"two\""),
             ("\"draw.world\" = true", "\"game.memory\" = true"),

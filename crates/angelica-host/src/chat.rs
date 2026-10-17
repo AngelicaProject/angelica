@@ -11,6 +11,8 @@ use std::{
 
 /// Spans of one message.
 pub const MAX_SPANS: usize = 64;
+/// Item links of one message.
+pub const MAX_LINKS: usize = 8;
 /// Bytes of text of one message.
 pub const MAX_TEXT: usize = 2000;
 /// Messages a plugin prints in any [`WINDOW`].
@@ -32,6 +34,27 @@ const NEW_LINE: u8 = 0x10;
 const ITALIC: u8 = 0x1A;
 /// Text color by `UIColor` row; row 0 restores the previous color.
 const FOREGROUND: u8 = 0x48;
+/// The glow around text by `UIColor` row; row 0 restores the previous one.
+const GLOW: u8 = 0x49;
+/// A link the player clicks; its first argument is the kind of link.
+const LINK: u8 = 0x27;
+/// The kind of link of an item.
+const ITEM_LINK: u32 = 2;
+/// The item number of an item's high-quality version.
+const HQ_OFFSET: u32 = 1_000_000;
+/// The `UIColor` rows of an item link's color and glow at rarity 0; each
+/// rarity is two rows further.
+const ITEM_COLOR: u32 = 0x223;
+const ITEM_GLOW: u32 = 0x224;
+/// The color and glow of the link's arrow.
+const ARROW_COLOR: u32 = 500;
+const ARROW_GLOW: u32 = 501;
+/// The arrow before a link, and the mark of high quality, in the game's
+/// font.
+const ARROW: char = '\u{E0BB}';
+const HQ_MARK: char = '\u{E03C}';
+/// The link macro that ends a link.
+const LINK_END: [u8; 10] = [STX, LINK, 0x07, 0xCF, 0x01, 0x01, 0x01, 0xFF, 0x01, ETX];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -48,6 +71,24 @@ pub struct Span {
     pub text: String,
     pub tone: Tone,
     pub italic: bool,
+}
+
+/// An item linked in a message: its row of `Item`, whether it is the
+/// high-quality version, and its name (the game's text) and rarity from the
+/// sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemLink {
+    pub item: u32,
+    pub hq: bool,
+    pub name: Vec<u8>,
+    pub rarity: u8,
+}
+
+/// A part of a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Piece {
+    Span(Span),
+    Item(ItemLink),
 }
 
 impl Span {
@@ -100,18 +141,41 @@ impl Chat {
 /// Names the rule a message breaks: too many spans, too much text, or a
 /// control character other than a line break.
 pub fn check(spans: &[Span]) -> Result<(), String> {
-    if spans.len() > MAX_SPANS {
+    check_spans(spans.iter(), 0)
+}
+
+/// Checks a message of spans and item links: its spans as [`check`] does,
+/// and at most [`MAX_LINKS`] links. A link alone makes a message.
+///
+/// # Errors
+/// Names the rule the message breaks.
+pub fn check_pieces(pieces: &[Piece]) -> Result<(), String> {
+    let spans = pieces.iter().filter_map(|piece| match piece {
+        Piece::Span(span) => Some(span),
+        Piece::Item(_) => None,
+    });
+    let links = pieces.len() - spans.clone().count();
+    if links > MAX_LINKS {
+        return Err(format!("a message has at most {MAX_LINKS} item links"));
+    }
+    check_spans(spans, links)
+}
+
+fn check_spans<'a>(
+    spans: impl Iterator<Item = &'a Span> + Clone,
+    links: usize,
+) -> Result<(), String> {
+    if spans.clone().count() > MAX_SPANS {
         return Err(format!("a message has at most {MAX_SPANS} spans"));
     }
-    let text: usize = spans.iter().map(|span| span.text.len()).sum();
+    let text: usize = spans.clone().map(|span| span.text.len()).sum();
     if text > MAX_TEXT {
         return Err(format!("a message has at most {MAX_TEXT} bytes of text"));
     }
-    if spans.iter().all(|span| span.text.trim().is_empty()) {
+    if links == 0 && spans.clone().all(|span| span.text.trim().is_empty()) {
         return Err("the message is empty".into());
     }
     if let Some(c) = spans
-        .iter()
         .flat_map(|span| span.text.chars())
         .find(|&c| c.is_control() && c != '\n')
     {
@@ -124,13 +188,27 @@ pub fn check(spans: &[Span]) -> Result<(), String> {
 /// space, then each span.
 #[must_use]
 pub fn encode(name: &str, spans: &[Span]) -> Vec<u8> {
+    let pieces: Vec<Piece> = spans.iter().cloned().map(Piece::Span).collect();
+    encode_pieces(name, &pieces)
+}
+
+/// The game's text of a checked message of spans and item links.
+#[must_use]
+pub fn encode_pieces(name: &str, pieces: &[Piece]) -> Vec<u8> {
     let mut out = Vec::new();
     let name: String = name.chars().filter(|c| !c.is_control()).collect();
     color(&mut out, NAME_COLOR);
     out.extend_from_slice(format!("[{}]", name.trim()).as_bytes());
     color(&mut out, 0);
     out.push(b' ');
-    for span in spans {
+    for piece in pieces {
+        let span = match piece {
+            Piece::Span(span) => span,
+            Piece::Item(link) => {
+                item_link(&mut out, link);
+                continue;
+            }
+        };
         let row = match span.tone {
             Tone::Normal => None,
             Tone::Accent => Some(ACCENT_COLOR),
@@ -161,8 +239,63 @@ pub fn encode(name: &str, spans: &[Span]) -> Vec<u8> {
     out
 }
 
+/// The game's text of `text` in the color of plugin names, which the game's
+/// own text never takes; control characters are left out.
+#[must_use]
+pub fn named(text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    color(&mut out, NAME_COLOR);
+    out.extend(
+        text.chars()
+            .filter(|c| !c.is_control())
+            .collect::<String>()
+            .bytes(),
+    );
+    color(&mut out, 0);
+    out
+}
+
 fn color(out: &mut Vec<u8>, row: u32) {
     macro_with(out, FOREGROUND, row);
+}
+
+fn glow(out: &mut Vec<u8>, row: u32) {
+    macro_with(out, GLOW, row);
+}
+
+/// An item link as the game writes one: the color and glow of the item's
+/// rarity, the link macro with the item's number, the arrow, the name with
+/// the mark of high quality, the macro that ends the link, and the colors
+/// restored.
+fn item_link(out: &mut Vec<u8>, link: &ItemLink) {
+    let rarity = u32::from(link.rarity);
+    color(out, ITEM_COLOR + rarity * 2);
+    glow(out, ITEM_GLOW + rarity * 2);
+    let item = if link.hq {
+        link.item.saturating_add(HQ_OFFSET)
+    } else {
+        link.item
+    };
+    let mut arguments = integer(ITEM_LINK);
+    arguments.extend(integer(item));
+    arguments.extend(integer(1));
+    arguments.extend(integer(0));
+    out.extend_from_slice(&[STX, LINK, u8::try_from(arguments.len() + 1).unwrap_or(0)]);
+    out.extend_from_slice(&arguments);
+    out.push(ETX);
+    color(out, ARROW_COLOR);
+    glow(out, ARROW_GLOW);
+    out.extend_from_slice(ARROW.to_string().as_bytes());
+    glow(out, 0);
+    color(out, 0);
+    out.extend_from_slice(&link.name);
+    if link.hq {
+        out.push(b' ');
+        out.extend_from_slice(HQ_MARK.to_string().as_bytes());
+    }
+    out.extend_from_slice(&LINK_END);
+    glow(out, 0);
+    color(out, 0);
 }
 
 /// A macro with one integer argument.
@@ -240,6 +373,55 @@ mod tests {
         let reset = [STX, FOREGROUND, 2, 1, ETX];
         assert!(text.windows(reset.len()).any(|w| w == reset));
         assert!(text.windows(5).any(|w| w == [STX, ITALIC, 2, 2, ETX]));
+    }
+
+    #[test]
+    fn an_item_link_is_written_as_the_game_writes_one() {
+        let pieces = [
+            Piece::Span(Span::new("Found ", Tone::Normal)),
+            Piece::Item(ItemLink {
+                item: 5057,
+                hq: true,
+                name: b"Iron Ingot".to_vec(),
+                rarity: 1,
+            }),
+        ];
+        check_pieces(&pieces).unwrap();
+        let text = encode_pieces("Hello", &pieces);
+        assert!(angelica_text::sestring::is_well_formed(&text));
+        assert_eq!(
+            plain(&text),
+            "[Hello] Found \u{E0BB}Iron Ingot \u{E03C}",
+            "the arrow, the name, and the mark of high quality"
+        );
+        // Rarity 1: color 0x225 and glow 0x226.
+        let rarity = [
+            STX, FOREGROUND, 4, 0xF2, 0x02, 0x25, ETX, STX, GLOW, 4, 0xF2, 0x02, 0x26, ETX,
+        ];
+        assert!(text.windows(rarity.len()).any(|w| w == rarity));
+        // The link: item kind 2, then 1 005 057 (0x0F5601), 1, and 0.
+        let link = [STX, LINK, 8, 3, 0xF6, 0x0F, 0x56, 0x01, 2, 1, ETX];
+        assert!(text.windows(link.len()).any(|w| w == link), "{text:02X?}");
+        assert!(text.windows(LINK_END.len()).any(|w| w == LINK_END));
+        assert!(text.ends_with(&[STX, GLOW, 2, 1, ETX, STX, FOREGROUND, 2, 1, ETX]));
+
+        let alone = [Piece::Item(ItemLink {
+            item: 2,
+            hq: false,
+            name: b"Fire Shard".to_vec(),
+            rarity: 1,
+        })];
+        check_pieces(&alone).unwrap();
+        assert_eq!(
+            plain(&encode_pieces("Hello", &alone)),
+            "[Hello] \u{E0BB}Fire Shard"
+        );
+        assert!(
+            check_pieces(&vec![alone[0].clone(); MAX_LINKS + 1])
+                .unwrap_err()
+                .contains("item links")
+        );
+        assert!(check_pieces(&[Piece::Span(Span::new(" ", Tone::Normal))]).is_err());
     }
 
     #[test]

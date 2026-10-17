@@ -348,6 +348,16 @@ impl Overlay {
         }
     }
 
+    /// Whether the menu is open this frame, after the requests to open or
+    /// close it from the game: `/angelica` and the System menu's entry.
+    fn menu_open(&self) -> bool {
+        if self.host.services().commands.take_menu() {
+            self.input.menu.fetch_xor(true, Ordering::AcqRel);
+            self.input.release();
+        }
+        self.input.menu.load(Ordering::Acquire)
+    }
+
     fn frame(&self, chain: &IDXGISwapChain) -> Result<(), String> {
         if self.disabled.load(Ordering::Acquire) || !self.attach {
             return Ok(());
@@ -406,7 +416,7 @@ impl Overlay {
             return Err("GetClientRect failed".into());
         }
         let input = self.raw_input(&rect, scale, now.duration_since(frame.started))?;
-        let menu = self.input.menu.load(Ordering::Acquire);
+        let menu = self.menu_open();
         let panel = &mut frame.panel;
         let chosen = self.input.chosen_key.swap(0, Ordering::AcqRel);
         if chosen != 0 {
@@ -521,12 +531,16 @@ impl Overlay {
         })
     }
 
-    /// Puts the text the player or a plugin copied on the clipboard.
+    /// Puts the text the player or a plugin copied on the clipboard, and
+    /// opens the links plugins opened, which the host checked.
     fn copy(&self, commands: Vec<egui::OutputCommand>) {
         for command in commands {
             if let egui::OutputCommand::CopyText(text) = command {
                 super::clipboard::set_text(self.input.window(), &text);
             }
+        }
+        for url in self.host.services().links.take() {
+            super::open_link(url);
         }
     }
 

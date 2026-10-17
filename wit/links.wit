@@ -1,0 +1,18 @@
+package angelica:plugin@1.0.0;
+
+/// Pages opened in the player's browser. A plugin opens a page only for an
+/// action of the player: a click in one of its windows, or one of its
+/// commands. The host opens it with the browser Windows uses for links;
+/// the plugin learns nothing of what the browser does.
+interface links {
+    use types.{error};
+
+    /// Opens `url` in the player's browser at the end of the frame. The URL
+    /// is an absolute `https://` URL of at most 2048 bytes, without spaces,
+    /// control characters, user name, or password, on port 443, to a host
+    /// the manifest lists in `[links] hosts` (`invalid-argument`, or
+    /// `permission-denied` for an unlisted host). Needs `links.open`; from the main instance in
+    /// `ui-event` or `command` only, `wrong-context` elsewhere. One link a
+    /// second, `limit-exceeded` past that.
+    open: func(url: string) -> result<_, error>;
+}

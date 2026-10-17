@@ -190,13 +190,16 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
         let compiled = wasmtime::component::Component::new(&sandbox.engine, &wasm)
             .and_then(|component| component.serialize())
             .map_err(|e| format!("{component}: {e}"))?;
-        let files = BTreeMap::from([
+        let mut files = BTreeMap::from([
             ("angelica.toml".to_owned(), manifest_text),
             ("plugin.wasm".to_owned(), wasm),
             ("plugin.cwasm".to_owned(), compiled),
             // Marks the plugin as in development in the menu.
             ("development".to_owned(), b"angelica dev install\n".to_vec()),
         ]);
+        if let Some(icon) = crate::author::plugin_icon(Path::new(source))? {
+            files.insert("icon.png".to_owned(), icon);
+        }
         package(
             &args.installation.join("plugins").join(manifest.id()),
             &files,

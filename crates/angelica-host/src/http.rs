@@ -97,7 +97,7 @@ pub fn check_host_pattern(pattern: &str) -> std::result::Result<(), &'static str
 }
 
 /// Whether one of `patterns` matches `host`.
-fn listed(patterns: &[String], host: &str) -> bool {
+pub(crate) fn listed(patterns: &[String], host: &str) -> bool {
     let host = host.to_ascii_lowercase();
     patterns
         .iter()

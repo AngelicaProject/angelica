@@ -54,7 +54,8 @@ reason = "Reads chat it did not declare."
       "hosts": ["*.github.io", "github.com", "*.githubusercontent.com"],
       "link": "https://github.com/AngelicaProject/angelica-registry/releases/download/harmonia/harmonia.angelica",
       "sha256": "<lowercase SHA-256 of the plugin file>",
-      "source": "https://github.com/AngelicaProject/harmonia-angelica/tree/v0.2.0"
+      "source": "https://github.com/AngelicaProject/harmonia-angelica/tree/v0.2.0",
+      "icon": "89504e47…"
     }
   ],
   "withdrawn": [
@@ -63,4 +64,4 @@ reason = "Reads chat it did not declare."
 }
 ```
 
-`name`, `description`, `version`, `authors`, `permissions`, and `hosts` are copied from the published plugin's manifest; `link` serves the plugin file whose SHA-256 is `sha256`. A withdrawn entry without `version` withdraws every version. A reader refuses another format, an id that is not a valid plugin id, a link that is not `https`, and unknown fields.
+`name`, `description`, `version`, `authors`, `permissions`, and `hosts` are copied from the published plugin's manifest; `link` serves the plugin file whose SHA-256 is `sha256`. `icon`, present when the plugin file has an [icon](./plugin-file-v1.md#layout), is that icon made at most 64 pixels a side, as a PNG in lowercase hexadecimal; the menu shows it in the plugin's row, and a reader ignores an icon that is not a valid one. A withdrawn entry without `version` withdraws every version. A reader refuses another format, an id that is not a valid plugin id, a link that is not `https`, and unknown fields.

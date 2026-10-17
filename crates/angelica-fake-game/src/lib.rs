@@ -42,6 +42,8 @@ pub struct ScriptedGame {
     pub case_available: AtomicBool,
     pub files_available: AtomicBool,
     pub commands_available: AtomicBool,
+    /// Whether the host asked for plugins' entries in item menus.
+    pub menus_enabled: AtomicBool,
     /// False until the chat log exists.
     pub chat_available: AtomicBool,
     /// Every message printed in the chat log, as the game's text.
@@ -90,6 +92,7 @@ impl Default for ScriptedGame {
             case_available: AtomicBool::new(true),
             files_available: AtomicBool::new(true),
             commands_available: AtomicBool::new(true),
+            menus_enabled: AtomicBool::new(false),
             chat_available: AtomicBool::new(true),
             printed: Mutex::new(Vec::new()),
             print_panics: AtomicBool::new(false),
@@ -162,6 +165,11 @@ impl Game for ScriptedGame {
         } else {
             Err("map entry shell.command_module.execute_command_inner is absent".into())
         }
+    }
+
+    fn enable_menus(&self) -> Result<(), String> {
+        self.menus_enabled.store(true, Ordering::Release);
+        Ok(())
     }
 
     fn query(
@@ -486,6 +494,8 @@ impl TestHost {
             draw: Arc::new(runtime::draw::Drawings::default()),
             messages: Arc::new(runtime::messages::Messages::default()),
             clipboard: Arc::new(runtime::clipboard::Clipboard::default()),
+            links: Arc::new(runtime::links::Links::default()),
+            menus: Arc::new(runtime::menus::Menus::default()),
             notifications: Arc::new(runtime::notifications::Notifications::default()),
             sounds: Arc::new(runtime::sound::Sounds::default()),
             sockets: Arc::new(runtime::sockets::Sockets::dialing({
@@ -654,6 +664,24 @@ impl TestHost {
                 value: value.into(),
             }),
         );
+    }
+
+    /// The player opens the menu of an item of the row `item` and chooses
+    /// the plugins' entry at `index` among those the menu shows; the frame
+    /// runs. Whether the host asked for the entries is
+    /// `game.menus_enabled`.
+    ///
+    /// # Panics
+    /// When the menu shows no entry at `index`.
+    pub fn choose_in_item_menu(&self, index: usize, item: u32) {
+        let services = self.host.services();
+        let shown = services.menus.items().swap_remove(index);
+        services.menus.choose(runtime::menus::Chosen {
+            plugin: shown.plugin,
+            entry: shown.entry,
+            value: item,
+        });
+        self.frames(1);
     }
 
     /// The player sets a checkbox; the frame runs.

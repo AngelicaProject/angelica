@@ -45,7 +45,9 @@ fn outcome<T>(result: Result<T, angelica_sdk::Error>) -> String {
 impl Hostile {
     fn click(&mut self, id: &str) {
         match id {
-            "spin" | "host-loop" | "memory" | "stack" | "panic" => self.next = Some(id.into()),
+            "spin" | "host-loop" | "memory" | "stack" | "panic" | "link-later" => {
+                self.next = Some(id.into());
+            }
             "burn" => burn(),
             "huge-ui" => self.huge = true,
             "jobs" => {
@@ -136,6 +138,10 @@ impl Plugin for Hostile {
                 black_box(deeper(0));
             }
             Some("panic") => panic!("the plugin panics"),
+            // A link opened on the plugin's own, not for the player's click.
+            Some("link-later") => {
+                self.report = outcome(angelica_sdk::links::open("https://example.com/"));
+            }
             _ => {}
         }
         Ok(())

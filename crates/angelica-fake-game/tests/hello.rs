@@ -80,8 +80,13 @@ fn without_permissions(names: &[&str]) -> String {
 /// The example's manifest without `http.get` and its hosts.
 fn without_http() -> String {
     without_permissions(&["http.get", "http.websocket"])
+        .replace(
+            "[http]
+hosts = [\"example.com\"]
+",
+            "",
+        )
         .lines()
-        .filter(|line| *line != "[http]" && !line.starts_with("hosts ="))
         .collect::<Vec<_>>()
         .join(
             "
@@ -449,6 +454,46 @@ Hello, Alphinaud!"]
 }
 
 #[test]
+fn an_item_is_linked_in_the_chat_log_by_its_row() {
+    use angelica_fake_game::game_files::{FakeRow, FakeSheet, FakeValue};
+    use angelica_sqpack::excel::{ColumnKind, Language};
+    let sheet = FakeSheet::new(vec![ColumnKind::String, ColumnKind::UInt32]).with_rows(
+        Language::English,
+        vec![
+            FakeRow::new(
+                1,
+                vec![FakeValue::String(b"Potion".to_vec()), FakeValue::UInt32(2)],
+            ),
+            FakeRow::new(2, vec![FakeValue::String(Vec::new()), FakeValue::UInt32(1)]),
+        ],
+    );
+    let game = game_with_commands().with_sheet("Item", sheet);
+    let test = approved_over(&game, MANIFEST, |_| {});
+    assert!(printed(&test, "/hello item 1").is_empty());
+    assert_eq!(
+        message(&test),
+        "cannot print: the game map names no columns of sheet Item"
+    );
+    test.name_columns("Item", &[("name", 0), ("rarity", 1)]);
+    assert_eq!(
+        printed(&test, "/hello item 1 on"),
+        ["[Hello] Here is \u{E0BB}Potion \u{E03C}"]
+    );
+    let link = test.game.printed.lock().unwrap()[0].clone();
+    // Rarity 2: the color row 0x227; the link names item 1 000 001.
+    let color = [0x02, 0x48, 0x04, 0xF2, 0x02, 0x27, 0x03];
+    assert!(link.windows(color.len()).any(|w| w == color), "{link:02X?}");
+    let item = [
+        0x02, 0x27, 0x08, 0x03, 0xF6, 0x0F, 0x42, 0x41, 0x02, 0x01, 0x03,
+    ];
+    assert!(link.windows(item.len()).any(|w| w == item), "{link:02X?}");
+    assert!(printed(&test, "/hello item 2").is_empty());
+    assert_eq!(message(&test), "cannot print: item 2 has no name");
+    assert!(printed(&test, "/hello item 3").is_empty());
+    assert_eq!(message(&test), "cannot print: the Item sheet has no row 3");
+}
+
+#[test]
 fn the_host_answers_help_mistakes_and_errors() {
     let test = with_commands(MANIFEST, |_| {});
     let help = printed(&test, "/hello help");
@@ -644,6 +689,75 @@ fn a_greeting_is_copied_for_the_players_click() {
         "cannot copy: the plugin does not hold clipboard.write"
     );
     assert_eq!(test.host.services().clipboard.take(), None);
+}
+
+#[test]
+fn a_page_opens_in_the_browser_for_the_players_click() {
+    let test = approved(MANIFEST);
+    click(&test, "link");
+    assert_eq!(message(&test), "opened");
+    assert_eq!(
+        test.host.services().links.take(),
+        ["https://example.com/hello"]
+    );
+    click(&test, "link");
+    assert_eq!(
+        message(&test),
+        "cannot open: a plugin opens at most one link a second"
+    );
+
+    let test = approved(&MANIFEST.replace(
+        "[links]
+hosts = [\"example.com\"]",
+        "[links]
+hosts = [\"other.example.com\"]",
+    ));
+    click(&test, "link");
+    assert_eq!(
+        message(&test),
+        "cannot open: example.com is not a host the plugin's manifest lists in [links] hosts"
+    );
+
+    let test = approved(
+        &MANIFEST
+            .replace(
+                "\"links.open\" = true
+",
+                "",
+            )
+            .replace(
+                "[links]
+hosts = [\"example.com\"]",
+                "",
+            ),
+    );
+    click(&test, "link");
+    assert_eq!(
+        message(&test),
+        "cannot open: the plugin does not hold links.open"
+    );
+    assert!(test.host.services().links.take().is_empty());
+}
+
+#[test]
+fn an_entry_in_the_menu_of_an_item_tells_the_plugin_the_item() {
+    let test = approved(MANIFEST);
+    assert!(
+        test.game
+            .menus_enabled
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    let shown = test.host.services().menus.items();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].plugin, "hello");
+    assert_eq!(runtime::chat::plain(&shown[0].label), "Hello: say its row");
+    test.choose_in_item_menu(0, 5057);
+    assert_eq!(message(&test), "item 5057 from its menu");
+
+    test.host
+        .queue(runtime::host::Action::Disable("hello".into()));
+    test.frames(1);
+    assert!(test.host.services().menus.items().is_empty());
 }
 
 #[test]
@@ -1077,8 +1191,8 @@ fn sprint_is_taken_through_the_map_under_its_domain() {
 
     let test = with_character(
         &MANIFEST.replace(
-            "act = [\"actions\", \"teleport\", \"windows\"]",
-            "act = [\"teleport\", \"windows\"]",
+            "act = [\"actions\", \"fitting\", \"teleport\", \"windows\"]",
+            "act = [\"fitting\", \"teleport\", \"windows\"]",
         ),
         &[],
     );
@@ -1248,6 +1362,7 @@ fn approval_names_the_domains_in_the_maps_words() {
             "statuses",
             "windows",
             "actions.act",
+            "fitting.act",
             "teleport.act",
             "windows.act",
             "camera.change",

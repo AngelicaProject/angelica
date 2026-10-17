@@ -49,6 +49,7 @@ pub mod excel;
 pub mod http;
 pub mod jobs;
 pub mod lens;
+pub mod links;
 pub mod messages;
 pub mod notifications;
 pub mod sound;
@@ -60,7 +61,7 @@ pub mod websocket;
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
         chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http, jobs,
-        lens, messages, notifications, runtime, sound, storage, types, websocket,
+        lens, links, messages, notifications, runtime, sound, storage, types, websocket,
     };
 }
 
@@ -100,6 +101,13 @@ pub trait Plugin: Sized + 'static {
     /// The plugin's panels for this frame: small parts of the screen the
     /// player places and keeps in view (see [`ui::Panel`]).
     fn panels(&mut self) -> Vec<ui::Panel> {
+        Vec::new()
+    }
+
+    /// The plugin's entries in the game's menus for this frame, such as
+    /// the menu of an item (see [`ui::MenuEntry`]); the player's choice
+    /// arrives as `ui::Event::MenuChosen`.
+    fn menu_entries(&mut self) -> Vec<ui::MenuEntry> {
         Vec::new()
     }
 
@@ -191,7 +199,8 @@ macro_rules! plugin {
                     with(::std::vec::Vec::new(), |plugin| {
                         let windows = $crate::Plugin::ui(plugin);
                         let panels = $crate::Plugin::panels(plugin);
-                        $crate::ui::view_to_wit(windows, panels)
+                        let entries = $crate::Plugin::menu_entries(plugin);
+                        $crate::ui::view_to_wit(windows, panels, entries)
                     })
                 }
 

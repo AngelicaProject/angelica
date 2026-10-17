@@ -1,6 +1,6 @@
 //! The rules the host applies to places before showing them
 //! ([plugin API](../../../docs/formats/plugin-api-v1.md#rules-for-every-place-and-part)).
-use crate::{Choice, Entry, Number, Place, Popup, Widget};
+use crate::{Checkbox, Choice, Entry, MenuEntry, Number, Place, Popup, Split, Tabs, Widget};
 use std::collections::BTreeSet;
 
 pub const MAX_WINDOWS: usize = 16;
@@ -21,6 +21,10 @@ pub const MAX_ENTRY_FACTS: usize = 16;
 pub const MAX_RING_TEXT: usize = 8;
 pub const MAX_PANEL_NAME: usize = 64;
 pub const MAX_SPARKLINE: usize = 256;
+pub const MAX_SECTIONS: usize = 64;
+pub const MAX_MENU_ENTRIES: usize = 4;
+pub const MAX_MENU_LABEL: usize = 40;
+pub const MAX_WORD: usize = 32;
 
 /// What a `Begin…` opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +34,7 @@ enum Group {
     Grid,
     Section,
     Table,
+    Split,
 }
 
 /// Checks the windows and panels `ui` returned.
@@ -44,7 +49,14 @@ pub fn places(places: &[Place]) -> Result<(), String> {
     if windows > MAX_WINDOWS {
         return Err(format!("more than {MAX_WINDOWS} windows"));
     }
-    if places.len() - windows > MAX_PANELS {
+    let entries = places
+        .iter()
+        .filter(|p| matches!(p, Place::MenuEntry(_)))
+        .count();
+    if entries > MAX_MENU_ENTRIES {
+        return Err(format!("more than {MAX_MENU_ENTRIES} menu entries"));
+    }
+    if places.len() - windows - entries > MAX_PANELS {
         return Err(format!("more than {MAX_PANELS} panels"));
     }
     let mut ids = BTreeSet::new();
@@ -103,7 +115,7 @@ pub fn places(places: &[Place]) -> Result<(), String> {
                             name(input)
                         ));
                     }
-                    widgets(&dialog.widgets, &mut count)
+                    widgets(&dialog.widgets, &mut count, false)
                         .map_err(|e| format!("{dialog_id}: {e}"))?;
                 }
             }
@@ -116,8 +128,10 @@ pub fn places(places: &[Place]) -> Result<(), String> {
                 }
                 count(&panel.name, "the name")?;
             }
+            Place::MenuEntry(entry) => menu_entry(entry, &mut count)?,
         }
-        widgets(place.widgets(), &mut count).map_err(|e| format!("{id}: {e}"))?;
+        let splits = matches!(place, Place::Window(_));
+        widgets(place.widgets(), &mut count, splits).map_err(|e| format!("{id}: {e}"))?;
     }
     if text > MAX_TOTAL_TEXT {
         return Err(format!("more than {MAX_TOTAL_TEXT} bytes of text"));
@@ -145,7 +159,7 @@ pub fn popup(popup: &Popup) -> Result<(), String> {
         }
         Ok(())
     };
-    widgets(&popup.widgets, &mut count)
+    widgets(&popup.widgets, &mut count, false)
 }
 
 /// Whether a part takes the player's input or is collapsed by the player.
@@ -162,6 +176,7 @@ fn takes_input(widget: &Widget) -> bool {
             | Widget::BeginSection(_)
             | Widget::Tooltip(_)
             | Widget::BeginTable(_)
+            | Widget::BeginSplit(_)
     )
 }
 
@@ -177,22 +192,35 @@ fn name(widget: &Widget) -> &'static str {
         Widget::BeginSection(_) => "section",
         Widget::Tooltip(_) => "tooltip",
         Widget::BeginTable(_) => "table",
+        Widget::BeginSplit(_) => "split",
         _ => "part",
     }
 }
 
-/// Checks the parts of one place.
+/// Checks the parts of one place; only a window's own parts hold a split.
 fn widgets(
     widgets: &[Widget],
     count: &mut impl FnMut(&str, &str) -> Result<(), String>,
+    splits: bool,
 ) -> Result<(), String> {
     let mut ids = BTreeSet::new();
     let mut open: Vec<Group> = Vec::new();
     let mut previous: Option<&Widget> = None;
+    let mut split_ended = false;
     for widget in widgets {
+        if split_ended {
+            return Err("a split is the last part of its window".into());
+        }
         let id = widget_rules(widget, count)?;
         let in_table = open.contains(&Group::Table);
         match widget {
+            Widget::BeginSplit(_) if !splits => {
+                return Err("only a window holds a split".into());
+            }
+            Widget::BeginSplit(_) if !open.is_empty() => {
+                return Err("a split is a window's own part, in no container".into());
+            }
+            Widget::BeginSplit(_) => open.push(Group::Split),
             Widget::BeginRow => open.push(Group::Row),
             Widget::BeginColumn => open.push(Group::Column),
             Widget::BeginGrid(_) => open.push(Group::Grid),
@@ -205,17 +233,20 @@ fn widgets(
             | Widget::EndColumn
             | Widget::EndGrid
             | Widget::EndSection
-            | Widget::EndTable => {
+            | Widget::EndTable
+            | Widget::EndSplit => {
                 let expected = match widget {
                     Widget::EndRow => Group::Row,
                     Widget::EndColumn => Group::Column,
                     Widget::EndGrid => Group::Grid,
                     Widget::EndSection => Group::Section,
+                    Widget::EndSplit => Group::Split,
                     _ => Group::Table,
                 };
                 if open.pop() != Some(expected) {
                     return Err("an end does not match its container".into());
                 }
+                split_ended = expected == Group::Split;
             }
             Widget::Tooltip(_) if !previous.is_some_and(shows_something) => {
                 return Err("a tooltip does not follow a part".into());
@@ -261,6 +292,8 @@ fn shows_something(widget: &Widget) -> bool {
             | Widget::EndSection
             | Widget::BeginTable(_)
             | Widget::EndTable
+            | Widget::BeginSplit(_)
+            | Widget::EndSplit
             | Widget::Tooltip(_)
             | Widget::Separator
             | Widget::Spacer
@@ -296,6 +329,92 @@ fn entry(
     for action in value.actions.iter().chain(&value.more) {
         count(&action.label, "a label")?;
     }
+    Ok(())
+}
+
+fn menu_entry(
+    entry: &MenuEntry,
+    count: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let length = entry.label.chars().count();
+    if entry.label.trim().is_empty()
+        || length > MAX_MENU_LABEL
+        || entry.label.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "menu entry {}: a label of 1 to {MAX_MENU_LABEL} characters without control characters",
+            entry.id
+        ));
+    }
+    count(&entry.label, "a label")
+}
+
+fn tabs(
+    value: &Tabs,
+    count: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    if value.labels.is_empty() || value.labels.len() > MAX_TABS {
+        return Err(format!("tabs {} have 1 to {MAX_TABS} labels", value.id));
+    }
+    for tab in &value.labels {
+        count(tab, "a tab")?;
+    }
+    if value.selected as usize >= value.labels.len() {
+        return Err(format!("tabs {} select a missing tab", value.id));
+    }
+    Ok(())
+}
+
+fn checkbox(
+    value: &Checkbox,
+    count: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    count(&value.label, "a label")?;
+    for word in value.words.iter().flatten() {
+        let length = word.chars().count();
+        if word.trim().is_empty() || length > MAX_WORD {
+            return Err(format!(
+                "checkbox {} has words of 1 to {MAX_WORD} characters",
+                value.id
+            ));
+        }
+        count(word, "a word")?;
+    }
+    Ok(())
+}
+
+fn split(
+    value: &Split,
+    count: &mut impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let sections = value.labels.len();
+    if sections == 0 || sections > MAX_SECTIONS {
+        return Err(format!(
+            "split {} has 1 to {MAX_SECTIONS} sections",
+            value.id
+        ));
+    }
+    if value.values.len() > sections || value.groups.len() > sections {
+        return Err(format!(
+            "split {} has more values or groups than sections",
+            value.id
+        ));
+    }
+    if value.selected as usize >= sections {
+        return Err(format!("split {} selects a missing section", value.id));
+    }
+    if !(96..=320).contains(&value.width) {
+        return Err(format!("split {} is 96 to 320 wide", value.id));
+    }
+    for text in value
+        .labels
+        .iter()
+        .chain(&value.values)
+        .chain(&value.groups)
+    {
+        count(text, "a section")?;
+    }
+    count(&value.action, "an action")?;
     Ok(())
 }
 
@@ -367,7 +486,7 @@ fn widget_rules<'a>(
             Some(&value.id)
         }
         Widget::Checkbox(value) => {
-            count(&value.label, "a label")?;
+            checkbox(value, count)?;
             Some(&value.id)
         }
         Widget::TextInput(value) => {
@@ -390,15 +509,11 @@ fn widget_rules<'a>(
             Some(&value.id)
         }
         Widget::Tabs(value) => {
-            if value.labels.is_empty() || value.labels.len() > MAX_TABS {
-                return Err(format!("tabs {} have 1 to {MAX_TABS} labels", value.id));
-            }
-            for tab in &value.labels {
-                count(tab, "a tab")?;
-            }
-            if value.selected as usize >= value.labels.len() {
-                return Err(format!("tabs {} select a missing tab", value.id));
-            }
+            tabs(value, count)?;
+            Some(&value.id)
+        }
+        Widget::BeginSplit(value) => {
+            split(value, count)?;
             Some(&value.id)
         }
         Widget::BeginTable(value) => {
@@ -443,7 +558,8 @@ fn widget_rules<'a>(
         | Widget::EndColumn
         | Widget::EndGrid
         | Widget::EndSection
-        | Widget::EndTable => None,
+        | Widget::EndTable
+        | Widget::EndSplit => None,
     }
     .map(String::as_str))
 }

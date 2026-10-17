@@ -29,9 +29,11 @@ pub mod jobs;
 pub mod key;
 pub mod language;
 pub mod lens;
+pub mod links;
 pub mod look;
 pub mod manifest;
 pub mod menu;
+pub mod menus;
 pub mod messages;
 #[cfg(test)]
 mod mutations;
