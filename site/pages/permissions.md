@@ -21,11 +21,11 @@ Everything else is a permission. Before a plugin runs for the first time, the An
 
 | Group | Examples of what you see |
 | --- | --- |
-| **Acts in the game for you** | "Uses actions for you: abilities, spells, items, mounts"; "Answers the game's dialogs for you" |
-| **Uses the internet** | "Downloads from these internet hosts", followed by the list of hosts |
-| **Sees other players** | "Sees your chat log, including other players' messages" |
-| **Changes what you see** | "Replaces game files: fonts, textures, materials, and models"; "Changes your camera's zoom limits" |
-| **Only for you** | "Sees the items you carry"; "Prints its messages in your chat log" |
+| **Act in the game for you** | "Use actions for you: abilities, spells, items, mounts"; "Answer the game's dialogs for you" |
+| **Use the internet** | "Download from these sites", followed by the list of hosts |
+| **See other players** | "See your chat log, including other players' messages" |
+| **Change what you see** | "Replace game files: fonts, textures, materials, and models"; "Change your camera's zoom limits" |
+| **Other** | "See the items you carry"; "Print its messages in your chat log" |
 
 The plugin gets what you approve and nothing else. You can turn it off or remove it in the Angelica window at any time.
 
@@ -37,4 +37,4 @@ A plugin with an internet permission reaches only the hosts it listed and you ap
 
 ## When a plugin fails
 
-If a plugin crashes, takes too long, or goes past one of its limits, Angelica turns it off and the game keeps running. The reason is under **Settings > For developers**. Select the plugin and **Copy report** to send its author what they need. See [When something goes wrong](troubleshooting.md).
+If a plugin crashes, takes too long, or goes past one of its limits, Angelica turns it off and the game keeps running. The reason is under **Settings > For developers**. Select the plugin and **Copy report for the author** to send its author what they need. See [When something goes wrong](troubleshooting.md).

@@ -48,6 +48,9 @@ pub struct Domain {
     pub change: Option<Wording>,
     /// What acting in it allows, for `act`.
     pub act: Option<Wording>,
+    /// Its actions only change what the game shows on the player's
+    /// computer and send nothing to the game's servers.
+    pub act_local: bool,
 }
 
 /// Named values of a field; with `flags`, names of single bits.
@@ -323,6 +326,8 @@ struct RawDomain {
     read: RawWording,
     change: Option<RawWording>,
     act: Option<RawWording>,
+    #[serde(default)]
+    act_local: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -483,6 +488,9 @@ pub(crate) fn parse_domains(text: &str) -> Result<BTreeMap<String, Domain>, Stri
                 ));
             }
         };
+        if domain.act_local && domain.act.is_none() {
+            return Err(format!("domain `{name}`: `act_local` without `act`"));
+        }
         let wording = |what: &str, raw: RawWording| -> Result<Wording, String> {
             not_blank(&format!("domain `{name}`: the English `{what}`"), &raw.en)?;
             not_blank(&format!("domain `{name}`: the Russian `{what}`"), &raw.ru)?;
@@ -503,6 +511,7 @@ pub(crate) fn parse_domains(text: &str) -> Result<BTreeMap<String, Domain>, Stri
                     .map(|raw| wording("change", raw))
                     .transpose()?,
                 act: domain.act.map(|raw| wording("act", raw)).transpose()?,
+                act_local: domain.act_local,
             },
         );
     }
@@ -1476,6 +1485,16 @@ type = "inventory.manager"
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn local_actions_are_marked_only_with_act_wording() {
+        let local = "
+act_local = true";
+        assert!(parse_domains(&format!("{DOMAINS}{local}")).is_err());
+        let acting = format!("{DOMAINS}act = {{ en = \"Opens\", ru = \"Открывает\" }}{local}");
+        assert!(parse_domains(&acting).unwrap()["inventory"].act_local);
+        assert!(!parse_domains(DOMAINS).unwrap()["inventory"].act_local);
     }
 
     #[test]

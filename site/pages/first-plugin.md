@@ -286,7 +286,7 @@ A plugin reads the game through Lens: it asks for the game's objects by name, su
    read = ["character"]
    ```
 
-   `character` is a domain of the game map. When the player approves the plugin, they see it as **Sees your character: name, class, level, HP and MP**. [Game data](reference-game-data.md) lists every domain and what it holds.
+   `character` is a domain of the game map. When the player approves the plugin, they see it as **See your character: name, class, level, HP and MP**. [Game data](reference-game-data.md) lists every domain and what it holds.
 
 1. Add `serde`, which turns the rows a query returns into a Rust struct:
 

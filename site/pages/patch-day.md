@@ -20,4 +20,4 @@ Angelica catches up when a new map of the game comes out for the patch. The home
 ## If a plugin still does not work
 
 1. When the home page shows a map for the patch, restart the game.
-1. If the plugin still does not work, select it in the Angelica window, then **Copy report**, and send the report to its author.
+1. If the plugin still does not work, select **⋯** next to it in the Angelica window, then **Copy report for the author**, and send the report to its author.

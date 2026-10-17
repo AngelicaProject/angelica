@@ -44,6 +44,15 @@ pub trait Game: Send + Sync {
     /// Names the map entries the game build lacks.
     fn enable_commands(&self) -> Result<(), String>;
 
+    /// Makes the game's item menus show the entries
+    /// [`crate::menus::Menus::items`] gives, and note what the player
+    /// chooses with [`crate::menus::Menus::choose`]. Installs its hooks
+    /// once.
+    ///
+    /// # Errors
+    /// Names the map entries the game build lacks.
+    fn enable_menus(&self) -> Result<(), String>;
+
     /// Prints the game's text `message` in the chat log's Echo channel. On
     /// the main thread only.
     ///

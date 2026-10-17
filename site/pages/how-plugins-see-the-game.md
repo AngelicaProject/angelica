@@ -21,17 +21,17 @@ Each kind of access is a permission you approve, and the approval shows it in th
 
 | Kind | What it allows | As you see it, for example |
 | --- | --- | --- |
-| Read | Reading values the game holds | "Sees the items you carry" |
-| Watch | Being told when something happens, such as an action being used | "Sees the actions you use" |
-| Decide | Rules the game follows at points the map marks, such as which chat messages to show | "Hides messages in your chat log" |
-| Change | Values that exist only on your computer; Angelica puts them back when the plugin stops | "Changes your camera's zoom limits" |
-| Act | Doing things for you, the way the game's own interface does | "Uses actions for you: abilities, spells, items, mounts" |
+| Read | Reading values the game holds | "See the items you carry" |
+| Watch | Being told when something happens, such as an action being used | "See the actions you use" |
+| Decide | Rules the game follows at points the map marks, such as which chat messages to show | "Hide messages in your chat log" |
+| Change | Values that exist only on your computer; Angelica puts them back when the plugin stops | "Change your camera's zoom limits" |
+| Act | Doing things for you, the way the game's own interface does | "Use actions for you: abilities, spells, items, mounts" |
 
 ## Domains
 
 Permissions come per **domain**, a group of related things: your character, where you are, your statuses, the items you carry, the armoury chest, the chocobo saddlebags, what your retainers hold, the actions you use, what you are doing, teleporting, the camera, the chat, the game's windows, and the game's text. A plugin with the domain of your bags cannot read your chat.
 
-Domains about other players, such as the chat, are shown under **Sees other players**.
+Domains about other players, such as the chat, are shown under **See other players**.
 
 ## When a plugin acts for you
 

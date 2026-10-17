@@ -16,6 +16,7 @@ angelica plugin new <id>
 | File | Holds |
 | --- | --- |
 | `angelica.toml` | the [manifest](../formats/plugin-manifest-v1.md): id, name, version, API version, permissions, HTTP hosts |
+| `icon.png` | optional: the plugin's icon in the Angelica menu, a square PNG of 32 to 512 pixels a side and at most 256 KiB; without it, the menu shows the name's first letter |
 | `src/lib.rs` | the plugin: a type that implements `angelica_sdk::Plugin`, exported with `angelica_sdk::plugin!` |
 | `tests/plugin.rs` | tests that run the component in the real host against a scripted game |
 | `AGENTS.md` | the work loop, commands, and rules for any coding agent, with links to this documentation |
@@ -118,7 +119,7 @@ angelica plugin install <id>-<version>.angelica --installation <installation>
 
 The first `pack` creates the author key ([plugin file](../formats/plugin-file-v1.md#the-author)); the installation then accepts that plugin id only from that key. A [development installation](../formats/host-installation-v1.md#development-installations), whose runtime is built with a development key, takes a component directly: `angelica dev install --key <dev key> --installation <installation> --plugin .=target/wasm32-wasip2/release/<crate>.wasm`.
 
-While the game runs, the host loads the new version within a second ([reload](../architecture/plugins.md#lifecycle)). The Angelica menu (`Insert` by default) shows the plugin and its approval; Settings → For developers shows its log, a fault's reason, and the host's diagnostics. A player who meets a problem sends you the plugin's report (**Copy report** in the menu): the game build, the map, the plugin's state and permissions, and its last 200 log lines, so log what the plugin did and why something failed. Check in the game what the tests cannot: how the windows look, the game's own data and messages, and behavior across a zone change or log-out.
+While the game runs, the host loads the new version within a second ([reload](../architecture/plugins.md#lifecycle)). The Angelica menu (`Insert` by default) shows the plugin and its approval; Settings → For developers shows its log, a fault's reason, and the host's diagnostics. A player who meets a problem sends you the plugin's report (**Copy report for the author** in the menu): the game build, the map, the plugin's state and permissions, and its last 200 log lines, so log what the plugin did and why something failed. Check in the game what the tests cannot: how the windows look, the game's own data and messages, and behavior across a zone change or log-out.
 
 ## 6. Publish
 

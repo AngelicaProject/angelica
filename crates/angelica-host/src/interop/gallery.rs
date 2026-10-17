@@ -63,6 +63,10 @@ impl crate::game::Game for NoGame {
     fn enable_commands(&self) -> Result<(), String> {
         Ok(())
     }
+
+    fn enable_menus(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn print(&self, _: &[u8]) -> Result<(), String> {
         Ok(())
     }
@@ -98,6 +102,8 @@ fn host(root: &Path) -> Host {
         draw: Arc::new(crate::draw::Drawings::default()),
         messages: Arc::new(crate::messages::Messages::default()),
         clipboard: Arc::new(crate::clipboard::Clipboard::default()),
+        links: Arc::new(crate::links::Links::default()),
+        menus: Arc::new(crate::menus::Menus::default()),
         notifications: Arc::new(crate::notifications::Notifications::default()),
         sounds: Arc::new(crate::sound::Sounds::default()),
         sockets: Arc::new(crate::sockets::Sockets::dialing(Arc::new(

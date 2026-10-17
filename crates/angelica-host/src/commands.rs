@@ -11,7 +11,10 @@ use crate::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    sync::{Mutex, OnceLock, PoisonError, RwLock},
+    sync::{
+        Mutex, OnceLock, PoisonError, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// Commands one plugin defines.
@@ -28,8 +31,10 @@ pub const MAX_PENDING: usize = 32;
 /// The longest line the host parses.
 pub const MAX_LINE: usize = 1000;
 const MAX_WORD: usize = 32;
+/// The host's own command: it opens or closes the menu.
+const MENU: &str = "angelica";
 /// Command words the host keeps for itself.
-const RESERVED: &[&str] = &["angelica"];
+const RESERVED: &[&str] = &[MENU];
 const HELP: &str = "help";
 /// The sheet of the game's text commands.
 const GAME_COMMANDS: &str = "TextCommand";
@@ -94,6 +99,9 @@ pub struct Commands {
     /// The first words of lines that did not fit in `pending`.
     overflowed: Mutex<BTreeSet<String>>,
     game: OnceLock<BTreeSet<String>>,
+    /// The player asked an odd number of times since the last frame for the
+    /// menu to open or close: with `/angelica` or from the game's System menu.
+    menu: AtomicBool,
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -156,13 +164,17 @@ impl Commands {
             .remove(plugin);
     }
 
-    /// Takes a line the player sent when its first word is a plugin's
-    /// command; the game then does not run it. Called on the game's main
+    /// Takes a line the player sent when its first word is `/angelica` or a
+    /// plugin's command; the game then does not run it. Called on the game's main
     /// thread before the game handles the line.
     pub fn submit(&self, line: &[u8]) -> bool {
         let Some(word) = first_word(line) else {
             return false;
         };
+        if word == MENU {
+            self.toggle_menu();
+            return true;
+        }
         let ours = self
             .trees
             .read()
@@ -182,6 +194,18 @@ impl Commands {
             }
         }
         ours
+    }
+
+    /// The player asked for the menu to open or close.
+    pub fn toggle_menu(&self) {
+        self.menu.fetch_xor(true, Ordering::AcqRel);
+    }
+
+    /// Whether the menu opens or closes: the player sent `/angelica`, with
+    /// any words after it, or chose Angelica in the System menu since the
+    /// last call.
+    pub fn take_menu(&self) -> bool {
+        self.menu.swap(false, Ordering::AcqRel)
     }
 
     /// The lines submitted since the last call.
@@ -853,6 +877,25 @@ mod tests {
         assert!(commands.take().is_empty());
         commands.remove_plugin("p");
         assert!(!commands.submit(b"/hello"));
+    }
+
+    #[test]
+    fn angelica_opens_and_closes_the_menu() {
+        let commands = Commands::default();
+        assert!(!commands.take_menu());
+        assert!(commands.submit(b"/angelica"));
+        assert!(commands.take_menu());
+        assert!(!commands.take_menu());
+        for line in ["/Angelica", "/angelica open now"] {
+            assert!(commands.submit(line.as_bytes()), "{line}");
+            assert!(commands.take_menu(), "{line}");
+        }
+        // Twice before a frame: the menu opens and closes again.
+        commands.submit(b"/angelica");
+        commands.submit(b"/angelica");
+        assert!(!commands.take_menu());
+        assert!(commands.take().is_empty());
+        assert!(!commands.submit(b"/angelicas"));
     }
 
     #[test]

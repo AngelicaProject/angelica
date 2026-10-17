@@ -203,7 +203,7 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
         .collect();
     let (signer, mut files) = FileSet::load_by(folder, &keys).map_err(|e| e.to_string())?;
     let from_author = trust.release != Some(keys[signer]);
-    let (manifest, origin) = if from_author {
+    let (manifest, origin, icon) = if from_author {
         if files.len() != 2 {
             return Err("a package from its author holds plugin.angelica and plugin.cwasm".into());
         }
@@ -226,7 +226,7 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
         } else {
             Origin::Author
         };
-        (manifest, origin)
+        (manifest, origin, file.icon)
     } else {
         let manifest = std::str::from_utf8(
             files
@@ -239,13 +239,19 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
         } else {
             Origin::Catalog
         };
+        let icon = files.get("icon.png").cloned();
+        if let Some(icon) = &icon {
+            crate::author::check_icon(icon)?;
+        }
         (
             Manifest::parse(manifest).map_err(|e| e.to_string())?,
             origin,
+            icon,
         )
     };
     let mut manifest = manifest;
     manifest.origin = origin;
+    manifest.icon = icon.map(std::sync::Arc::from);
     if folder.file_name() != Some(std::ffi::OsStr::new(manifest.id())) {
         return Err(format!(
             "the folder name differs from the plugin id {}",

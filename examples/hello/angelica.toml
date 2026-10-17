@@ -17,11 +17,15 @@ authors = ["AngelicaProject contributors"]
 "draw.world" = true
 "messages.send" = true
 "clipboard.write" = true
+"links.open" = true
 "notifications" = true
 "sound.play" = true
 "storage.cache" = true
 
 [http]
+hosts = ["example.com"]
+
+[links]
 hosts = ["example.com"]
 
 [storage]
@@ -32,5 +36,5 @@ to = ["hello"]
 
 [lens]
 read = ["actions", "character", "chat", "location", "statuses", "windows"]
-act = ["actions", "teleport", "windows"]
+act = ["actions", "fitting", "teleport", "windows"]
 change = ["camera", "chat", "text", "windows"]

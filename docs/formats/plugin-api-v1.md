@@ -16,7 +16,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `excel` | the game's Excel sheets as its files hold them | — |
 | `file-replacements` | replacement game files the game reads instead of its own | `files.replace` |
 | `commands` | chat commands the host parses for the plugin | `chat.commands` |
-| `chat` | messages in the player's chat log | `chat.print` |
+| `chat` | messages in the player's chat log, with links to items | `chat.print` |
 | `http` | HTTPS requests to the hosts the manifest lists: GET, and data sent | `http.get`, `http.send` |
 | `websocket` | live connections to the hosts the manifest lists, their messages delivered as game events | `http.websocket`, with `http.get` |
 | `lens` | the game's objects read by path, events watched, rules at decision points, values changed, and actions taken, through the game map's object model | one per domain and verb, in `[lens] read`, `change`, and `act` |
@@ -24,6 +24,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `draw` | marks, lines, and text drawn over the game world | `draw.world` |
 | `messages` | messages to other plugins, delivered as game events | `messages.send`, with the plugins in `[messages] to` |
 | `clipboard` | text put on the player's clipboard for the player's action | `clipboard.write` |
+| `links` | pages of the sites the manifest lists opened in the player's browser for the player's action | `links.open` |
 | `notifications` | one line at the top right of the screen under the plugin's name | `notifications` |
 | `sound` | sounds from WAV files in the plugin's storage | `sound.play` |
 
@@ -72,11 +73,14 @@ Shapes: *text*, *number* (`f64`), *integer* (`s64`), *flag* (`bool`), *texts*, a
 | `window` | 1.0 | `title` text, *required*: the name in the title bar, usually the plugin's; `path` texts, at most 4 non-blank: where the player is below the top level, outermost first; `status` text: one short line in the title bar; `status-tone` tone, `good` by default |
 | `panel` | 1.0 | `name` text, 1–64 characters, *required*: its name in the layout mode; `backing` text, `plate` (default) or `bare`; `anchor` text, where it starts before the player moves it: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left` (default), `bottom`, `bottom-right`; `shown` text, `always` (default), `in-combat`, or `out-of-combat` |
 | `dialog` | 1.0 | `title` text, *required*: the question, such as `Trust this publisher?`; `window` text, *required*: the id of the window that asks it, returned by the same `ui` |
+| `menu-entry` | 1.0 | `label` text, 1–40 characters without control characters, *required*: the entry's words in the game's menu; `for` text, `item` (default): the menu of an item the player carries. Holds no parts |
 | `popup` | 1.0 | `at` text, `corner` (default), `center`, or `panel`; `panel` text: the id of the plugin's panel it appears beside, required with `at = panel`; `seconds` integer, 2–10, 5 by default; `attention` flag, as for `notifications.show` |
 
 A window's status tone chooses its mark: `good` the mark of something running, `warning` and `bad` the mark of something that needs the player. When the player presses the back arrow, the title, or an earlier part of the path, the plugin receives `navigated` with the number of parts that stay (0 for the top level) and returns the window with that path; the host does not change the path itself. The title bar's other controls — collapse, the window's menu, and close — are the host's. `closed` arrives when the player closes a window.
 
 A dialog is a question its window asks: the window waits under it, dimmed and taking no input, until the plugin stops returning the dialog. A window has at most one dialog, and its only parts that take input are buttons; its clicks name the dialog's id as their place, and when the player closes it without an answer the plugin receives `closed` with the dialog's id. Return the dialog every frame while the question stands, and stop once the player answered or closed it.
+
+A menu entry is the plugin's line in one of the game's own menus: with `for = item`, the menu the game opens for an item the player carries, such as in the inventory or the armoury chest. The game draws the menu; the host adds each entry after the game's own, in the color of plugin names, so the player tells it from the game's entries. While the plugin returns the entry, every such menu shows it; when the player chooses it, the game closes the menu as for its own entries, and the plugin receives `menu-chosen` with the entry's id as its place and the item's row of `Item`, without its quality. A plugin returns at most 4 menu entries, and a menu shows at most 8 entries of plugins, by plugin id, and no more than the game's 32 entries in all. A game build whose map lacks the menu's entries shows none, and the host notes it under **For developers**.
 
 A panel's clicks pass to the game except on parts that take input. The player can choose otherwise than `shown`, or hide the panel, in the layout mode. A popup's parts take no input: only text, layout, and value parts (below) are allowed in it, at most 32.
 
@@ -95,6 +99,9 @@ A panel's clicks pass to the game except on parts that take input. The player ca
 | `spacer` | 1.0 | takes the free room of its row or column, pushing what follows to its end |
 | `separator` | 1.0 | a thin line |
 | `tabs` | 1.0 | id; `labels` texts, 1–32, *required*; `selected` integer, an index of `labels`; the plugin shows the selected tab's parts after it; sends `chosen` |
+| `split` | 1.0 | id; `labels` texts, 1–64, *required*: sections in a column at the side; `values` texts, at most one per section: a short value at the right of each, empty for none; `groups` texts, at most one per section: a small heading above each, empty for none; `selected` integer, an index of `labels`; `width` integer, 96–320, 160 by default: the column's width in points; `action` text: an action word under the sections, such as `+ Group`. A container: the selected section's parts beside the column. Sends `chosen` with a section, and `clicked` with its id for the action |
+
+A split is a column of sections at the side of a window, like the one in Angelica's Settings, with the selected section's parts beside it. It is one of the window's own parts, outside any container, at most one, and the window's last part; a panel, a dialog, or a popup holds none. It takes the rest of the window: while the window's height follows its content, it is as tall as its taller side; once the player sets the window's size, each side scrolls on its own. As with tabs, the host draws the sections and the plugin shows the selected section's parts.
 
 **Text.**
 
@@ -124,17 +131,19 @@ The host reads an icon from the game's archives, the high-resolution texture fir
 | Kind | Since | Properties |
 |---|---|---|
 | `button` | 1.0 | id; `label` text, *required*; `style` text: `normal` (default), `main` (the main action of a window, at most one in view, bold with an arrow), `quiet` (a side action), `danger` (what cannot be undone); `enabled` flag, true by default; sends `clicked` |
-| `checkbox` | 1.0 | id; `label` text, *required*; `checked` flag; sends `toggled` with a flag |
+| `checkbox` | 1.0 | id; `label` text, *required*; `checked` flag; `words` texts, 2, each 1–32 characters: the words for checked and not checked, in place of **On** and **Off**, such as `Translated` and `Original`; `hint` text: a few words under it; sends `toggled` with a flag |
 | `text-field` | 1.0 | id; `label` text; `value` text; `hint` text; sends `edited` with a text |
-| `choice` | 1.0 | id; `label` text; `options` texts, at most 1024, *required*; `selected` integer, an index of `options`, none by default; sends `chosen` with an integer |
+| `choice` | 1.0 | id; `label` text; `options` texts, at most 1024, *required*; `selected` integer, an index of `options`, none by default; `hint` text: a few words under it; sends `chosen` with an integer |
 | `number` | 1.0 | id; `label` text; `value`, `min`, and `max` numbers with `min` ≤ `value` ≤ `max`, *required*; `step` number, at least 0 (0, the default, for any): the value set is a multiple of it from `min`; `decimals` integer, 0–6; `slider` flag: a slider instead of a field the player drags or types into; sends `set` with a number |
-| `entry` | 1.0 | id; `title` text, *required*; `note` text; `value` text; `mark` text, `none` (default), `on`, `off`, or `attention`; `chosen` flag; `progress` number, 0–1: a thin line in place of the note. A container: a `button` in it with `in-row` flag true is one of up to 4 actions shown in the row under the pointer; under a chosen entry, its `fact`s (up to 16) and other `button`s (up to 8) are shown under the row. Sends `clicked` |
+| `entry` | 1.0 | id; `title` text, *required*; `note` text; `value` text; `mark` text, `none` (default), `on`, `off`, or `attention`; `chosen` flag; `progress` number, 0–1: a thin line in place of the note; `icon` integer: one of the game's icons, as for `icon`, in place of the letter tile; `plain` flag: no tile, and the note under the title. A container: a `button` in it with `in-row` flag true is one of up to 4 actions always shown at the right of the row, before its value; under a chosen entry, its `fact`s (up to 16) and other `button`s (up to 8) are shown under the row. Sends `clicked` |
 
-An entry is drawn like the rows of Angelica's own list: a tile with the first letter of its title, the title, the note after it, the value at the right, and the mark — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. A click on the row sends `clicked` with the entry's id, and a pressed button `clicked` with its own; the plugin decides which entry is chosen. A `button` takes `in-row` only inside an entry.
+A checkbox or choice among parts under each other is a setting: its label on the left, its value at the right edge of its place, its hint under them in small muted text, and a thin line between it and a setting right above it. In a row it is its label followed by its value.
+
+An entry is drawn like the rows of Angelica's own list: a tile with the first letter of its title, or the game's icon it names, the title, the note after it, the value at the right, and the mark — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. A `plain` entry has no tile; with a note or progress it is taller, the note under the title, for rows that a letter or an icon would not tell apart, such as languages. A click on the row sends `clicked` with the entry's id, and a pressed button `clicked` with its own; the plugin decides which entry is chosen. A `button` takes `in-row` only inside an entry.
 
 ### Events
 
-`ui-event` receives what the player did as an `event`: its `kind`, the id of the place and of the part, and a value for kinds that carry one. Kinds: `clicked`, `toggled` (a flag), `edited` (a text), `chosen` (an integer: an option or a tab), `set` (a number), `navigated` (an integer), `closed` (a window or a dialog, with an empty part), and `open-requested` (the player pressed the plugin's Open button in the Angelica menu; empty place and part). Later API versions may add kinds of events; a plugin ignores kinds it does not know.
+`ui-event` receives what the player did as an `event`: its `kind`, the id of the place and of the part, and a value for kinds that carry one. Kinds: `clicked`, `toggled` (a flag), `edited` (a text), `chosen` (an integer: an option, a tab, or a split's section), `set` (a number), `navigated` (an integer), `closed` (a window or a dialog, with an empty part), `open-requested` (the player pressed the plugin's Open button in the Angelica menu; empty place and part), and `menu-chosen` (the player chose a menu entry: the entry's id as the place, an empty part, and an integer, for an item menu the item's row of `Item`). Later API versions may add kinds of events; a plugin ignores kinds it does not know.
 
 `runtime.language` returns the language of Angelica's interface, `en` or `ru`, which the player can change while the plugin runs; a plugin shows its own text in that language when it has it and in English otherwise.
 
@@ -252,7 +261,7 @@ The count and size limits are the largest the game's own files have: the game is
 
 ## Commands
 
-`commands.define` replaces the plugin's commands with a tree: root commands such as `/hello`, subcommands such as `/hello greet` (at most 3 words deep), and typed parameters. Words — command names, aliases (at most 8 per command), and parameter names — are 1–32 lower-case ASCII letters, digits, and hyphens; descriptions are one line of at most 256 bytes. A plugin defines at most 64 commands of at most 16 parameters each. Optional parameters follow every required one, and only the last takes the rest of the line (`text`). A choice offers 1–64 distinct words without spaces or quotes. `help` is never a subcommand. A root name or alias must be free: not a command of the game in any of its languages — the host reads them from the game's `TextCommand` sheet, and without that sheet `define` returns `unavailable` — not `angelica`, and not another running plugin's. A tree that breaks a rule is refused whole and the previous one stays.
+`commands.define` replaces the plugin's commands with a tree: root commands such as `/hello`, subcommands such as `/hello greet` (at most 3 words deep), and typed parameters. Words — command names, aliases (at most 8 per command), and parameter names — are 1–32 lower-case ASCII letters, digits, and hyphens; descriptions are one line of at most 256 bytes. A plugin defines at most 64 commands of at most 16 parameters each. Optional parameters follow every required one, and only the last takes the rest of the line (`text`). A choice offers 1–64 distinct words without spaces or quotes. `help` is never a subcommand. A root name or alias must be free: not a command of the game in any of its languages — the host reads them from the game's `TextCommand` sheet, and without that sheet `define` returns `unavailable` — not `angelica`, which opens Angelica's menu, and not another running plugin's. A tree that breaks a rule is refused whole and the previous one stays.
 
 When the player sends a line from the chat box or a macro whose first word is one of the plugin's roots or root aliases, case-insensitively, the game never sees it. In the next frame the host parses it: words are separated by spaces, and text in double quotes is one word. Subcommands and aliases are matched case-insensitively; then each parameter takes its argument by kind — a `word`, the rest of the line as typed for `text`, a whole number within the bounds for `integer`, a finite decimal number for `number`, one of the words for `choice` (passed as listed), `on` or `off` for `switch`. The plugin's `command` receives the command's path as defined and the arguments in parameter order; an optional parameter left out has no argument.
 
@@ -261,6 +270,8 @@ The host answers some lines itself, as the plugin's message in the chat log: `/<
 ## Chat
 
 `chat.print` adds a message to the chat log, in the Echo channel. A message is a list of spans of plain text, each in a tone — `normal`, `accent`, `muted`, `good`, `warning`, or `bad` — and optionally italic; a line break starts a new line, and no other control character is allowed. A message has at most 64 spans and 2000 bytes of text, and is not empty. The host renders the tones with colors of the game's interface theme and starts every message with `[<plugin name>]` in a color no tone uses, so a plugin cannot pass its message off as the game's or another plugin's ([game structures](./game-structures.md#chat)). A plugin prints at most 20 messages in any second; past that `print` returns `limit-exceeded`. Before the game's chat log exists, during the game's start, it returns `unavailable`.
+
+`chat.print-pieces` prints a message whose pieces are spans and up to 8 item links, under the same rules; a link alone makes a message. An item link names a row of the game's `Item` sheet, whether it is the high-quality version, and the language of its name by the game's number. The host writes it as the game writes an item the player links: the link's arrow, then the item's name as `excel.shown` gives it in that language, in the color of the item's rarity, with the mark of high quality; a click on it shows the item's tooltip as the game does for its own links ([game structures](./game-structures.md#chat)). The host takes the name and the rarity from the sheet by the game map's names `name` and `rarity`, so a link always names the item it shows; a sheet whose layout the map does not know is `unavailable`, and a row the sheet does not have, or one without a name, `not-found`.
 
 ## HTTP
 
@@ -287,6 +298,10 @@ A plugin sends to the plugins its manifest lists in `[messages] to`, which the p
 ## Clipboard
 
 `clipboard.copy` puts text of at most 64 KiB without NUL characters on the player's clipboard at the end of the frame, replacing what was there; the last text of a frame wins. A plugin copies only for an action of the player: from the main instance while it handles `ui-event` or `command`, and `wrong-context` anywhere else, so no plugin changes the clipboard on its own. No plugin reads the clipboard; the player pastes into a plugin's text fields as anywhere else.
+
+## Links
+
+`links.open` opens a page in the player's browser: the one Windows uses for links, never a program the plugin names. The URL is an absolute `https://` URL of at most 2048 bytes without spaces or control characters, user name, or password, on port 443, to a site the manifest lists in `[links] hosts` ([manifest](./plugin-manifest-v1.md)), which the player approves with `links.open`; another URL is `invalid-argument`, and an unlisted site `permission-denied`. A plugin opens a page only for an action of the player: from the main instance while it handles `ui-event` or `command`, and `wrong-context` anywhere else, so no page opens on a plugin's own. It opens at most one page a second, `limit-exceeded` otherwise. The host opens the page at the end of the frame, on a thread of its own, so the game never waits for the browser; the plugin learns nothing of what the browser does.
 
 ## Notifications
 

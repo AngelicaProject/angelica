@@ -8,8 +8,9 @@ fn every_kind_has_an_example_with_its_code() {
     let examples = examples(0);
     let shown: BTreeSet<&str> = examples.iter().map(|example| example.kind).collect();
     for (kind, _) in kinds() {
-        // `end` closes a container; every container's example shows it.
-        if kind != "end" {
+        // `end` closes a container; every container's example shows it. A
+        // menu entry is drawn by the game in its own menu, not by the host.
+        if kind != "end" && kind != "menu-entry" {
             assert!(shown.contains(kind), "no example of {kind}");
         }
     }

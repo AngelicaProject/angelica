@@ -14,11 +14,13 @@ mod gallery;
 mod game;
 mod input;
 pub mod memory;
+mod menus;
 mod overlay;
 mod painter;
 pub mod proxy;
 mod sound;
 mod startup;
+mod system_menu;
 mod text_case;
 mod watch;
 mod writes;
@@ -71,6 +73,52 @@ pub(super) fn rotate_log(directory: &std::path::Path) {
     let log = directory.join("host.log");
     if std::fs::metadata(&log).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
         let _ = std::fs::rename(&log, directory.join("host.old.log"));
+    }
+}
+
+/// Opens a link in the player's browser on a thread of its own, so the
+/// game's frame never waits for the browser. The host checked the link:
+/// an `https` URL to a site the player approved.
+pub(super) fn open_link(url: String) {
+    let spawned = std::thread::Builder::new()
+        .name("angelica-link".into())
+        .spawn(move || {
+            use windows_sys::Win32::System::Com::{
+                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+            };
+            let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+            let verb: Vec<u16> = "open\0".encode_utf16().collect();
+            // SAFETY: the thread initializes COM for itself, as the shell
+            // asks of a thread calling ShellExecuteW, and uninitializes it
+            // below.
+            let com = unsafe {
+                CoInitializeEx(
+                    std::ptr::null(),
+                    (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+                )
+            };
+            // SAFETY: both strings are NUL-terminated UTF-16 that outlive
+            // the call.
+            let result = unsafe {
+                windows_sys::Win32::UI::Shell::ShellExecuteW(
+                    std::ptr::null_mut(),
+                    verb.as_ptr(),
+                    wide.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+                )
+            };
+            if com >= 0 {
+                // SAFETY: CoInitializeEx succeeded on this thread above.
+                unsafe { CoUninitialize() };
+            }
+            if (result as isize) <= 32 {
+                log(&format!("cannot open a link: {}", result as isize));
+            }
+        });
+    if spawned.is_err() {
+        log("cannot open a link: no thread");
     }
 }
 

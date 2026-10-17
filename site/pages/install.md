@@ -44,11 +44,11 @@ Other tools you use, such as Dalamud or ReShade, can stay installed.
 
    For the first seconds, a small note at the top right says that Angelica is running and which key opens it.
 
-1. Press <kbd>Insert</kbd>.
+1. Press <kbd>Insert</kbd>, type `/angelica` in the chat, or select **Angelica** in the game's **System** menu.
 
    The Angelica window opens over the game.
 
-1. To close it, press <kbd>Insert</kbd> again or <kbd>Esc</kbd>.
+1. To close it, press <kbd>Insert</kbd> again, type `/angelica` again, or press <kbd>Esc</kbd>.
 
 ## What the installer changes
 

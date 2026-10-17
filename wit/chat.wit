@@ -34,4 +34,31 @@ interface chat {
     /// prints at most 20 messages in any second. Returns `unavailable`
     /// before the game's chat log exists, during the game's start.
     print: func(message: list<span>) -> result<_, error>;
+
+    /// An item of the game's `Item` sheet, linked as the game links an
+    /// item in the chat log: the link's arrow and the item's name in the
+    /// color of its rarity, which the player clicks for the item's
+    /// tooltip. The host takes the name and the rarity from the sheet, so
+    /// a link always names the item it shows.
+    record item-link {
+        /// The item's row of the `Item` sheet.
+        item: u32,
+        /// The item's high-quality version, marked as the game marks it.
+        hq: bool,
+        /// The language of the name by the game's number, as `excel` takes
+        /// it; the name is the one `excel.shown` gives.
+        language: u8,
+    }
+
+    /// A part of a message: text in a tone, or an item link.
+    variant piece {
+        span(span),
+        item(item-link),
+    }
+
+    /// Prints a message as `print` does, with up to 8 item links among its
+    /// spans. An item the sheet does not have, or without a name, is
+    /// `not-found`; `unavailable` also when the running game map does not
+    /// name the sheet's `name` and `rarity` columns.
+    print-pieces: func(message: list<piece>) -> result<_, error>;
 }

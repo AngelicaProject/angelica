@@ -20,9 +20,9 @@
 //! ```
 pub use angelica_view::{
     Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Chosen, Countdown, Dialog,
-    Edited, Entry, Event, Fact, Icon, Mark, Meter, Navigated, Number, NumberSet, Panel, Popup,
-    PopupAt, Readout, Ring, Role, Section, Shown, Sparkline, Status, Table, Tabs, Text, TextInput,
-    Toggled, Tone, Widget, WidgetRef, Window,
+    Edited, Entry, Event, Fact, Icon, Mark, MenuChosen, MenuEntry, MenuFor, Meter, Navigated,
+    Number, NumberSet, Panel, Popup, PopupAt, Readout, Ring, Role, Section, Shown, Sparkline,
+    Split, Status, Table, Tabs, Text, TextInput, Toggled, Tone, Widget, WidgetRef, Window,
 };
 
 use crate::bindings::angelica::plugin::ui as wit;
@@ -79,14 +79,20 @@ pub fn place_to_wit(place: RawPlace) -> wit::Place {
     }
 }
 
-/// The windows with their dialogs and the panels, as `ui` returns them.
+/// The windows with their dialogs, the panels, and the menu entries, as
+/// `ui` returns them.
 #[doc(hidden)]
 #[must_use]
-pub fn view_to_wit(windows: Vec<Window>, panels: Vec<Panel>) -> Vec<wit::Place> {
+pub fn view_to_wit(
+    windows: Vec<Window>,
+    panels: Vec<Panel>,
+    entries: Vec<MenuEntry>,
+) -> Vec<wit::Place> {
     let places: Vec<_> = windows
         .into_iter()
         .map(angelica_view::Place::Window)
         .chain(panels.into_iter().map(angelica_view::Place::Panel))
+        .chain(entries.into_iter().map(angelica_view::Place::MenuEntry))
         .collect();
     angelica_view::data::encode_places(&places)
         .into_iter()

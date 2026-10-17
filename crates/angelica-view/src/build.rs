@@ -12,9 +12,81 @@
 //! ```
 use crate::{
     Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Countdown, Dialog, Entry, Fact,
-    Icon, Mark, Meter, Number, Panel, Popup, PopupAt, Readout, Ring, Role, Section, Shown,
-    Sparkline, Status, Table, Tabs, Text, TextInput, Tone, Widget, Window,
+    Icon, Mark, MenuEntry, Meter, Number, Panel, Popup, PopupAt, Readout, Ring, Role, Section,
+    Shown, Sparkline, Split, Status, Table, Tabs, Text, TextInput, Tone, Widget, Window,
 };
+
+impl MenuEntry {
+    /// An entry with `label` in the menu of the items the player carries;
+    /// choosing it arrives as `Event::MenuChosen` with `id` and the item's
+    /// row of `Item`.
+    #[must_use]
+    pub fn item(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            target: crate::MenuFor::Item,
+        }
+    }
+}
+
+impl Split {
+    /// A column of sections with the one at `selected` chosen; a click on
+    /// another arrives as `Event::Chosen` with `id`.
+    #[must_use]
+    pub fn new(id: impl Into<String>, selected: u32) -> Self {
+        Self {
+            id: id.into(),
+            labels: Vec::new(),
+            values: Vec::new(),
+            groups: Vec::new(),
+            selected,
+            width: crate::data::SPLIT_WIDTH,
+            action: String::new(),
+        }
+    }
+
+    /// A section, under the ones added before it.
+    #[must_use]
+    pub fn section(self, label: impl Into<String>) -> Self {
+        self.section_valued(label, "")
+    }
+
+    /// A section with a short value at its right.
+    #[must_use]
+    pub fn section_valued(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !value.is_empty() {
+            self.values.resize(self.labels.len(), String::new());
+            self.values.push(value);
+        }
+        self.labels.push(label.into());
+        self
+    }
+
+    /// A small heading above the next section.
+    #[must_use]
+    pub fn group(mut self, heading: impl Into<String>) -> Self {
+        self.groups.resize(self.labels.len(), String::new());
+        self.groups.push(heading.into());
+        self
+    }
+
+    /// The side's width in points, 96 to 320; 160 by default.
+    #[must_use]
+    pub fn width(mut self, width: u16) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// An action word under the sections, such as `+ Group`; a click on it
+    /// arrives as `Event::Clicked` with the split's id.
+    #[must_use]
+    pub fn action(mut self, label: impl Into<String>) -> Self {
+        self.action = label.into();
+        self
+    }
+}
 
 impl Entry {
     /// A row of a list with its title. A click on it arrives as
@@ -29,6 +101,8 @@ impl Entry {
             mark: Mark::None,
             chosen: false,
             progress: None,
+            icon: None,
+            plain: false,
             actions: Vec::new(),
             facts: Vec::new(),
             more: Vec::new(),
@@ -63,6 +137,22 @@ impl Entry {
         self
     }
 
+    /// One of the game's icons by its number in place of the letter tile;
+    /// an icon the game does not have shows as an empty frame.
+    #[must_use]
+    pub fn icon(mut self, icon: u32) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Draws the row without a tile, with the note under the title, for
+    /// rows a letter or an icon would not tell apart.
+    #[must_use]
+    pub fn plain(mut self) -> Self {
+        self.plain = true;
+        self
+    }
+
     /// A thin progress line in place of the note, from 0 to 1.
     #[must_use]
     pub fn progress(mut self, fraction: f32) -> Self {
@@ -70,7 +160,7 @@ impl Entry {
         self
     }
 
-    /// An action shown in the row under the pointer.
+    /// An action always shown at the right of the row.
     #[must_use]
     pub fn action(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
         self.actions.push(Action {
@@ -385,6 +475,28 @@ macro_rules! parts {
                     id: id.into(),
                     label: label.into(),
                     checked,
+                    words: None,
+                    hint: String::new(),
+                }))
+            }
+
+            /// A checkbox that shows the plugin's own two words, `on` for
+            /// checked and `off` for not, in place of **On** and **Off**.
+            #[must_use]
+            pub fn checkbox_words(
+                self,
+                id: impl Into<String>,
+                label: impl Into<String>,
+                checked: bool,
+                on: impl Into<String>,
+                off: impl Into<String>,
+            ) -> Self {
+                self.with(Widget::Checkbox(Checkbox {
+                    id: id.into(),
+                    label: label.into(),
+                    checked,
+                    words: Some([on.into(), off.into()]),
+                    hint: String::new(),
                 }))
             }
 
@@ -421,7 +533,24 @@ macro_rules! parts {
                     label: label.into(),
                     options,
                     selected,
+                    hint: String::new(),
                 }))
+            }
+
+            /// A few words under the checkbox or choice just added, such as
+            /// what the setting changes; after any other part, nothing.
+            #[must_use]
+            pub fn hint(mut self, text: impl Into<String>) -> Self {
+                match self.widgets.last_mut() {
+                    Some(
+                        Widget::Checkbox(Checkbox { hint, .. })
+                        | Widget::Choice(Choice { hint, .. }),
+                    ) => {
+                        *hint = text.into();
+                    }
+                    _ => {}
+                }
+                self
             }
 
             /// A thin line filled to `fraction`, from 0 to 1, with a label:
@@ -536,6 +665,14 @@ macro_rules! parts {
                     labels: labels.iter().map(|&label| label.to_owned()).collect(),
                     selected,
                 }))
+            }
+
+            /// A column of sections at the side of the window and the
+            /// chosen section's parts, which `build` adds, beside it; see
+            /// [`Split`]. It is the last part of a window.
+            #[must_use]
+            pub fn split(self, split: Split, build: impl FnOnce(Self) -> Self) -> Self {
+                build(self.with(Widget::BeginSplit(split))).with(Widget::EndSplit)
             }
 
             /// A table: each part (or row) `build` adds fills the next

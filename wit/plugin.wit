@@ -55,6 +55,7 @@ world plugin {
     import draw;
     import messages;
     import clipboard;
+    import links;
     import notifications;
     import sound;
     import websocket;

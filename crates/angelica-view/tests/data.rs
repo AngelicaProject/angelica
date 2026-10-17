@@ -5,8 +5,8 @@ use angelica_view::data::{
 use angelica_view::{
     Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Chosen, Countdown, Dialog,
     Edited, Entry, Event, Fact, Icon, Mark, Meter, Navigated, Number, NumberSet, Panel, Place,
-    Popup, PopupAt, Readout, Ring, Role, Section, Shown, Sparkline, Status, Table, Tabs, Text,
-    TextInput, Toggled, Tone, Widget, WidgetRef, Window,
+    Popup, PopupAt, Readout, Ring, Role, Section, Shown, Sparkline, Split, Status, Table, Tabs,
+    Text, TextInput, Toggled, Tone, Widget, WidgetRef, Window,
 };
 
 fn every_part() -> Vec<Widget> {
@@ -125,6 +125,8 @@ fn more_parts() -> Vec<Widget> {
             mark: Mark::On,
             chosen: true,
             progress: Some(0.5),
+            icon: Some(60_001),
+            plain: true,
             actions: vec![Action {
                 id: "water".into(),
                 label: "Water".into(),
@@ -148,11 +150,6 @@ fn more_parts() -> Vec<Widget> {
             enabled: true,
             kind: ActionKind::Main,
         }),
-        Widget::Checkbox(Checkbox {
-            id: "daily".into(),
-            label: "Daily".into(),
-            checked: true,
-        }),
         Widget::TextInput(TextInput {
             id: "feed".into(),
             label: "Feed".into(),
@@ -164,6 +161,7 @@ fn more_parts() -> Vec<Widget> {
             label: "Language".into(),
             options: vec!["en".into(), "ru".into()],
             selected: None,
+            hint: "the interface's language".into(),
         }),
         Widget::Number(Number {
             id: "volume".into(),
@@ -187,7 +185,37 @@ fn window() -> Place {
             text: "3 running".into(),
             tone: Tone::Good,
         }),
-        widgets: every_part().into_iter().chain(more_parts()).collect(),
+        widgets: every_part()
+            .into_iter()
+            .chain(more_parts())
+            .chain([
+                Widget::Checkbox(Checkbox {
+                    id: "daily".into(),
+                    label: "Daily".into(),
+                    checked: true,
+                    words: None,
+                    hint: "Every day at the same time.".into(),
+                }),
+                Widget::Checkbox(Checkbox {
+                    id: "names".into(),
+                    label: "Names".into(),
+                    checked: false,
+                    words: Some(["Translated".into(), "Original".into()]),
+                    hint: String::new(),
+                }),
+                Widget::BeginSplit(Split {
+                    id: "groups".into(),
+                    labels: vec!["Items".into(), "Places".into(), "Crafting".into()],
+                    values: vec!["½".into()],
+                    groups: vec![String::new(), String::new(), "Mine".into()],
+                    selected: 1,
+                    width: 180,
+                    action: "+ Group".into(),
+                }),
+                Widget::Heading("Places".into()),
+                Widget::EndSplit,
+            ])
+            .collect(),
         dialog: Some(Dialog {
             id: "trust".into(),
             title: "Trust this publisher?".into(),
@@ -427,6 +455,104 @@ fn the_old_rules_of_windows_still_hold() {
         ]),
     ));
     assert!(decode(&long, 0).unwrap_err().contains("path"));
+}
+
+#[test]
+fn a_split_is_the_last_part_of_a_window_and_a_checkbox_has_two_words() {
+    let split = || {
+        part(
+            "split",
+            "s",
+            &[("labels", Value::Texts(vec!["One".into(), "Two".into()]))],
+        )
+    };
+    let end = || part("end", "", &[]);
+    let text = || part("text", "", &[("text", Value::Text("a".into()))]);
+    assert!(decode(&window_of(vec![split(), text(), end()]), 0).is_ok());
+    for (parts, says) in [
+        (vec![split(), end(), text()], "last part"),
+        (
+            vec![part("row", "", &[]), split(), end(), end()],
+            "in no container",
+        ),
+        (vec![split(), split(), end(), end()], "in no container"),
+        (
+            vec![
+                part(
+                    "split",
+                    "s",
+                    &[
+                        ("labels", Value::Texts(vec!["One".into()])),
+                        ("selected", Value::Integer(1)),
+                    ],
+                ),
+                end(),
+            ],
+            "missing section",
+        ),
+        (
+            vec![
+                part(
+                    "split",
+                    "s",
+                    &[
+                        ("labels", Value::Texts(vec!["One".into()])),
+                        ("values", Value::Texts(vec!["1".into(), "2".into()])),
+                    ],
+                ),
+                end(),
+            ],
+            "more values",
+        ),
+        (
+            vec![
+                part(
+                    "split",
+                    "s",
+                    &[
+                        ("labels", Value::Texts(vec!["One".into()])),
+                        ("width", Value::Integer(40)),
+                    ],
+                ),
+                end(),
+            ],
+            "not 96 to 320",
+        ),
+        (vec![part("split", "s", &[]), end()], "needs labels"),
+        (
+            vec![part(
+                "checkbox",
+                "c",
+                &[
+                    ("label", Value::Text("Names".into())),
+                    ("words", Value::Texts(vec!["Yes".into()])),
+                ],
+            )],
+            "2 words",
+        ),
+        (
+            vec![part(
+                "checkbox",
+                "c",
+                &[
+                    ("label", Value::Text("Names".into())),
+                    ("words", Value::Texts(vec!["Yes".into(), " ".into()])),
+                ],
+            )],
+            "words of 1 to 32",
+        ),
+    ] {
+        let error = decode(&window_of(parts), 0).unwrap_err();
+        assert!(error.contains(says), "{says}: {error}");
+    }
+    let mut in_panel = window_of(vec![split(), end()]);
+    in_panel[0].kind = "panel".into();
+    in_panel[0].properties = vec![("name".into(), Value::Text("Groups".into()))];
+    assert!(
+        decode(&in_panel, 0)
+            .unwrap_err()
+            .contains("only a window holds a split")
+    );
 }
 
 #[test]

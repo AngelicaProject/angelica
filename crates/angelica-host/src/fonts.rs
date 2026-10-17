@@ -129,6 +129,7 @@ mod tests {
             Permission::SoundPlay,
             Permission::StorageCache,
             Permission::HttpWebsocket,
+            Permission::LinksOpen,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

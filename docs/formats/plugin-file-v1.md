@@ -1,6 +1,6 @@
 # Plugin file format 1
 
-A plugin file (`<id>-<version>.angelica`) carries a plugin to players, from its author or from the [catalog](../architecture/catalog.md), whose files are signed with the release key. It holds the plugin's manifest and component, signed with the author's key. It never holds native code: the installer compiles the component on the player's computer.
+A plugin file (`<id>-<version>.angelica`) carries a plugin to players, from its author or from the [catalog](../architecture/catalog.md), whose files are signed with the release key. It holds the plugin's manifest, its component, and optionally its icon, signed with the author's key. It never holds native code: the installer compiles the component on the player's computer.
 
 ## Layout
 
@@ -14,8 +14,9 @@ All integers are little-endian.
 | 64 | the Ed25519 signature |
 | 4 + n | the length and bytes of `angelica.toml`, at most 64 KiB |
 | 4 + n | the length and bytes of the component (`plugin.wasm`), at most 64 MiB |
+| 4 + n | optionally, the length and bytes of the icon (`icon.png`), at most 256 KiB |
 
-The signature covers every byte of the file except the signature itself, the author key included, and is verified strictly before anything else is read. Nothing may follow the component. A reader refuses another format.
+The signature covers every byte of the file except the signature itself, the author key included, and is verified strictly before anything else is read. Nothing may follow the icon, or the component in a file without one. The icon is a PNG, square, 32 to 512 pixels a side; a file whose icon breaks that is refused. The Angelica menu shows it in place of the tile with the plugin's first letter. A reader refuses another format.
 
 ## The author
 

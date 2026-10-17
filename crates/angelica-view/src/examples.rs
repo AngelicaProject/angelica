@@ -4,7 +4,7 @@
 //! kind cannot go undocumented.
 use crate::{
     ActionKind, Countdown, Dialog, Entry, Mark, Meter, Panel, Popup, Readout, Ring, Role, Shown,
-    Sparkline, Tone, Widget, Window,
+    Sparkline, Split, Tone, Widget, Window,
 };
 
 /// What an example shows.
@@ -348,6 +348,31 @@ pub fn examples(now: u64) -> Vec<Example> {
                 // [/tabs]
             },
         ),
+        example(
+            "split",
+            "split",
+            "Sections at the side of a window and the chosen section beside it. Each side scrolls on its own.",
+            Shows::Window(
+                // [split]
+                Window::new("main", "Timers")
+                    .path(["Kitchen"])
+                    .tabs("view", &["Timers", "Settings"], 0)
+                    .split(
+                        Split::new("rooms", 0)
+                            .section_valued("Kitchen", "3")
+                            .section_valued("Garden", "1")
+                            .group("Mine")
+                            .section("Workshop")
+                            .action("+ Room"),
+                        |main| {
+                            main.entry(Entry::new("tea", "Tea").value("2:30").mark(Mark::On))
+                                .entry(Entry::new("bread", "Bread").value("41:05").mark(Mark::On))
+                                .entry(Entry::new("eggs", "Eggs").value("6:00").mark(Mark::Off))
+                                .button("add", "+ Timer")
+                        },
+                    ), // [/split]
+            ),
+        ),
         part(
             "table",
             "table",
@@ -465,10 +490,12 @@ pub fn examples(now: u64) -> Vec<Example> {
         part(
             "checkbox",
             "checkbox",
-            "On or off. The plugin keeps the state; a click arrives as an event.",
+            "On or off, or the plugin's own two words. The plugin keeps the state; a click arrives as an event.",
             |window| {
                 // [checkbox]
-                window.checkbox("bell", "Ring when a timer ends", true)
+                window
+                    .checkbox("bell", "Ring when a timer ends", true)
+                    .checkbox_words("clock", "Time", false, "Local", "Server")
                 // [/checkbox]
             },
         ),

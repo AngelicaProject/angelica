@@ -163,6 +163,10 @@ pub struct Services {
     pub messages: Arc<crate::messages::Messages>,
     /// Text plugins put on the clipboard this frame.
     pub clipboard: Arc<crate::clipboard::Clipboard>,
+    /// Pages plugins open in the player's browser this frame.
+    pub links: Arc<crate::links::Links>,
+    /// Plugins' entries in the game's menus, and what the player chose.
+    pub menus: Arc<crate::menus::Menus>,
     /// Plugins' notifications on the screen.
     pub notifications: Arc<crate::notifications::Notifications>,
     /// When plugins last played a sound.
@@ -245,6 +249,8 @@ pub struct Context {
     pub lens_change: BTreeSet<String>,
     /// The plugins it may send messages to.
     pub message_to: BTreeSet<String>,
+    /// The sites whose pages it may open; empty without `links.open`.
+    pub link_hosts: Vec<String>,
     pub memory_bytes: u64,
     pub storage: Arc<Storage>,
     pub services: Arc<Services>,
@@ -1583,6 +1589,29 @@ impl api::clipboard::Host for State {
     }
 }
 
+impl api::links::Host for State {
+    fn open(&mut self, url: String) -> ApiResult<()> {
+        api(self.main_only())?;
+        api(self.permitted(Permission::LinksOpen))?;
+        if !self.player_action {
+            return Err(Error::new(
+                Kind::WrongContext,
+                "a link is opened only for the player's action: in ui-event or command",
+            )
+            .into());
+        }
+        let context = self.context.clone();
+        self.host(|_| {
+            crate::links::check(&url, &context.link_hosts)?;
+            context
+                .services
+                .links
+                .open(&context.id, &url, Instant::now())
+        })
+        .map_err(Into::into)
+    }
+}
+
 impl api::draw::Host for State {
     fn set(&mut self, shapes: Vec<api::draw::Shape>) -> ApiResult<()> {
         use crate::draw::Shape;
@@ -1700,29 +1729,104 @@ impl crate::lens::act::Caller for GameCaller<'_> {
     }
 }
 
+/// A span of a plugin's message as the host's chat service takes it.
+fn chat_span(span: api::chat::Span) -> crate::chat::Span {
+    use crate::chat::Tone;
+    use api::chat::Tone as T;
+    crate::chat::Span {
+        text: span.text,
+        tone: match span.tone {
+            T::Normal => Tone::Normal,
+            T::Accent => Tone::Accent,
+            T::Muted => Tone::Muted,
+            T::Good => Tone::Good,
+            T::Warning => Tone::Warning,
+            T::Bad => Tone::Bad,
+        },
+        italic: span.italic,
+    }
+}
+
 impl api::chat::Host for State {
     fn print(&mut self, message: Vec<api::chat::Span>) -> ApiResult<()> {
-        use crate::chat::{Span, Tone};
-        use api::chat::Tone as T;
         api(self.main_only())?;
         api(self.permitted(Permission::ChatPrint))?;
-        let spans: Vec<Span> = message
-            .into_iter()
-            .map(|span| Span {
-                text: span.text,
-                tone: match span.tone {
-                    T::Normal => Tone::Normal,
-                    T::Accent => Tone::Accent,
-                    T::Muted => Tone::Muted,
-                    T::Good => Tone::Good,
-                    T::Warning => Tone::Warning,
-                    T::Bad => Tone::Bad,
-                },
-                italic: span.italic,
-            })
-            .collect();
+        let spans: Vec<crate::chat::Span> = message.into_iter().map(chat_span).collect();
         self.host(|state| print(&state.context, &spans))
             .map_err(Into::into)
+    }
+
+    fn print_pieces(&mut self, message: Vec<api::chat::Piece>) -> ApiResult<()> {
+        use crate::chat::Piece;
+        api(self.main_only())?;
+        api(self.permitted(Permission::ChatPrint))?;
+        let links = message
+            .iter()
+            .filter(|piece| matches!(piece, api::chat::Piece::Item(_)))
+            .count();
+        if links > crate::chat::MAX_LINKS {
+            return Err(Error::invalid(format!(
+                "a message has at most {} item links",
+                crate::chat::MAX_LINKS
+            ))
+            .into());
+        }
+        self.host(|state| {
+            let mut pieces = Vec::with_capacity(message.len());
+            for piece in message {
+                pieces.push(match piece {
+                    api::chat::Piece::Span(span) => Piece::Span(chat_span(span)),
+                    api::chat::Piece::Item(link) => Piece::Item(state.item_link(link)?),
+                });
+            }
+            print_pieces(&state.context, &pieces)
+        })
+        .map_err(Into::into)
+    }
+}
+
+impl State {
+    /// An item link with the item's name as `excel.shown` gives it and its
+    /// rarity, both from the `Item` sheet by the game map's names.
+    fn item_link(&self, link: api::chat::ItemLink) -> crate::error::Result<crate::chat::ItemLink> {
+        use crate::game_data::{Cell, Value};
+        let services = &self.context.services;
+        let columns = ["name".to_owned(), "rarity".to_owned()];
+        let indexes = self.column_indexes("Item", &columns)?;
+        let row = services
+            .data
+            .row("Item", link.language, (link.item, 0))?
+            .ok_or_else(|| {
+                Error::new(
+                    Kind::NotFound,
+                    format!("the Item sheet has no row {}", link.item),
+                )
+            })?;
+        let Some(Cell::Text(original)) = row.cells.get(usize::from(indexes[0])) else {
+            return Err(Error::invalid("name of sheet Item is not a text column"));
+        };
+        if original.is_empty() {
+            return Err(Error::new(
+                Kind::NotFound,
+                format!("item {} has no name", link.item),
+            ));
+        }
+        let rarity = match row.cells.get(usize::from(indexes[1])) {
+            Some(Cell::Value(Value::Unsigned(rarity))) => u8::try_from(*rarity).ok(),
+            Some(Cell::Value(Value::Signed(rarity))) => u8::try_from(*rarity).ok(),
+            _ => None,
+        }
+        .ok_or_else(|| Error::invalid("rarity of sheet Item is not a small number"))?;
+        let name = services
+            .excel
+            .shown("Item", link.language, link.item, 0, indexes[0], original)
+            .unwrap_or_else(|| original.clone());
+        Ok(crate::chat::ItemLink {
+            item: link.item,
+            hq: link.hq,
+            name,
+            rarity,
+        })
     }
 }
 
@@ -1733,7 +1837,20 @@ impl api::chat::Host for State {
 /// A message that breaks a rule, a plugin over its rate, and a game that
 /// cannot print.
 pub fn print(context: &Context, spans: &[crate::chat::Span]) -> crate::error::Result<()> {
-    crate::chat::check(spans).map_err(Error::invalid)?;
+    let pieces: Vec<crate::chat::Piece> = spans
+        .iter()
+        .cloned()
+        .map(crate::chat::Piece::Span)
+        .collect();
+    print_pieces(context, &pieces)
+}
+
+/// Prints a message of spans and item links, as [`print`] does.
+///
+/// # Errors
+/// As [`print`].
+pub fn print_pieces(context: &Context, pieces: &[crate::chat::Piece]) -> crate::error::Result<()> {
+    crate::chat::check_pieces(pieces).map_err(Error::invalid)?;
     let services = &context.services;
     if !services.chat.admit(&context.id, Instant::now()) {
         return Err(Error::new(
@@ -1746,7 +1863,7 @@ pub fn print(context: &Context, spans: &[crate::chat::Span]) -> crate::error::Re
     }
     services
         .game
-        .print(&crate::chat::encode(&context.name, spans))
+        .print(&crate::chat::encode_pieces(&context.name, pieces))
         .map_err(|reason| Error::new(Kind::Unavailable, reason))
 }
 

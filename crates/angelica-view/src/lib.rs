@@ -104,7 +104,11 @@ pub struct Entry {
     pub chosen: bool,
     /// From 0 to 1: a thin line in place of the note.
     pub progress: Option<f32>,
-    /// Up to 4 actions shown in the row under the pointer.
+    /// One of the game's icons in place of the letter tile.
+    pub icon: Option<u32>,
+    /// No tile, and the note under the title.
+    pub plain: bool,
+    /// Up to 4 actions always shown at the right of the row.
     pub actions: Vec<Action>,
     /// Up to 16 facts under the chosen row.
     pub facts: Vec<Fact>,
@@ -117,6 +121,11 @@ pub struct Checkbox {
     pub id: String,
     pub label: String,
     pub checked: bool,
+    /// The plugin's words for checked and not checked, in place of the
+    /// host's **On** and **Off**.
+    pub words: Option<[String; 2]>,
+    /// A few words under the setting.
+    pub hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,6 +142,8 @@ pub struct Choice {
     pub label: String,
     pub options: Vec<String>,
     pub selected: Option<u32>,
+    /// A few words under the setting.
+    pub hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +172,24 @@ pub struct Tabs {
     pub id: String,
     pub labels: Vec<String>,
     pub selected: u32,
+}
+
+/// A column of sections at the side, and the chosen section's parts
+/// beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Split {
+    pub id: String,
+    /// The sections, top to bottom.
+    pub labels: Vec<String>,
+    /// A short value at the right of each section; empty for none.
+    pub values: Vec<String>,
+    /// A small heading above each section; empty for none.
+    pub groups: Vec<String>,
+    pub selected: u32,
+    /// The side's width in points.
+    pub width: u16,
+    /// An action word under the sections; empty for none.
+    pub action: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -247,6 +276,9 @@ pub enum Widget {
     EndSection,
     BeginTable(Table),
     EndTable,
+    /// The chosen section's parts follow up to `EndSplit`.
+    BeginSplit(Split),
+    EndSplit,
     Spacer,
     Number(Number),
     Tabs(Tabs),
@@ -350,11 +382,30 @@ pub struct Popup {
     pub widgets: Vec<Widget>,
 }
 
-/// A window or a panel, as `ui` returns them.
+/// What a menu entry of the game is shown for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MenuFor {
+    /// The menu of an item the player carries.
+    #[default]
+    Item,
+}
+
+/// An entry the plugin adds to a menu of the game, such as the one an item
+/// opens: its words, which the host shows in the color of plugin names.
+/// Choosing it arrives as `Event::MenuChosen`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuEntry {
+    pub id: String,
+    pub label: String,
+    pub target: MenuFor,
+}
+
+/// A window, a panel, or a menu entry, as `ui` returns them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Place {
     Window(Window),
     Panel(Panel),
+    MenuEntry(MenuEntry),
 }
 
 impl Place {
@@ -363,6 +414,7 @@ impl Place {
         match self {
             Self::Window(window) => &window.id,
             Self::Panel(panel) => &panel.id,
+            Self::MenuEntry(entry) => &entry.id,
         }
     }
 
@@ -371,6 +423,7 @@ impl Place {
         match self {
             Self::Window(window) => &window.widgets,
             Self::Panel(panel) => &panel.widgets,
+            Self::MenuEntry(_) => &[],
         }
     }
 }
@@ -410,6 +463,15 @@ pub struct NumberSet {
     pub value: f64,
 }
 
+/// The player chose a menu entry of the plugin in the game's menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuChosen {
+    /// The entry's id.
+    pub entry: String,
+    /// What the menu was opened for: for an item, its row of `Item`.
+    pub value: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Navigated {
     pub window: String,
@@ -429,6 +491,7 @@ pub enum Event {
     Navigated(Navigated),
     /// The player asked to open the plugin from the Angelica menu.
     OpenRequested,
+    MenuChosen(MenuChosen),
 }
 
 impl Event {

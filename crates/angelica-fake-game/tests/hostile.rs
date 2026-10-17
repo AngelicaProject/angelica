@@ -250,6 +250,14 @@ fn operations_stay_in_their_instance() {
         "{}",
         report(&test)
     );
+    click(&test, "link-later");
+    test.frames(1);
+    assert!(
+        report(&test).starts_with("ErrorKind::WrongContext: a link is opened only"),
+        "{}",
+        report(&test)
+    );
+    assert!(test.host.services().links.take().is_empty());
     click(&test, "job-print");
     std::thread::sleep(Duration::from_millis(500));
     click(&test, "poll");

@@ -505,6 +505,12 @@ class = "you"
 read = { en = "Sees where you teleport", ru = "Видит, куда вы телепортируетесь" }
 act = { en = "Teleports you to aetherytes", ru = "Телепортирует вас к эфиритам" }
 
+[domains.fitting]
+doc = "The Try On window."
+class = "you"
+read = { en = "Sees what you try on", ru = "Видит, что вы примеряете" }
+act = { en = "Opens items in the Try On window", ru = "Открывает предметы в окне примерки" }
+
 [domains.windows]
 doc = "The game's windows."
 class = "others"

@@ -286,6 +286,7 @@ fn initialize() -> Result<(), String> {
         return Err("failed to pin the native host".into());
     }
 
+    install_menu_openers(&host, &catalog, base, diagnostics);
     host.start_all();
     let host = Arc::new(host);
     super::crash::install(host.clone(), catalog, config.log_directory.clone());
@@ -295,6 +296,26 @@ fn initialize() -> Result<(), String> {
         overlay: Mutex::new(overlay),
     });
     Ok(())
+}
+
+/// `/angelica` and Angelica's entry in the System menu open the menu whether
+/// or not a plugin has commands; without the map's entries the log says why,
+/// and the menu key still works.
+fn install_menu_openers(
+    host: &Host,
+    catalog: &Catalog,
+    base: usize,
+    diagnostics: crate::config::Diagnostics,
+) {
+    if diagnostics.overlay != crate::config::OverlayMode::On {
+        return;
+    }
+    let _ = host.services().game.enable_commands();
+    let menu = super::system_menu::install(catalog, base, host.services().commands.clone());
+    super::log(&match menu {
+        Ok(()) => "system menu hooks: in place".to_owned(),
+        Err(error) => format!("system menu hooks: not installed: {error}"),
+    });
 }
 
 /// The host's services over the game loaded at `base`.
@@ -316,6 +337,7 @@ fn services(
             .join("files"),
     ));
     let commands = Arc::new(crate::commands::Commands::default());
+    let menus = Arc::new(crate::menus::Menus::default());
     let executable = module_path(base)?;
     // The executable is in `game/`; the archives are in `game/sqpack`.
     let data = Arc::new(crate::game_data::GameData::new(
@@ -329,6 +351,7 @@ fn services(
         case: case.clone(),
         files: files.clone(),
         commands: commands.clone(),
+        menus: menus.clone(),
         lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
     });
@@ -344,6 +367,8 @@ fn services(
         draw: Arc::new(crate::draw::Drawings::default()),
         messages: Arc::new(crate::messages::Messages::default()),
         clipboard: Arc::new(crate::clipboard::Clipboard::default()),
+        links: Arc::new(crate::links::Links::default()),
+        menus,
         notifications: Arc::new(crate::notifications::Notifications::default()),
         sounds: Arc::new(crate::sound::Sounds::default()),
         sockets: Arc::new(crate::sockets::Sockets::default()),

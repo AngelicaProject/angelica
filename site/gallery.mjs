@@ -7,8 +7,8 @@ import { join } from "node:path";
 
 // The groups of the plugin API's tables of kinds, in their order. `end` closes a container and has no entry.
 const groups = [
-  ["Places", ["window", "dialog", "panel", "popup"]],
-  ["Layout", ["row", "column", "grid", "section", "table", "spacer", "separator", "tabs"]],
+  ["Places", ["window", "dialog", "panel", "popup", "menu-entry"]],
+  ["Layout", ["row", "column", "grid", "section", "table", "spacer", "separator", "tabs", "split"]],
   ["Text", ["text", "heading", "fact", "tooltip", "tile", "icon"]],
   ["Values", ["meter", "ring", "readout", "countdown", "sparkline"]],
   ["Actions and input", ["button", "checkbox", "text-field", "choice", "number", "entry"]],
