@@ -295,11 +295,24 @@ impl Resolver<'_, '_> {
                 signature,
             } => {
                 let start = self.value_of(function).get();
-                let code = self
-                    .function_code(start)
-                    .ok_or_else(|| Absence::NoFunctionRange(function.clone()))?;
-                let offset = single_offset(signature, code)?;
-                displacement(&code[offset..]).map(Value::Offset)
+                let chunks = self.whole_function(start);
+                if chunks.is_empty() {
+                    return Err(Absence::NoFunctionRange(function.clone()));
+                }
+                let found: Vec<&[u8]> = chunks
+                    .iter()
+                    .flat_map(|chunk| {
+                        signature
+                            .find_in(chunk)
+                            .into_iter()
+                            .map(move |offset| &chunk[offset..])
+                    })
+                    .collect();
+                match found.as_slice() {
+                    [] => Err(Absence::NoMatch),
+                    [code] => displacement(code).map(Value::Offset),
+                    _ => Err(Absence::Ambiguous(found.len())),
+                }
             }
         }
     }
@@ -366,21 +379,10 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// The code an `in` locator searches in the function that starts at
-    /// `start`: its exception directory entry when it has one; otherwise,
-    /// for a leaf function, the code its control flow reaches.
-    fn function_code(&self, start: u32) -> Option<&[u8]> {
-        let range = match self.image.function_at(start) {
-            Some(range) => range,
-            None => crate::code::leaf_function(self.image, start)?,
-        };
-        self.image
-            .bytes_at(range.start, (range.end - range.start) as usize)
-    }
-
-    /// All the code of the function that starts at `start`: every range in
-    /// the exception directory that belongs to it, chained chunks included;
-    /// for a leaf function, the code its control flow reaches.
+    /// All the code of the function that starts at `start`, as `in` locators
+    /// and `contains` checks search it: every range in the exception
+    /// directory that belongs to it, chained chunks included; for a leaf
+    /// function, the code its control flow reaches.
     fn whole_function(&self, start: u32) -> Vec<&[u8]> {
         crate::code::function_code(self.image, start)
             .map(|code| code.ranges)
@@ -454,14 +456,6 @@ fn single(found: &[u32]) -> Result<u32, Absence> {
         [] => Err(Absence::NoMatch),
         [address] => Ok(*address),
         _ => Err(Absence::Ambiguous(found.len())),
-    }
-}
-
-fn single_offset(signature: &Signature, code: &[u8]) -> Result<usize, Absence> {
-    match signature.find_in(code).as_slice() {
-        [] => Err(Absence::NoMatch),
-        [offset] => Ok(*offset),
-        found => Err(Absence::Ambiguous(found.len())),
     }
 }
 
