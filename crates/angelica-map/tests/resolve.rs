@@ -405,6 +405,82 @@ fn a_contains_check_searches_the_whole_function() {
     );
 }
 
+const OPERANDS: &str = r#"
+[function."game.parts.primary"]
+locator = { signature = "48 89 5C 24 08" }
+abi = { args = [], ret = "void" }
+thread = "any"
+
+[function."game.parts.other"]
+locator = { signature = "40 53 48 83 EC 30" }
+abi = { args = [], ret = "void" }
+thread = "any"
+
+[field."game.parts.in_primary"]
+of = "game.parts"
+type = "u32"
+locator = { in = "game.parts.primary", signature = "8B 41 08", operand = "disp" }
+
+[field."game.parts.in_chunk"]
+of = "game.parts"
+type = "u32"
+locator = { in = "game.parts.primary", signature = "8B 43 18", operand = "disp" }
+
+[field."game.parts.twice"]
+of = "game.parts"
+type = "u32"
+locator = { in = "game.parts.primary", signature = "8B 4F ??", operand = "disp" }
+
+[field."game.parts.outside"]
+of = "game.parts"
+type = "u32"
+locator = { in = "game.parts.primary", signature = "8B 46 28", operand = "disp" }
+"#;
+
+#[test]
+fn an_in_locator_searches_the_whole_function() {
+    let mut code = vec![0xCC; 0x60];
+    // 0x1000: the function's primary range.
+    code[0x00..0x0B].copy_from_slice(&[
+        0x48, 0x89, 0x5C, 0x24, 0x08, 0x8B, 0x41, 0x08, 0x8B, 0x4F, 0x10,
+    ]);
+    // 0x1020: a chunk chained to it.
+    code[0x20..0x26].copy_from_slice(&[0x8B, 0x43, 0x18, 0x8B, 0x4F, 0x20]);
+    // 0x1040: another function.
+    code[0x40..0x49].copy_from_slice(&[0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x8B, 0x46, 0x28]);
+    let file = PeBuilder::new()
+        .section(".text", CODE, &code)
+        .functions(&[(0x1000, 0x1010), (0x1020, 0x1030), (0x1040, 0x1050)])
+        .chained(0x1020, 0x1000)
+        .build_file();
+    let image = Image::parse(&file, Layout::File).unwrap();
+    let map = Map::from_sources(
+        "format = 2\n",
+        &[("entries/game.toml".to_owned(), OPERANDS.to_owned())],
+    )
+    .unwrap();
+    let resolution = map.resolve(&image, BASE);
+    assert_eq!(
+        resolution.get("game.parts.in_primary").cloned(),
+        Some(Ok(Value::Offset(0x8)))
+    );
+    assert_eq!(
+        resolution.get("game.parts.in_chunk").cloned(),
+        Some(Ok(Value::Offset(0x18))),
+        "an instruction in a chained chunk is part of the function"
+    );
+    assert_eq!(
+        resolution.get("game.parts.twice").cloned(),
+        Some(Err(Absence::Ambiguous(2))),
+        "a match in the primary range and one in a chunk are two matches"
+    );
+    assert_eq!(
+        resolution.get("game.parts.outside").cloned(),
+        Some(Err(Absence::NoMatch)),
+        "code of another function is not this one's"
+    );
+}
+
 #[test]
 fn a_leaf_function_ends_where_its_control_flow_ends() {
     let mut code = vec![0xCC; 0x80];

@@ -87,7 +87,8 @@ pub enum Locator {
     /// The function in a slot of a vtable entry.
     VtableSlot { vtable: String, slot: u32 },
     /// The displacement of the memory operand of the single instruction
-    /// matching a signature inside a function entry's range.
+    /// matching a signature inside a function entry's code, chained chunks
+    /// included.
     Operand {
         function: String,
         signature: Signature,
