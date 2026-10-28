@@ -130,6 +130,7 @@ mod tests {
             Permission::StorageCache,
             Permission::HttpWebsocket,
             Permission::LinksOpen,
+            Permission::Unreviewed,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

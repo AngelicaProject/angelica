@@ -37,7 +37,7 @@
 pub mod bindings {
     // Canonical ABI allocations carry a length and allocate exactly that capacity.
     #![allow(clippy::same_length_and_capacity)]
-    wit_bindgen::generate!({ path: "../../wit", world: "plugin", pub_export_macro: true, generate_all });
+    wit_bindgen::generate!({ path: "../../wit", world: "intercepting", pub_export_macro: true, generate_all });
 }
 
 pub mod chat;
@@ -47,6 +47,7 @@ pub mod draw;
 pub mod events;
 pub mod excel;
 pub mod http;
+pub mod intercepts;
 pub mod jobs;
 pub mod lens;
 pub mod links;
@@ -60,8 +61,9 @@ pub mod websocket;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http, jobs,
-        lens, links, messages, notifications, runtime, sound, storage, types, websocket,
+        chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http,
+        intercepts, jobs, lens, links, messages, notifications, runtime, sound, storage, types,
+        websocket,
     };
 }
 
@@ -136,6 +138,12 @@ pub trait Plugin: Sized + 'static {
     fn run_job(name: &str, _input: Vec<u8>) -> Result<Vec<u8>, String> {
         Err(format!("this plugin has no job {name}"))
     }
+
+    /// Runs in an intercept instance on the game's call of a function the
+    /// plugin intercepts with [`intercepts::before`] or
+    /// [`intercepts::after`]. It has no `self`: the instance shares nothing
+    /// with the main one but the snapshot.
+    fn intercepted(_call: intercepts::Call) {}
 }
 
 /// Logs a line at a level.
@@ -227,6 +235,12 @@ macro_rules! plugin {
                     input: ::std::vec::Vec<u8>,
                 ) -> ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String> {
                     <$plugin as $crate::Plugin>::run_job(&name, input)
+                }
+            }
+
+            impl $crate::bindings::exports::angelica::plugin::handler::Guest for Guest {
+                fn intercepted(call: $crate::intercepts::Call) {
+                    <$plugin as $crate::Plugin>::intercepted(call);
                 }
             }
 

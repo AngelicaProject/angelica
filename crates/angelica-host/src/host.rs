@@ -579,6 +579,9 @@ impl Host {
             log: plugin.log.clone(),
             jobs: jobs.clone(),
             api_minor: crate::view::api_minor(&plugin.manifest.plugin.api),
+            own: self.own_entries(plugin, &grants),
+            component: Some(plugin.pre.instance_pre().component().clone()),
+            order: plugin.manifest.intercept_order(),
             http: grants.permissions.contains(&Permission::HttpGet).then(|| {
                 Arc::new(crate::http::Client::new(
                     plugin.manifest.http_hosts().into_iter().collect(),
@@ -697,7 +700,43 @@ impl Host {
         }
     }
 
+    /// A plugin's own Anatomia entries resolved against the running game,
+    /// when it has them and holds `unreviewed`. What is absent is logged.
+    fn own_entries(&self, plugin: &Plugin, grants: &Grants) -> Option<Arc<crate::intercepts::Own>> {
+        use crate::sandbox::bindings::angelica::plugin::runtime::Level;
+        let anatomia = plugin.manifest.anatomia.clone()?;
+        if !grants.permissions.contains(&Permission::Unreviewed) {
+            return None;
+        }
+        let Some((base, bytes)) = self.services.game.executable() else {
+            plugin.log.push(
+                Level::Warning,
+                "the game's executable cannot be read, so the plugin's own entries are absent",
+            );
+            return None;
+        };
+        let image = match angelica_pe::Image::parse(&bytes, angelica_pe::Layout::Mapped) {
+            Ok(image) => image,
+            Err(error) => {
+                plugin.log.push(
+                    Level::Warning,
+                    &format!("the game's executable cannot be read: {error}"),
+                );
+                return None;
+            }
+        };
+        let own = crate::intercepts::Own::resolve(anatomia, base, &image);
+        for (name, reason) in own.absent() {
+            plugin.log.push(
+                Level::Warning,
+                &format!("own entry {name} is absent: {reason}"),
+            );
+        }
+        Some(Arc::new(own))
+    }
+
     fn remove_effects(&self, id: &str) {
+        self.services.intercepts.remove(id);
         self.services.menus.remove_plugin(id);
         self.services.excel.remove_plugin(id);
         self.services.case.remove_plugin(id);

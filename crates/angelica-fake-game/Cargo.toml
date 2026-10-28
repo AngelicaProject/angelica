@@ -19,6 +19,7 @@ tempfile.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+angelica-pe = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 tungstenite.workspace = true
 

@@ -185,6 +185,42 @@ pub struct PluginPackage {
     pub compiled_here: bool,
 }
 
+/// The plugin's own Anatomia entries: the files under `anatomia/`, whose
+/// namespace is the plugin id; none without `anatomia/anatomia.toml`.
+///
+/// # Errors
+/// Entries that cannot be read at all, another namespace, and a file under
+/// `anatomia/` that is not UTF-8.
+pub fn own_entries(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+    id: &str,
+) -> Result<Option<angelica_anatomia::Anatomia>, String> {
+    let Some(manifest) = files.get("anatomia/anatomia.toml") else {
+        if files.keys().any(|path| path.starts_with("anatomia/")) {
+            return Err("anatomia/ has no anatomia.toml".into());
+        }
+        return Ok(None);
+    };
+    let text = |path: &str, bytes: &[u8]| {
+        String::from_utf8(bytes.to_vec()).map_err(|_| format!("{path} is not UTF-8"))
+    };
+    let manifest = text("anatomia/anatomia.toml", manifest)?;
+    let sources = files
+        .iter()
+        .filter(|(path, _)| path.starts_with("anatomia/") && *path != "anatomia/anatomia.toml")
+        .map(|(path, bytes)| Ok((path["anatomia/".len()..].to_owned(), text(path, bytes)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let anatomia = angelica_anatomia::Anatomia::from_sources(&manifest, &sources)
+        .map_err(|error| format!("anatomia: {error}"))?;
+    if anatomia.namespace != id {
+        return Err(format!(
+            "anatomia: the namespace is {}, not the plugin id {id}",
+            anatomia.namespace
+        ));
+    }
+    Ok(Some(anatomia))
+}
+
 /// Authenticates the plugin package in `folder`: a package signed with the
 /// release key, or one signed with the installation key that holds the
 /// author's plugin file, whose author is the one the plugin is bound to.
@@ -252,6 +288,7 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
     let mut manifest = manifest;
     manifest.origin = origin;
     manifest.icon = icon.map(std::sync::Arc::from);
+    manifest.anatomia = own_entries(&files, manifest.id())?.map(std::sync::Arc::new);
     if folder.file_name() != Some(std::ffi::OsStr::new(manifest.id())) {
         return Err(format!(
             "the folder name differs from the plugin id {}",
@@ -266,4 +303,49 @@ pub fn authenticate_plugin(folder: &Path, trust: &Trust) -> Result<PluginPackage
         artifact,
         compiled_here: from_author,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_entries;
+    use std::collections::BTreeMap;
+
+    fn files(entries: &[(&str, &str)]) -> BTreeMap<String, Vec<u8>> {
+        entries
+            .iter()
+            .map(|(path, text)| ((*path).to_owned(), text.as_bytes().to_vec()))
+            .collect()
+    }
+
+    #[test]
+    fn own_entries_are_in_the_plugins_namespace() {
+        let manifest = "format = \"1.0\"\nnamespace = \"typing-fold\"\n";
+        let function = "[function.\"game.first\"]\ntype = \"fn()\"\nthread = \"main\"\nfind = [{ scan = \"C3\" }]\n";
+        let found = own_entries(
+            &files(&[
+                ("angelica.toml", "ignored"),
+                ("anatomia/anatomia.toml", manifest),
+                ("anatomia/functions/game.toml", function),
+            ]),
+            "typing-fold",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(found.get("game.first").is_some());
+
+        assert!(
+            own_entries(&files(&[("angelica.toml", "")]), "typing-fold")
+                .unwrap()
+                .is_none()
+        );
+        let other =
+            own_entries(&files(&[("anatomia/anatomia.toml", manifest)]), "hello").unwrap_err();
+        assert!(other.contains("not the plugin id hello"), "{other}");
+        let headless = own_entries(
+            &files(&[("anatomia/functions/game.toml", function)]),
+            "typing-fold",
+        )
+        .unwrap_err();
+        assert!(headless.contains("no anatomia.toml"), "{headless}");
+    }
 }

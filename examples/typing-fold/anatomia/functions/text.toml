@@ -1,0 +1,5 @@
+[function."text.utf8_string.to_lower"]
+doc = "Converts a string to lower case."
+type = "fn(this: ptr<text.utf8_string>) -> ptr"
+thread = "any"
+find = [{ scan = "45 33 C0 4C 8B C9 4C 39 41 10 0F 86 ?? ?? ?? ?? 45 8D 50 06" }]

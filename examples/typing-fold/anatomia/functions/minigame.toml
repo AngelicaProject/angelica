@@ -1,0 +1,7 @@
+[function."minigame.keybound.normalize"]
+doc = "Normalizes the typed text and an enemy's word before Keybound Brawler compares them: removes the marks its rules make optional and evens out full-width characters, by the language at +0x40."
+type = "fn(this: ptr, text: ptr<text.utf8_string>) -> ptr"
+thread = "main"
+find = [{ scan = "48 89 5C 24 18 48 89 7C 24 20 55 48 8D 6C 24 F0 48 81 EC 10 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 45 00 4C 8B 05 ?? ?? ?? ?? 48 8B DA 48 8B F9 48 8D 15" }]
+# The prologue is common; the language switch it holds is not.
+checks = [{ bytes = "83 7F 40 06", at = 0x177 }]

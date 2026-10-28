@@ -78,6 +78,11 @@ pub struct ScriptedGame {
     /// where the writes a test made came from; see
     /// [`ScriptedGame::write_from`].
     pub writes: Mutex<WriteWatch>,
+    /// The game's executable as mapped, where plugins' own entries are
+    /// resolved; none unless a test gives one.
+    pub executable: Mutex<Option<(u64, Arc<Vec<u8>>)>>,
+    /// The addresses of the functions plugins intercept, in order.
+    pub intercepted: Mutex<Vec<u64>>,
 }
 
 /// The address and size a watch of writes is on, and where writes came
@@ -106,6 +111,8 @@ impl Default for ScriptedGame {
             played: Mutex::new(Vec::new()),
             socket_server: Mutex::new(None),
             writes: Mutex::new((None, Vec::new())),
+            executable: Mutex::new(None),
+            intercepted: Mutex::new(Vec::new()),
         }
     }
 }
@@ -222,6 +229,26 @@ impl Game for ScriptedGame {
             .unwrap_or_else(PoisonError::into_inner)
             .push(wav);
         true
+    }
+
+    fn executable(&self) -> Option<(u64, Arc<Vec<u8>>)> {
+        self.executable
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn enable_intercept(
+        &self,
+        address: u64,
+        _code: &runtime::intercepts::Code,
+        _intercepts: &Arc<runtime::intercepts::Intercepts>,
+    ) -> Result<(), String> {
+        self.intercepted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(address);
+        Ok(())
     }
 
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
@@ -479,6 +506,7 @@ impl TestHost {
     fn create(folder: tempfile::TempDir, limits: Limits) -> Self {
         let game = Arc::new(ScriptedGame::default());
         let services = Arc::new(Services {
+            intercepts: Arc::default(),
             data: Arc::new(runtime::game_data::GameData::new(Some(
                 &folder.path().join("game-files"),
             ))),
@@ -571,6 +599,94 @@ impl TestHost {
         }
         test.host.start_all();
         Ok(test)
+    }
+
+    /// Installs a component with its own Anatomia entries: `entries` as
+    /// the package's `anatomia/` holds them, by path below it.
+    ///
+    /// # Errors
+    /// When the manifest, the entries, or the component is refused.
+    pub fn install_with_entries(
+        &mut self,
+        manifest: &str,
+        component: &[u8],
+        entries: &[(&str, &str)],
+    ) -> Result<(), String> {
+        let mut parsed = Manifest::parse(manifest).map_err(|e| e.to_string())?;
+        let files: std::collections::BTreeMap<String, Vec<u8>> = entries
+            .iter()
+            .map(|(path, text)| (format!("anatomia/{path}"), text.as_bytes().to_vec()))
+            .collect();
+        parsed.anatomia = runtime::package::own_entries(&files, parsed.id())?.map(Arc::new);
+        let compiled = wasmtime::component::Component::new(&self.host_engine(), component)
+            .map_err(|e| e.to_string())?;
+        self.host.install(parsed, &compiled)
+    }
+
+    /// The game's executable, mapped at `base`, in which plugins' own
+    /// entries are resolved when they start.
+    pub fn use_executable(&self, base: u64, mapped: Vec<u8>) {
+        *self
+            .game
+            .executable
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((base, Arc::new(mapped)));
+    }
+
+    /// Puts `bytes` in the game's memory and returns where.
+    pub fn place(&self, bytes: &[u8]) -> u64 {
+        self.game
+            .objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .place(bytes)
+    }
+
+    /// `length` bytes of the game's memory at `address`.
+    ///
+    /// # Panics
+    /// When the scripted game has no such memory.
+    #[must_use]
+    pub fn bytes_at(&self, address: u64, length: usize) -> Vec<u8> {
+        let mut bytes = vec![0; length];
+        assert!(
+            runtime::lens::Memory::read(&*self.game, address, &mut bytes),
+            "no memory at {address:#x}"
+        );
+        bytes
+    }
+
+    /// The game calls the function that `plugin` intercepts as `function`
+    /// with `args`, on this thread, as the game's hook does: its `before`
+    /// handlers run, then `original` with the arguments they left, unless
+    /// one skipped it, then its `after` handlers. Returns what the call
+    /// returns and the arguments the game's code got.
+    ///
+    /// # Panics
+    /// When the plugin does not intercept the function.
+    pub fn call_intercepted(
+        &self,
+        plugin: &str,
+        function: &str,
+        args: &[runtime::intercepts::Arg],
+        original: impl FnOnce(&[runtime::intercepts::Arg]) -> runtime::intercepts::Returned,
+    ) -> (runtime::intercepts::Returned, Vec<runtime::intercepts::Arg>) {
+        let intercepts = &self.services().intercepts;
+        let address = intercepts
+            .address_of(plugin, function)
+            .unwrap_or_else(|| panic!("{plugin} does not intercept {function}"));
+        let mut args = args.to_vec();
+        let mut original = Some(original);
+        let mut ran = None;
+        let decided = intercepts.call(address, &mut args, |args| {
+            ran = Some(args.to_vec());
+            original.take().expect("the game's code runs once")(args)
+        });
+        let returned = decided.unwrap_or_else(|| {
+            ran = Some(args.clone());
+            original.take().expect("the game's code runs once")(&args)
+        });
+        (returned, ran.unwrap_or_default())
     }
 
     /// Installs a component built from a package's `angelica.toml` and

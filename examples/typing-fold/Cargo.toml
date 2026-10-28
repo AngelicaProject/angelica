@@ -1,0 +1,17 @@
+[package]
+name = "angelica-typing-fold"
+description = "An example plugin that intercepts a function its own Anatomia entries describe: Keybound Brawler compares typed Cyrillic regardless of letter case."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

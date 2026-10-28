@@ -1,0 +1,12 @@
+manifest = 1
+
+[plugin]
+id = "typing-fold"
+name = "Typing fold"
+version = "0.1.0"
+api = "1.0"
+description = "Keybound Brawler accepts typed Cyrillic words whatever their letter case, and ё for е."
+authors = ["AngelicaProject contributors"]
+
+[permissions]
+"unreviewed" = true

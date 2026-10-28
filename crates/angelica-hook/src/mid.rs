@@ -82,6 +82,8 @@ const XMM: [AsmRegisterXmm; 16] = [
 #[derive(Debug)]
 pub struct MidHook {
     splice: Splice,
+    /// Where the moved instructions start in the stub.
+    moved: usize,
 }
 
 impl MidHook {
@@ -225,12 +227,23 @@ impl MidHook {
             stub,
             moved,
         )?;
-        Ok(Self { splice })
+        Ok(Self {
+            splice,
+            moved: moved_at,
+        })
     }
 
     #[must_use]
     pub fn location(&self) -> usize {
         self.splice.target()
+    }
+
+    /// The moved instructions followed by the jump back. For a hook made by
+    /// [`MidHook::returning`], this is the function itself without the
+    /// hook: calling it runs the game's code with the arguments it is given.
+    #[must_use]
+    pub fn original(&self) -> usize {
+        self.moved
     }
 
     #[must_use]

@@ -59,5 +59,18 @@ world plugin {
     import notifications;
     import sound;
     import websocket;
+    import intercepts;
     export guest;
+}
+
+/// A plugin that may also intercept: what the SDK builds. A component of
+/// the `plugin` world without `handler` runs as before.
+world intercepting {
+    include plugin;
+    export handler;
+}
+
+/// What the host calls in an intercept instance.
+world intercept-handler {
+    export handler;
 }

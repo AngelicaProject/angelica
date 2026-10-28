@@ -278,6 +278,10 @@ offsets = []
 
 The same description and executable always give the same text.
 
+## A plugin's own entries
+
+A plugin carries its own description in `anatomia/` beside its `angelica.toml`, in the layout above, with `namespace` set to its plugin id. `angelica dev install` puts the folder in the plugin's package, which the installation's file set authenticates, and refuses entries the host would refuse: an `anatomia/` without `anatomia.toml`, or another namespace. The host reads the entries when it loads the package and resolves them against the game's executable when the plugin starts, for a plugin that holds the `unreviewed` permission; an entry absent there is logged. The plugin's names refer to its own entries and types only. A plugin [intercepts](./plugin-api-v1.md#intercepts) the functions they describe.
+
 ## Conversion from game map v2
 
 `angelica anatomia convert` reads a valid game map v2 and writes a description and its Lens catalog. Converting the result back gives the same map as the v2 reader reads it. TOML comments are not carried over.

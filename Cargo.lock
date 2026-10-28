@@ -114,6 +114,7 @@ version = "0.1.0"
 dependencies = [
  "angelica-host",
  "angelica-map",
+ "angelica-pe",
  "angelica-sqpack",
  "angelica-text",
  "angelica-view",
@@ -152,6 +153,7 @@ dependencies = [
 name = "angelica-host"
 version = "0.1.0"
 dependencies = [
+ "angelica-anatomia",
  "angelica-hook",
  "angelica-map",
  "angelica-pe",
@@ -181,6 +183,13 @@ dependencies = [
 
 [[package]]
 name = "angelica-hostile"
+version = "0.1.0"
+dependencies = [
+ "angelica-sdk",
+]
+
+[[package]]
+name = "angelica-intercepting"
 version = "0.1.0"
 dependencies = [
  "angelica-sdk",
@@ -281,6 +290,13 @@ version = "0.1.0"
 dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "angelica-typing-fold"
+version = "0.1.0"
+dependencies = [
+ "angelica-sdk",
 ]
 
 [[package]]

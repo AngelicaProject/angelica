@@ -1,0 +1,9 @@
+[struct."text.utf8_string"]
+doc = "A string of the game's text."
+text = "text"
+
+[struct."text.utf8_string".fields.text]
+doc = "The string's bytes, NUL-terminated."
+type = "ptr<char8>"
+find = [{ in = "text.utf8_string.to_lower" }, { scan = "49 8B 11 49 03 D0 0F B6 02" }, { operand = "disp" }]
+text = 4096

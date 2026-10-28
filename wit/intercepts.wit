@@ -1,0 +1,127 @@
+package angelica:plugin@1.0.0;
+
+/// Handlers in the game's calls of functions the plugin describes in its
+/// own Anatomia entries, with the `unreviewed` permission.
+///
+/// `before` makes the host call the guest's `handler.intercepted` each time
+/// the game calls the function, before its code runs; `after`, each time
+/// it returns, before its caller continues. A handler runs in an intercept
+/// instance of the plugin on the thread that called the function. An
+/// intercept instance has its own memory and shares nothing with the main
+/// instance but the latest snapshot the main instance published. A handler
+/// may use `runtime.log` and this interface; every other import traps.
+///
+/// A `before` handler may change the arguments (`set-argument`) or make the
+/// function return at once (`skip`); an `after` handler may change the
+/// result (`set-result`). Several plugins' handlers of one function run in
+/// one order: `before` handlers from first to last, `after` handlers from
+/// last to first. Each `before` sees the arguments the one before it left;
+/// a `skip` ends the `before` handlers, the game's code does not run, and
+/// every `after` handler is told so.
+///
+/// A handler runs for at most 50 ms. A handler that traps, runs longer, or
+/// fails a host call in a way that leaves the game's data unknown disables
+/// every handler of the plugin, and its changes to the call are dropped:
+/// the call proceeds as if the handler had not been there. Disabling the
+/// plugin removes its handlers.
+interface intercepts {
+    use types.{error};
+
+    /// Something the game passed to the call or returned, valid until the
+    /// handler returns. It carries the type the function's entry gives it.
+    type handle = u64;
+
+    /// A value of the call: an argument or the result.
+    variant value {
+        /// A function that returns nothing, a zero pointer, or the result
+        /// of a call an `after` handler cannot see.
+        none,
+        signed(s64),
+        unsigned(u64),
+        boolean(bool),
+        float32(f32),
+        float64(f64),
+        /// A pointer to an object of a structure of the plugin's entries.
+        object(handle),
+        /// A pointer to 8-bit text that ends with a NUL.
+        text(handle),
+        /// A pointer to anything else: the handler can pass it on but not
+        /// read through it.
+        pointer(handle),
+    }
+
+    /// Whether a handler runs before or after the game's code.
+    enum phase {
+        before,
+        after,
+    }
+
+    /// One call of an intercepted function.
+    record call {
+        /// The function's entry, as `before` or `after` named it.
+        function: string,
+        /// The number `before` or `after` gave this handler.
+        handler: u32,
+        phase: phase,
+        /// The arguments by position, as the function's type gives them.
+        /// An `after` handler sees those the game's code ran with.
+        args: list<value>,
+        /// What the function returned; `none` before it runs.
+        returned: value,
+        /// After: the game's code did not run, because a `before` handler
+        /// skipped it; `returned` is what that handler gave.
+        skipped: bool,
+    }
+
+    /// Called from the main instance: calls the handler before every call
+    /// of `function`, a function of the plugin's own entries that is
+    /// present in this build. The function's arguments are at most 16, each
+    /// an integer, a float, a `bool`, an enum with a type, or a pointer,
+    /// and it returns one of these or nothing. Once per function and phase.
+    before: func(function: string, handler: u32) -> result<_, error>;
+
+    /// Called from the main instance: as `before`, after every call.
+    after: func(function: string, handler: u32) -> result<_, error>;
+
+    /// Called from the main instance: the bytes handlers see from the next
+    /// call on, at most 64 MiB. A handler that is running keeps the bytes
+    /// it started with.
+    publish-snapshot: func(bytes: list<u8>) -> result<_, error>;
+
+    /// Called from a handler: the bytes the main instance published last;
+    /// empty before the first.
+    snapshot: func() -> list<u8>;
+
+    /// Called from a `before` handler: the argument at `index` is `value`
+    /// for the handlers after it and the game's code. The value has the
+    /// argument's type: a number in its range, or a handle of this call of
+    /// the same type, or `none` for a pointer.
+    set-argument: func(index: u32, value: value) -> result<_, error>;
+
+    /// Called from a `before` handler: the game's code does not run and
+    /// the function returns `value`, of the type it returns (`none` for a
+    /// function that returns nothing).
+    skip: func(value: value) -> result<_, error>;
+
+    /// Called from an `after` handler: the function returns `value`, of the
+    /// type it returns, to the handlers after it and the game.
+    set-result: func(value: value) -> result<_, error>;
+
+    /// Called from a handler: the text of an `object` whose structure reads
+    /// as text, or of a `text`, without its terminator.
+    text: func(of: handle) -> result<list<u8>, error>;
+
+    /// Called from a handler: replaces the bytes of the text with `bytes`,
+    /// which have as many bytes as the text has and no NUL, in the game's
+    /// memory, in place.
+    edit-text: func(of: handle, bytes: list<u8>) -> result<_, error>;
+}
+
+/// What a plugin that intercepts exports.
+interface handler {
+    use intercepts.{call};
+
+    /// A call of a function the plugin intercepts; see `intercepts.before`
+    /// and `intercepts.after`.
+    intercepted: func(call: call);
+}

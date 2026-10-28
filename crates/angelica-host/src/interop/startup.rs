@@ -213,7 +213,7 @@ fn initialize() -> Result<(), String> {
     let dev = Arc::new(crate::dev::DevMode::new(root));
     let (catalog, map, map_status) = load_map(&map_source(&config, &dev), base, &snapshot, hash);
     let catalog = Arc::new(catalog);
-    let services = services(&config, root, &catalog, map.as_ref(), base)?;
+    let services = services(&config, root, &catalog, map.as_ref(), base, &snapshot)?;
     let sandbox = Arc::new(Sandbox::new()?);
     let mut host = Host::new(
         sandbox.clone(),
@@ -325,6 +325,7 @@ fn services(
     catalog: &Arc<Catalog>,
     map: Option<&angelica_map::Map>,
     base: usize,
+    snapshot: &Arc<Vec<u8>>,
 ) -> Result<Arc<Services>, String> {
     let excel = Arc::new(ExcelText::default());
 
@@ -354,8 +355,10 @@ fn services(
         menus: menus.clone(),
         lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
+        executable: snapshot.clone(),
     });
     Ok(Arc::new(Services {
+        intercepts: Arc::default(),
         data,
         files,
         excel,
