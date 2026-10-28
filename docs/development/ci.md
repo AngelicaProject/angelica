@@ -9,7 +9,7 @@ GitHub Actions runs the checks below for every pull request and every push to `m
 | `rust` | `windows-latest` | The workspace is formatted, has no Clippy warnings, and passes its tests with all features. |
 | `linux` | `ubuntu-22.04` | The installer and game discovery build for Linux without Clippy warnings and pass their tests. |
 | `wine-fixture` | `windows-latest` | Builds the proxy's bootstrap fixture for the `wine` job. |
-| `wine` | `ubuntu-latest`, in `debian:trixie` pinned by digest | In Wine, the proxy starts the host before the game's entry point only with the installer's `dinput8` override ([testing](./testing.md#loader-tests)). |
+| `wine` | `ubuntu-latest`, in `debian:trixie` pinned by digest, without Docker's default seccomp profile, which refuses a socket call Wine makes when it starts | In Wine, the proxy starts the host before the game's entry point only with the installer's `dinput8` override ([testing](./testing.md#loader-tests)). |
 | `supply-chain` | `ubuntu-latest` | `cargo deny` passes; workflows pass `actionlint` and `zizmor`. |
 | `site` | `ubuntu-latest` | The [website](./website.md) builds and every link inside it leads somewhere. |
 | `agent-plugin` | `ubuntu-latest` | The [plugin for coding agents](../plugins/agent-plugin.md) and the marketplace that lists it pass `claude plugin validate --strict`. |

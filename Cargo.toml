@@ -61,7 +61,7 @@ thiserror = "2.0.20"
 toml = "1.1.6"
 windows-sys = "0.61.2"
 semver = "1.0.28"
-wasmtime = { version = "49.0.3", default-features = false, features = ["std", "runtime", "cranelift", "component-model"] }
+wasmtime = { version = "49.0.4", default-features = false, features = ["std", "runtime", "cranelift", "component-model"] }
 egui = { version = "0.36.2", default-features = false }
 num-traits = "0.2.19"
 windows = { version = "0.62.2", default-features = false }
