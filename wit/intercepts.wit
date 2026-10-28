@@ -5,11 +5,12 @@ package angelica:plugin@1.0.0;
 ///
 /// `before` makes the host call the guest's `handler.intercepted` each time
 /// the game calls the function, before its code runs; `after`, each time
-/// it returns, before its caller continues. A handler runs in an intercept
-/// instance of the plugin on the thread that called the function. An
-/// intercept instance has its own memory and shares nothing with the main
-/// instance but the latest snapshot the main instance published. A handler
-/// may use `runtime.log` and this interface; every other import traps.
+/// it returns, before its caller continues. A handler runs in the plugin's
+/// intercept instance on the thread that called the function; game threads
+/// enter the instance one at a time. The intercept instance has its own
+/// memory, which it keeps between calls, and shares nothing with the main
+/// instance but the snapshot it prepared (`handler.prepare`). A handler may
+/// use `runtime.log` and this interface; every other import traps.
 ///
 /// A `before` handler may change the arguments (`set-argument`) or make the
 /// function return at once (`skip`); an `after` handler may change the
@@ -83,13 +84,12 @@ interface intercepts {
     /// Called from the main instance: as `before`, after every call.
     after: func(function: string, handler: u32) -> result<_, error>;
 
-    /// Called from the main instance: the bytes handlers see from the next
-    /// call on, at most 64 MiB. A handler that is running keeps the bytes
-    /// it started with.
+    /// Called from the main instance: `bytes`, at most 64 MiB, for a new
+    /// intercept instance to prepare in the background (`handler.prepare`).
     publish-snapshot: func(bytes: list<u8>) -> result<_, error>;
 
-    /// Called from a handler: the bytes the main instance published last;
-    /// empty before the first.
+    /// Called from `handler.prepare` or a handler: the snapshot the
+    /// intercept instance prepares or prepared; empty before the first.
     snapshot: func() -> list<u8>;
 
     /// Called from a `before` handler: the argument at `index` is `value`
@@ -120,6 +120,14 @@ interface intercepts {
 /// What a plugin that intercepts exports.
 interface handler {
     use intercepts.{call};
+
+    /// Called in a new intercept instance after the main instance published
+    /// a snapshot, in the background and for at most 30 s: the instance
+    /// reads the snapshot (`intercepts.snapshot`) into its own memory. When
+    /// it returns `ok`, handlers run in this instance from then on, unless
+    /// a later snapshot was published meanwhile; on an error or a trap they
+    /// keep the instance they had.
+    prepare: func() -> result<_, string>;
 
     /// A call of a function the plugin intercepts; see `intercepts.before`
     /// and `intercepts.after`.

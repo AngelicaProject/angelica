@@ -350,10 +350,10 @@ fn a_handler_is_once_per_function_and_phase() {
     );
 }
 
-/// Rows of a text table and paths of file replacements: as many as an
-/// intercept instance reads from the snapshot within one handler's limit.
-const ROWS: u32 = 20_000;
-const PATHS: u32 = 5_000;
+/// Rows of a translation's text table and paths of file replacements, as
+/// large as a whole translation's.
+const ROWS: u32 = 300_000;
+const PATHS: u32 = 50_000;
 /// Calls of each measurement.
 const CALLS: u32 = 20_000;
 
@@ -368,8 +368,9 @@ fn average(mut call: impl FnMut(u32)) -> std::time::Duration {
 
 /// What a handler costs on the game's hottest paths: building a row, where
 /// a translation replaces its text from a table, and reading a file, where
-/// a path is looked up among the replaced ones. The numbers go to the
-/// output; the bounds only catch a handler far off.
+/// a path is looked up among the replaced ones. The intercept instance
+/// reads the tables once, in the background. The numbers go to the output;
+/// the bounds only catch a handler far off.
 #[test]
 fn handlers_on_hot_paths_cost_microseconds() {
     // Building the tables takes the main instance longer than a frame.
@@ -388,6 +389,12 @@ fn handlers_on_hot_paths_cost_microseconds() {
             id: format!("tables:{ROWS}:{PATHS}"),
         }),
     );
+    let published = std::time::Instant::now();
+    while !test.services().intercepts.prepared("intercepting") {
+        assert!(published.elapsed() < std::time::Duration::from_secs(60));
+        std::thread::yield_now();
+    }
+    let prepared = published.elapsed();
     assert!(
         log(&test, "intercepting").contains(&"tables: accepted".to_owned()),
         "{:?} {:?}",
@@ -410,9 +417,6 @@ fn handlers_on_hot_paths_cost_microseconds() {
             |_| Returned::default(),
         );
     };
-    let started = std::time::Instant::now();
-    store_row(0, 0);
-    let first = started.elapsed();
     let hit = average(|index| store_row(index % 100, index));
     assert_eq!(
         test.bytes_at(row_text, 15),
@@ -422,14 +426,11 @@ fn handlers_on_hot_paths_cost_microseconds() {
     let miss = average(|index| store_row(1000, index));
 
     let replaced = test.place(b"chara/equipment/e0042/texture/v01_c0101e0042_top_n.tex\0");
-    let other = test.place(b"chara/equipment/e9999/texture/v01_c0101e9999_top_n.tex\0");
+    let other = test.place(b"chara/weapon/w9999/obj/body/b0001/texture/v01_w9999b0001_n.tex\0");
     let read_file = |path: u64| {
-        test.call_intercepted(
-            "intercepting",
-            "game.read_file",
-            &[Arg::both(path)],
-            |_| Returned::default(),
-        )
+        test.call_intercepted("intercepting", "game.read_file", &[Arg::both(path)], |_| {
+            Returned::default()
+        })
         .0
         .integer
     };
@@ -442,9 +443,51 @@ fn handlers_on_hot_paths_cost_microseconds() {
         read_file(other);
     });
     println!(
-        "{ROWS} rows, {PATHS} paths: first call {first:?} (reads the tables); row replaced {hit:?}, row without text {miss:?}; path replaced {found:?}, path not replaced {not_found:?}"
+        "{ROWS} rows, {PATHS} paths: prepared in the background in {prepared:?}; row replaced {hit:?}, row without text {miss:?}; path replaced {found:?}, path not replaced {not_found:?}"
     );
     for each in [hit, miss, found, not_found] {
         assert!(each < std::time::Duration::from_millis(1), "{each:?}");
     }
+}
+
+/// Publishes a snapshot by clicking `id` and waits until it was prepared.
+fn publish(test: &TestHost, id: &str) {
+    test.event(
+        "intercepting",
+        Event::Clicked(WidgetRef {
+            window: "main".into(),
+            id: id.into(),
+        }),
+    );
+    let published = std::time::Instant::now();
+    while !test.services().intercepts.prepared("intercepting") {
+        assert!(published.elapsed() < std::time::Duration::from_secs(60));
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn a_snapshot_that_fails_to_prepare_leaves_handlers_with_the_one_they_had() {
+    let test = started(&[("intercepting", "")]);
+    intercept(&test, "intercepting", "before", "game.read_file", 11);
+    let path = test.place(b"chara/equipment/e0001/texture/v01_c0101e0001_top_n.tex\0");
+    let read = || {
+        test.call_intercepted("intercepting", "game.read_file", &[Arg::both(path)], |_| {
+            Returned::default()
+        })
+        .0
+        .integer
+    };
+    assert_eq!(read(), 0, "no snapshot yet");
+    publish(&test, "tables:0:10");
+    assert_eq!(read(), 1, "the prepared instance has the paths");
+    publish(&test, "broken");
+    assert_eq!(read(), 1, "handlers keep the instance they had");
+    let lines = log(&test, "intercepting");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("handlers keep the snapshot they had: the snapshot is not prepared: the snapshot is broken")),
+        "{lines:?}"
+    );
 }

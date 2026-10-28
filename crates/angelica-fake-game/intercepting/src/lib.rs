@@ -31,6 +31,17 @@ impl Plugin for Intercepting {
         Ok(Self)
     }
 
+    /// Reads the snapshot's tables once, before handlers use them.
+    fn prepare() -> Result<(), String> {
+        if intercepts::snapshot() == b"broken" {
+            return Err("the snapshot is broken".into());
+        }
+        let tables = read_tables();
+        TABLES
+            .set(tables)
+            .map_err(|_| "this instance prepared a snapshot already".to_owned())
+    }
+
     fn ui(&mut self) -> Vec<Window> {
         vec![Window::new("main", "Intercepting")]
     }
@@ -39,6 +50,11 @@ impl Plugin for Intercepting {
         let Event::Clicked(target) = event else {
             return;
         };
+        if target.id == "broken" {
+            let result = intercepts::publish_snapshot(b"broken");
+            angelica_sdk::info(&format!("broken: {}", refused(result)));
+            return;
+        }
         if let Some(sizes) = target.id.strip_prefix("tables:") {
             let (rows, paths) = sizes.split_once(':').unwrap_or((sizes, "0"));
             let snapshot = tables(rows.parse().unwrap_or(0), paths.parse().unwrap_or(0));
@@ -166,37 +182,48 @@ fn tables(rows: u32, paths: u32) -> Vec<u8> {
     bytes
 }
 
-/// The snapshot's tables, read once per intercept instance.
+/// The snapshot's tables, which `prepare` read.
 struct Tables {
     rows: HashMap<(u32, u32), Vec<u8>>,
     paths: HashSet<Vec<u8>>,
 }
 
+static TABLES: OnceLock<Tables> = OnceLock::new();
+
 fn loaded() -> &'static Tables {
-    static TABLES: OnceLock<Tables> = OnceLock::new();
-    TABLES.get_or_init(|| {
-        let bytes = intercepts::snapshot();
-        let mut at = 0;
-        let mut take = |count: usize| {
-            let slice = bytes.get(at..at + count).unwrap_or(&[]).to_vec();
-            at += count;
-            slice
-        };
-        let number = |bytes: Vec<u8>| bytes.iter().rev().fold(0u32, |n, b| (n << 8) | u32::from(*b));
-        let mut rows = HashMap::new();
-        for _ in 0..number(take(4)) {
-            let sheet = number(take(4));
-            let row = number(take(4));
-            let length = number(take(2)) as usize;
-            rows.insert((sheet, row), take(length));
-        }
-        let mut paths = HashSet::new();
-        for _ in 0..number(take(4)) {
-            let length = number(take(2)) as usize;
-            paths.insert(take(length));
-        }
-        Tables { rows, paths }
+    TABLES.get_or_init(|| Tables {
+        rows: HashMap::new(),
+        paths: HashSet::new(),
     })
+}
+
+fn read_tables() -> Tables {
+    let bytes = intercepts::snapshot();
+    let mut at = 0;
+    let mut take = |count: usize| {
+        let slice = bytes.get(at..at + count).unwrap_or(&[]).to_vec();
+        at += count;
+        slice
+    };
+    let number = |bytes: Vec<u8>| {
+        bytes
+            .iter()
+            .rev()
+            .fold(0u32, |n, b| (n << 8) | u32::from(*b))
+    };
+    let mut rows = HashMap::new();
+    for _ in 0..number(take(4)) {
+        let sheet = number(take(4));
+        let row = number(take(4));
+        let length = number(take(2)) as usize;
+        rows.insert((sheet, row), take(length));
+    }
+    let mut paths = HashSet::new();
+    for _ in 0..number(take(4)) {
+        let length = number(take(2)) as usize;
+        paths.insert(take(length));
+    }
+    Tables { rows, paths }
 }
 
 /// `store_row(sheet, row, text)`: the row's text becomes the table's when

@@ -1,9 +1,11 @@
 //! Handlers of plugins in the game's calls of functions their own Anatomia
 //! entries describe (`wit/intercepts.wit`).
 //!
-//! A handler runs in an intercept instance of its plugin on the thread
-//! that called the game's function: one instance per plugin and thread,
-//! made on the first call and kept while the plugin runs. It sees the
+//! A handler runs in its plugin's intercept instance on the thread that
+//! called the game's function: one instance per plugin, which game threads
+//! enter one at a time. A snapshot the main instance publishes reaches a
+//! new instance, prepared in the background, which then takes the place of
+//! the one in use; handlers never wait for it. A handler sees the
 //! call's arguments as numbers and handles, never as addresses, and the
 //! latest snapshot the main instance published. `before` handlers may
 //! change the arguments or return at once; `after` handlers may change the
@@ -16,7 +18,7 @@ use crate::sandbox::{self, Context, Role, State};
 use angelica_anatomia::{
     Anatomia, Kind as EntryKind, Place, Primitive, Resolution, Text, Ty, TypeDef,
 };
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -38,6 +40,8 @@ use crate::sandbox::bindings::angelica::plugin::intercepts as api;
 
 /// The longest a handler runs.
 pub const HANDLER_TIME: Duration = Duration::from_millis(50);
+/// The longest an intercept instance prepares a snapshot.
+pub const PREPARE_TIME: Duration = Duration::from_secs(30);
 /// The largest snapshot.
 pub const MAX_SNAPSHOT: usize = 64 * 1024 * 1024;
 /// The most arguments an intercepted function has.
@@ -236,13 +240,16 @@ pub struct Order {
 
 /// A plugin with handlers.
 struct Registered {
-    /// Tells this registration's instances apart from a later one's.
-    key: u64,
     context: Arc<Context>,
     own: Arc<Own>,
     pre: bindings::InterceptHandlerPre<State>,
     enabled: AtomicBool,
-    snapshot: RwLock<Arc<Vec<u8>>>,
+    /// The intercept instance handlers run in.
+    instance: RwLock<Arc<Mutex<Instance>>>,
+    /// How many snapshots were published, and how many of them are still
+    /// being prepared.
+    published: AtomicU64,
+    preparing: AtomicU64,
     calls: AtomicU64,
     nanos: AtomicU64,
 }
@@ -281,9 +288,6 @@ pub struct Intercepts {
     plugins: Mutex<HashMap<String, Arc<Registered>>>,
     targets: RwLock<HashMap<u64, Chain>>,
     hooked: Mutex<std::collections::HashSet<u64>>,
-    next_key: AtomicU64,
-    /// How many plugins stopped intercepting.
-    removals: AtomicU64,
 }
 
 /// The call a handler of an intercept instance is in, and what the handler
@@ -306,14 +310,10 @@ pub struct Frame {
 }
 
 thread_local! {
-    /// This thread's intercept instances, by registration.
-    static INSTANCES: RefCell<HashMap<u64, Instance>> = RefCell::new(HashMap::new());
     /// True while this thread runs a handler: a call of an intercepted
     /// function from inside one runs no handlers.
     static IN_HANDLER: Cell<bool> = const { Cell::new(false) };
     static SERIAL: Cell<u64> = const { Cell::new(0) };
-    /// The count of removals this thread last dropped instances for.
-    static REMOVALS_SEEN: Cell<u64> = const { Cell::new(0) };
 }
 
 /// While it lives, this thread runs handlers; dropping it clears the flag,
@@ -333,9 +333,30 @@ impl Drop for Running {
     }
 }
 
+/// An intercept instance, with the snapshot it prepared.
 struct Instance {
     store: Store<State>,
     bindings: bindings::InterceptHandler,
+    snapshot: Arc<Vec<u8>>,
+}
+
+/// Makes an intercept instance of `plugin` and has it prepare `snapshot`.
+fn prepare(plugin: &Registered, snapshot: Arc<Vec<u8>>) -> std::result::Result<Instance, String> {
+    let mut store = sandbox::store_for(&plugin.context, Role::Prepare(snapshot.clone()));
+    sandbox::budget(&mut store, PREPARE_TIME, PREPARE_TIME, HANDLER_FUEL);
+    let bindings = sandbox::call(&mut store, |store| plugin.pre.instantiate(store))
+        .map_err(|e| format!("the intercept instance cannot be made: {e}"))?;
+    let prepared = sandbox::call(&mut store, |store| {
+        bindings.angelica_plugin_handler().call_prepare(&mut *store)
+    })
+    .map_err(|trap| sandbox::describe_trap(&store, &trap))?;
+    prepared.map_err(|reason| format!("the snapshot is not prepared: {reason}"))?;
+    store.data_mut().role = Role::Intercept(None);
+    Ok(Instance {
+        store,
+        bindings,
+        snapshot,
+    })
 }
 
 impl Intercepts {
@@ -491,13 +512,26 @@ impl Intercepts {
         })?;
         let pre =
             handler_pre(&component).map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+        let mut store = sandbox::store_for(context, Role::Intercept(None));
+        sandbox::budget(&mut store, PREPARE_TIME, PREPARE_TIME, HANDLER_FUEL);
+        let bindings = sandbox::call(&mut store, |store| pre.instantiate(store)).map_err(|e| {
+            Error::new(
+                Kind::Unavailable,
+                format!("the intercept instance cannot be made: {e}"),
+            )
+        })?;
         let registered = Arc::new(Registered {
-            key: self.next_key.fetch_add(1, Ordering::Relaxed),
             context: context.clone(),
             own: own.clone(),
             pre,
             enabled: AtomicBool::new(true),
-            snapshot: RwLock::new(Arc::new(Vec::new())),
+            instance: RwLock::new(Arc::new(Mutex::new(Instance {
+                store,
+                bindings,
+                snapshot: Arc::new(Vec::new()),
+            }))),
+            published: AtomicU64::new(0),
+            preparing: AtomicU64::new(0),
             calls: AtomicU64::new(0),
             nanos: AtomicU64::new(0),
         });
@@ -505,10 +539,14 @@ impl Intercepts {
         Ok(registered)
     }
 
-    /// The bytes `plugin`'s handlers see from the next call on.
+    /// Has a new intercept instance of `context`'s plugin prepare `bytes`
+    /// in the background; it takes the place of the one handlers run in
+    /// when it is ready, unless a later snapshot was published meanwhile.
+    /// When preparing fails, handlers go on in the instance they had, and
+    /// the plugin's log says why.
     ///
     /// # Errors
-    /// Bytes over the limit, and a plugin that intercepts nothing.
+    /// Bytes over the limit, and a plugin whose handlers cannot be made.
     pub fn publish(&self, context: &Arc<Context>, bytes: Vec<u8>) -> Result<()> {
         if bytes.len() > MAX_SNAPSHOT {
             return Err(Error::new(
@@ -523,11 +561,44 @@ impl Intercepts {
             )
         })?;
         let plugin = self.registered(context, &own)?;
-        *plugin
-            .snapshot
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = Arc::new(bytes);
+        let generation = plugin.published.fetch_add(1, Ordering::AcqRel) + 1;
+        plugin.preparing.fetch_add(1, Ordering::AcqRel);
+        let snapshot = Arc::new(bytes);
+        std::thread::Builder::new()
+            .name(format!("angelica prepare {}", plugin.id()))
+            .spawn(move || {
+                let prepared = prepare(&plugin, snapshot);
+                match prepared {
+                    Ok(instance)
+                        if plugin.published.load(Ordering::Acquire) == generation
+                            && plugin.enabled.load(Ordering::Acquire) =>
+                    {
+                        *plugin
+                            .instance
+                            .write()
+                            .unwrap_or_else(PoisonError::into_inner) =
+                            Arc::new(Mutex::new(instance));
+                    }
+                    Ok(_) => {}
+                    Err(reason) => plugin.context.log.push(
+                        crate::sandbox::bindings::angelica::plugin::runtime::Level::Error,
+                        &format!("handlers keep the snapshot they had: {reason}"),
+                    ),
+                }
+                plugin.preparing.fetch_sub(1, Ordering::AcqRel);
+            })
+            .map_err(|e| Error::new(Kind::Unavailable, format!("no thread to prepare: {e}")))?;
         Ok(())
+    }
+
+    /// Whether every snapshot `plugin` published was prepared; for tests.
+    #[must_use]
+    pub fn prepared(&self, plugin: &str) -> bool {
+        self.plugins
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(plugin)
+            .is_none_or(|found| found.preparing.load(Ordering::Acquire) == 0)
     }
 
     /// Removes every handler of `plugin`. The hooks stay and call only the
@@ -540,7 +611,6 @@ impl Intercepts {
             .remove(plugin);
         if let Some(removed) = removed {
             removed.enabled.store(false, Ordering::Release);
-            self.removals.fetch_add(1, Ordering::AcqRel);
         }
         for chain in self
             .targets
@@ -623,17 +693,6 @@ impl Intercepts {
             Some(chain) if !chain.handlers.is_empty() => chain.handlers.clone(),
             _ => return None,
         };
-        let removals = self.removals.load(Ordering::Acquire);
-        let alive: Vec<u64> = if REMOVALS_SEEN.with(Cell::get) == removals {
-            Vec::new()
-        } else {
-            self.plugins
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-                .map(|plugin| plugin.key)
-                .collect()
-        };
         let enabled = |handler: &&Arc<Handler>, phase: api::Phase| {
             handler.phase == phase && handler.plugin.enabled.load(Ordering::Acquire)
         };
@@ -645,7 +704,7 @@ impl Intercepts {
         {
             let frame = {
                 let _running = Running::start();
-                run(handler, args, None, false, removals, &alive)
+                run(handler, args, None, false)
             };
             if let Some(frame) = frame {
                 args.copy_from_slice(&frame.args[..args.len()]);
@@ -671,14 +730,7 @@ impl Intercepts {
         for handler in afters {
             let frame = {
                 let _running = Running::start();
-                run(
-                    handler,
-                    args,
-                    Some(result),
-                    skipped.is_some(),
-                    removals,
-                    &alive,
-                )
+                run(handler, args, Some(result), skipped.is_some())
             };
             if let Some(frame) = frame {
                 result = frame.result;
@@ -897,34 +949,28 @@ impl Handler {
     }
 }
 
-/// Runs one handler with `args` and, after the game's code, its result.
+/// Runs one handler with `args` and, after the game's code, its result,
+/// in its plugin's intercept instance; another thread in it is waited for.
 /// Returns the call as the handler left it, or none when the handler
-/// failed and was disabled. `removals` counts the plugins that stopped
-/// intercepting, and `alive` is the registrations still running: a thread
-/// drops its instances of the others when the count changed.
-fn run(
-    handler: &Handler,
-    args: &[Arg],
-    result: Option<Returned>,
-    skipped: bool,
-    removals: u64,
-    alive: &[u64],
-) -> Option<Frame> {
+/// failed and was disabled.
+fn run(handler: &Handler, args: &[Arg], result: Option<Returned>, skipped: bool) -> Option<Frame> {
     let plugin = &handler.plugin;
     let serial = SERIAL.with(|serial| {
         let next = serial.get().wrapping_add(1) & ((1 << 56) - 1);
         serial.set(next);
         next
     });
+    let instance = plugin
+        .instance
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let mut instance = instance.lock().unwrap_or_else(PoisonError::into_inner);
     let mut frame = Frame {
         phase: handler.phase,
         objects: Vec::new(),
         serial,
-        snapshot: plugin
-            .snapshot
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone(),
+        snapshot: instance.snapshot.clone(),
         own: plugin.own.clone(),
         params: handler.params.clone(),
         returns: handler.returns.clone(),
@@ -934,49 +980,28 @@ fn run(
     };
     let call = handler.call(&mut frame, args, result, skipped);
     let started = Instant::now();
-    let outcome = INSTANCES.with(|instances| {
-        let mut instances = instances.borrow_mut();
-        if REMOVALS_SEEN.with(Cell::get) != removals {
-            instances.retain(|key, _| alive.contains(key));
-            REMOVALS_SEEN.with(|seen| seen.set(removals));
-        }
-        let instance = match instances.entry(plugin.key) {
-            std::collections::hash_map::Entry::Occupied(found) => found.into_mut(),
-            std::collections::hash_map::Entry::Vacant(place) => {
-                let mut store = sandbox::store_for(&plugin.context, Role::Intercept(None));
-                sandbox::budget(
-                    &mut store,
-                    HANDLER_TIME * 20,
-                    HANDLER_TIME * 20,
-                    HANDLER_FUEL,
-                );
-                let bindings = sandbox::call(&mut store, |store| plugin.pre.instantiate(store))
-                    .map_err(|e| format!("the intercept instance cannot be made: {e}"))?;
-                place.insert(Instance { store, bindings })
-            }
-        };
-        instance.store.data_mut().role = Role::Intercept(Some(frame));
-        sandbox::budget(
-            &mut instance.store,
-            HANDLER_TIME,
-            HANDLER_TIME,
-            HANDLER_FUEL,
-        );
-        let result = sandbox::call(&mut instance.store, |store| {
-            instance
-                .bindings
-                .angelica_plugin_handler()
-                .call_intercepted(&mut *store, &call)
-        });
-        let frame =
-            match std::mem::replace(&mut instance.store.data_mut().role, Role::Intercept(None)) {
-                Role::Intercept(frame) => frame,
-                _ => None,
-            };
-        result
-            .map_err(|trap| sandbox::describe_trap(&instance.store, &trap))
-            .and_then(|()| frame.ok_or_else(|| "the call's frame is gone".to_owned()))
+    let instance = &mut *instance;
+    instance.store.data_mut().role = Role::Intercept(Some(frame));
+    sandbox::budget(
+        &mut instance.store,
+        HANDLER_TIME,
+        HANDLER_TIME,
+        HANDLER_FUEL,
+    );
+    let outcome = sandbox::call(&mut instance.store, |store| {
+        instance
+            .bindings
+            .angelica_plugin_handler()
+            .call_intercepted(&mut *store, &call)
     });
+    let frame = match std::mem::replace(&mut instance.store.data_mut().role, Role::Intercept(None))
+    {
+        Role::Intercept(frame) => frame,
+        _ => None,
+    };
+    let outcome = outcome
+        .map_err(|trap| sandbox::describe_trap(&instance.store, &trap))
+        .and_then(|()| frame.ok_or_else(|| "the call's frame is gone".to_owned()));
     plugin.calls.fetch_add(1, Ordering::Relaxed);
     plugin.nanos.fetch_add(
         u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -986,7 +1011,6 @@ fn run(
         Ok(frame) => Some(frame),
         Err(reason) => {
             plugin.enabled.store(false, Ordering::Release);
-            INSTANCES.with(|instances| instances.borrow_mut().remove(&plugin.key));
             plugin.context.log.push(
                 crate::sandbox::bindings::angelica::plugin::runtime::Level::Error,
                 &format!("the handler of {} is disabled: {reason}", handler.function),
@@ -1193,9 +1217,13 @@ impl api::Host for State {
     }
 
     fn snapshot(&mut self) -> Vec<u8> {
-        self.frame()
-            .map(|frame| frame.snapshot.to_vec())
-            .unwrap_or_default()
+        match &self.role {
+            Role::Prepare(snapshot) => snapshot.to_vec(),
+            _ => self
+                .frame()
+                .map(|frame| frame.snapshot.to_vec())
+                .unwrap_or_default(),
+        }
     }
 
     fn set_argument(

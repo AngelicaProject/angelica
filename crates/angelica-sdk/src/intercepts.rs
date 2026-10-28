@@ -8,9 +8,12 @@
 //! code runs, or after it returned. A `before` handler may change the
 //! arguments with [`set_argument`] or make the function return at once with
 //! [`skip`]; an `after` handler may change the result with [`set_result`].
-//! A handler reads the call's values, the text of objects whose structure
-//! reads as text, and the bytes the main instance published with
-//! [`publish_snapshot`]; it runs for at most 50 ms.
+//! A handler reads the call's values and the text of objects whose
+//! structure reads as text; it runs for at most 50 ms. Handlers run in one
+//! intercept instance of the plugin, which keeps its memory between calls:
+//! data the main instance publishes with [`publish_snapshot`] reaches it
+//! through [`crate::Plugin::prepare`], which reads it once, in the
+//! background.
 //!
 //! ```ignore
 //! fn start() -> Result<Self, String> {
@@ -50,7 +53,8 @@ pub fn after(function: &str, handler: u32) -> Result<(), Error> {
     crate::api::intercepts::after(function, handler)
 }
 
-/// The bytes handlers see from their next call on.
+/// Bytes for a new intercept instance to prepare in the background
+/// ([`crate::Plugin::prepare`]); handlers run in it once it is ready.
 ///
 /// # Errors
 /// More than 64 MiB.
@@ -58,7 +62,8 @@ pub fn publish_snapshot(bytes: &[u8]) -> Result<(), Error> {
     crate::api::intercepts::publish_snapshot(bytes)
 }
 
-/// In a handler: the bytes the main instance published last.
+/// In [`crate::Plugin::prepare`] or a handler: the snapshot the intercept
+/// instance prepares or prepared.
 #[must_use]
 pub fn snapshot() -> Vec<u8> {
     crate::api::intercepts::snapshot()

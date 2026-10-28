@@ -144,6 +144,18 @@ pub trait Plugin: Sized + 'static {
     /// [`intercepts::after`]. It has no `self`: the instance shares nothing
     /// with the main one but the snapshot.
     fn intercepted(_call: intercepts::Call) {}
+
+    /// Runs in a new intercept instance, in the background, after the main
+    /// instance published a snapshot with
+    /// [`intercepts::publish_snapshot`]: reads [`intercepts::snapshot`]
+    /// into the instance's own memory, where handlers find it. It has up to
+    /// 30 s; handlers keep the instance they had until it returns `Ok`.
+    ///
+    /// # Errors
+    /// Why the snapshot cannot be prepared; handlers keep the one they had.
+    fn prepare() -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Logs a line at a level.
@@ -239,6 +251,10 @@ macro_rules! plugin {
             }
 
             impl $crate::bindings::exports::angelica::plugin::handler::Guest for Guest {
+                fn prepare() -> Result<(), String> {
+                    <$plugin as $crate::Plugin>::prepare()
+                }
+
                 fn intercepted(call: $crate::intercepts::Call) {
                     <$plugin as $crate::Plugin>::intercepted(call);
                 }

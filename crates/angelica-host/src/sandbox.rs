@@ -278,6 +278,8 @@ pub enum Role {
     Job(Arc<Slot>),
     /// An intercept instance, with the call its handler is in.
     Intercept(Option<crate::intercepts::Frame>),
+    /// An intercept instance preparing the snapshot it will run with.
+    Prepare(Arc<Vec<u8>>),
 }
 
 /// The time the calls of one budget may use: guest time, which excludes
@@ -455,7 +457,7 @@ impl State {
     fn main_only(&self) -> crate::error::Result<()> {
         match self.role {
             Role::Main => Ok(()),
-            Role::Job(_) | Role::Intercept(_) => Err(Error::new(
+            Role::Job(_) | Role::Intercept(_) | Role::Prepare(_) => Err(Error::new(
                 Kind::WrongContext,
                 "only the main instance can do this",
             )),
@@ -605,7 +607,7 @@ impl api::jobs::Host for State {
                 slot.report(fraction, message);
                 Ok(())
             }
-            Role::Main | Role::Intercept(_) => {
+            Role::Main | Role::Intercept(_) | Role::Prepare(_) => {
                 Err(Error::new(Kind::WrongContext, "report is called from a job").into())
             }
         }
