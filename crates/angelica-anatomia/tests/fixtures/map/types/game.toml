@@ -1,0 +1,87 @@
+[types."game.thing"]
+doc = "A thing."
+domain = "things"
+
+[types."game.thing".fields.count]
+doc = "How many."
+
+[types."game.thing".fields.flags]
+doc = "The flags."
+at = "game.thing.raw_flags"
+flags = "game.thing_flags"
+
+[types."game.thing".fields.shown]
+doc = "Whether it is shown."
+at = "game.thing.raw_flags"
+bit = 2
+set = { call = "game.thing.set_flag", hold = true }
+
+[types."game.thing".fields.label]
+doc = "Its label."
+text = 32
+
+[types."game.thing".fields.title]
+doc = "Its title."
+text = 128
+domain = "secrets"
+
+[types."game.thing".fields.message]
+doc = "Its message."
+pointer = "game.text.bytes"
+text = 1024
+
+[types."game.thing".fields.target]
+doc = "What it points at."
+ref = "game.thing"
+whose = "others"
+as = { things = "others_things", secrets = "others_things" }
+
+[types."game.thing".fields.slots]
+doc = "Its slots."
+at = "game.thing.slots_raw"
+array = { of = "game.slot", length = 8, stride = 12, present = "item", partition = { field = "kind", domains = { secrets = ["hidden"] } } }
+
+[types."game.thing".fields.others]
+doc = "Other things."
+array = { of = "game.thing", count = "count", most = 16, stride = 8, pointers = true }
+
+[types."game.thing".fields.part]
+doc = "A part of it."
+embed = "game.slot"
+
+[types."game.thing".fields.value]
+doc = "A value."
+at = "game.thing.raw_value"
+unit = "s"
+forbidden = true
+
+[types."game.slot"]
+doc = "A slot."
+domain = "things"
+
+[types."game.slot".fields.kind]
+doc = "The kind."
+enum = "game.slot_kind"
+
+[types."game.slot".fields.item]
+doc = "The item."
+sheet = "Item"
+
+[types."game.text"]
+doc = "Text."
+domain = "things"
+
+[types."game.special"]
+doc = "A special thing."
+domain = "things"
+extends = "game.slot"
+variant = { field = "kind", values = ["special"] }
+
+[types."game.special".fields.extra]
+doc = "Something extra."
+unit = "yalms"
+set = { range = [0.5, 20.0] }
+
+[types."game.manager"]
+doc = "The manager."
+domain = "things"

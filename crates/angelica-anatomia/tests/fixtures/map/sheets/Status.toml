@@ -1,0 +1,18 @@
+sheet = "Status"
+doc = "Every status a character can have: buffs, debuffs, and others."
+
+[columns.name]
+type = "text"
+doc = "The status's name."
+
+[columns.icon]
+type = "uint32"
+doc = "The status's icon: an icon number."
+
+[columns.category]
+type = "uint8"
+doc = "1 for a status that helps its bearer, 2 for one that harms; 0 for neither."
+
+[[layouts]]
+fingerprint = "d75c73d73c099e11"
+columns = { name = 0, icon = 2, category = 6 }

@@ -213,7 +213,11 @@ fn is_valid_sheet_name(name: &str) -> bool {
 }
 
 /// Parses `sheets/<sheet>.toml`.
-pub(crate) fn parse(relative: &str, text: &str) -> Result<SheetSchema, String> {
+///
+/// # Errors
+///
+/// Says which rule of the schema the text breaks.
+pub fn parse(relative: &str, text: &str) -> Result<SheetSchema, String> {
     let named = relative
         .strip_prefix("sheets/")
         .and_then(|rest| rest.strip_suffix(".toml"))

@@ -1,0 +1,17 @@
+[domains.things]
+doc = "Things."
+class = "you"
+read = { en = "See your things", ru = "Видеть ваши вещи" }
+change = { en = "Change your things", ru = "Менять ваши вещи" }
+act = { en = "Use your things", ru = "Использовать ваши вещи" }
+
+[domains.others_things]
+doc = "Others' things."
+class = "others"
+read = { en = "See others' things", ru = "Видеть чужие вещи" }
+change = { en = "Change how others' things look", ru = "Менять вид чужих вещей" }
+
+[domains.secrets]
+doc = "Secrets."
+class = "you"
+read = { en = "See your secrets", ru = "Видеть ваши секреты" }

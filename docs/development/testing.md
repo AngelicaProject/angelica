@@ -53,6 +53,14 @@ cargo test -p angelica-pe --test game -- --ignored
 
 Run them after changing the PE model or the resolver. They are not part of CI, which has no game installation.
 
+Anatomia is checked against the published game map the same way. `angelica-anatomia`'s tests convert a fixture map that holds every construct of game map v2 to Anatomia and back and compare the result with the map as the v2 reader reads it, and resolve the converted fixture against a synthetic image as `angelica-map` resolves the map. The ignored test does the same round trip for a checkout of `angelica-gamemap` that `ANGELICA_GAMEMAP` names:
+
+```text
+ANGELICA_GAMEMAP=<checkout> cargo test -p angelica-anatomia --test convert -- --ignored
+```
+
+Run it, and compare `angelica anatomia verify` of the converted map with `angelica map verify` of the map on the installed game, after changing the conversion or the resolver.
+
 The archive and sheet reader is checked the same way: `cargo test -p angelica-host --lib game_data -- --ignored` reads the sheet list, `Item` and `Quest`, `TextCommand` in every installed language, a font table, and a font texture from the installation. The checks of replacement game files are calibrated on every file of their format the game ships: `cargo test --release -p angelica-host --lib file_formats -- --ignored` checks every texture of the `common`, `bgcommon`, `chara`, `ui`, and `vfx` archives and every material and model of `bg`, `bgcommon`, `chara`, `common`, and `vfx` (several minutes; `GameData::each_file` of the `testing` feature walks an archive). A rule that a shipped file breaks is a wrong rule. `angelica-sqpack` and the host's `game_data` module otherwise run against synthetic installations that `angelica_sqpack::testing::FakeGame` writes, and `TestHost::game_folder` gives a plugin test its own.
 
 ## Tests over the internet

@@ -35,8 +35,11 @@ pub use objects::{
 };
 pub use record::BuildRecord;
 pub use resolve::{Absence, Resolution, Value};
-pub use sheets::{ColumnType, KnownLayout, NamedColumn, SheetLayout, SheetSchema};
+pub use sheets::{
+    ColumnType, KnownLayout, NamedColumn, SheetLayout, SheetSchema, parse as parse_sheet_schema,
+};
 pub use whose::{Entering, Renames, Whose};
 pub use windows::{
-    ElementKind, KnownWindowLayout, NamedElement, WindowSchema, window_layout_fingerprint,
+    ElementKind, KnownWindowLayout, NamedElement, WindowSchema, parse as parse_window_schema,
+    window_layout_fingerprint,
 };

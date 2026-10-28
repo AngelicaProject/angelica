@@ -18,6 +18,8 @@ Everything that runs in the game is Rust or WebAssembly. A dependency is added w
 
 `angelica-map` uses `toml` and `serde` (MIT OR Apache-2.0) to read map files, `iced-x86` (MIT) with `std`, `decoder`, and `instr_info` to decode the instructions of code-anchored offsets and to follow the control flow of leaf functions, and `sha2` (MIT OR Apache-2.0) for `entries_sha256`.
 
+`angelica-anatomia` uses `toml` (MIT OR Apache-2.0) to read description and catalog files key by key, `iced-x86` (MIT) with `std`, `decoder`, and `instr_info` to take the operands of instructions in finding pipelines, `sha2` (MIT OR Apache-2.0) for `anatomia_sha256`, and `thiserror` (MIT OR Apache-2.0) for its error type.
+
 `angelica-hook` uses `iced-x86` with `encoder`, `block_encoder`, and `instr_info` to move instructions into trampolines, and `windows-sys` (MIT OR Apache-2.0) for memory protection, executable memory, and thread suspension.
 
 `angelica-cli` uses `clap` (MIT OR Apache-2.0) for its arguments, `iced-x86` with its Intel formatter for `angelica exe`, `serde_json` (MIT OR Apache-2.0) for `--json` output, `sha2` for `exe_sha256`, `ed25519-dalek` with `getrandom` 0.4.3 (MIT OR Apache-2.0) to create keys and sign installations and releases, `angelica-update` and `semver` for update feeds, and `toml` with `serde` to read catalog entries.

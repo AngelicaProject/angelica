@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/angelica-pe",
   "crates/angelica-map",
+  "crates/angelica-anatomia",
   "crates/angelica-hook",
   "crates/angelica-text",
   "crates/angelica-view",
@@ -32,6 +33,7 @@ authors = ["AngelicaProject contributors"]
 
 [workspace.dependencies]
 angelica-map = { path = "crates/angelica-map" }
+angelica-anatomia = { path = "crates/angelica-anatomia" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
 angelica-view = { path = "crates/angelica-view" }

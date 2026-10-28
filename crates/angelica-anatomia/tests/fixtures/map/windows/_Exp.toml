@@ -1,0 +1,15 @@
+window = "_Exp"
+doc = "The experience bar."
+layout = "ui/uld/Exp.uld"
+
+[elements.window]
+kind = "other"
+doc = "The whole experience bar."
+
+[elements.text]
+kind = "text"
+doc = "The class or job, its level, and the experience points, above the bar."
+
+[[layouts]]
+fingerprint = "f136eacebcde360e"
+elements = { window = 1, text = 4 }

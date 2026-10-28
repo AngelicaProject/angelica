@@ -1,0 +1,27 @@
+[events.thing_used]
+doc = "A thing is used."
+at = "game.thing.first"
+domain = "things"
+rate = 8
+whose = "you"
+
+[events.thing_used.args.thing]
+doc = "The thing."
+arg = 0
+ref = "game.thing"
+
+[events.thing_used.args.how]
+doc = "How."
+arg = 1
+mask = 0x7F
+
+[events.thing_moved]
+doc = "A thing moves."
+at = "game.thing.middle"
+domain = "things"
+whose = "you"
+
+[events.thing_moved.args.count]
+doc = "The count."
+register = "rax"
+kind = "u32"

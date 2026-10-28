@@ -1,0 +1,115 @@
+[function."game.thing.first"]
+locator = { signature = "48 89 5C 24 08 57 48 83 EC 20" }
+abi = { args = ["ptr", "u8"], ret = "void" }
+thread = "main"
+checks = [{ vtable_slot = 0, code_slots = 4 }, { vtable = "game.thing.vtable", slot = 2 }, { contains = "48 8B 41 10" }]
+doc = "The first function."
+origin = { source = "FFXIVClientStructs", commit = "0123456789abcdef" }
+
+[function."game.thing.second"]
+locator = { vtable = "game.thing.vtable", slot = 1 }
+abi = { args = [], ret = "u8" }
+thread = "any"
+depends = ["game.thing.first"]
+
+[function."game.thing.set_flag"]
+locator = { vtable = "game.thing.vtable", slot = 3 }
+abi = { args = ["ptr", "bool"], ret = "void" }
+thread = "main"
+checks = [{ equals = "game.thing.second" }]
+
+[location."game.thing.middle"]
+locator = { signature = "48 8B 41 10", at = 0 }
+thread = "main"
+
+[vtable."game.thing.vtable"]
+locator = { signature = "48 8D 05 ?? ?? ?? ?? C3", at = 3, follow = "rel32" }
+slots = 4
+
+[global."game.thing.instance"]
+locator = { signature = "48 8D 05 ?? ?? ?? ?? C3", at = 3, follow = "rel32" }
+type = "ptr"
+
+[global."game.manager"]
+locator = { signature = "48 8D 05 ?? ?? ?? ?? C3", at = 3, follow = "rel32" }
+type = "struct"
+
+[field."game.thing.count"]
+of = "game.thing"
+type = "u32"
+locator = { in = "game.thing.first", signature = "48 8B 41 10", operand = "disp" }
+checks = [{ contains = "48 8B 41 10", in = "game.thing.first" }]
+doc = "How many slots are used."
+
+[field."game.thing.raw_flags"]
+of = "game.thing"
+type = "u8"
+offset = 0x18
+doc = "The flags byte."
+
+[field."game.thing.label"]
+of = "game.thing"
+type = "struct"
+offset = 0x20
+
+[field."game.thing.title"]
+of = "game.thing"
+type = "ptr"
+offset = 0x40
+
+[field."game.thing.message"]
+of = "game.thing"
+type = "struct"
+offset = 0x48
+
+[field."game.thing.target"]
+of = "game.thing"
+type = "ptr"
+offset = 0x50
+
+[field."game.thing.slots_raw"]
+of = "game.thing"
+type = "struct"
+offset = 0x60
+doc = "The slots in place."
+
+[field."game.thing.others"]
+of = "game.thing"
+type = "ptr"
+offset = 0x100
+
+[field."game.thing.part"]
+of = "game.thing"
+type = "struct"
+offset = 0x108
+
+[field."game.thing.raw_value"]
+of = "game.thing"
+type = "u64"
+offset = 0x110
+
+[field."game.slot.kind"]
+of = "game.slot"
+type = "u16"
+offset = 0
+
+[field."game.slot.item"]
+of = "game.slot"
+type = "u32"
+offset = 4
+
+[field."game.text.bytes"]
+of = "game.text"
+type = "ptr"
+offset = 0
+
+[field."game.helper.free"]
+of = "game.helper_vtable"
+type = "ptr"
+offset = 0x10
+doc = "A slot named apart from its structure."
+
+[field."game.special.extra"]
+of = "game.special"
+type = "f32"
+offset = 0x120

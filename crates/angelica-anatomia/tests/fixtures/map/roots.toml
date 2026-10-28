@@ -1,0 +1,11 @@
+[roots.thing]
+doc = "The thing."
+global = "game.thing.instance"
+type = "game.thing"
+whose = "you"
+
+[roots.manager]
+doc = "The manager."
+global = "game.manager"
+type = "game.manager"
+whose = "you"
