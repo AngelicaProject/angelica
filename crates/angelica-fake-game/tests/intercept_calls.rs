@@ -30,6 +30,16 @@ find = [{ scan = "40 53 48 83 EC 30" }]
 type = "fn(u32, ptr<char8>) -> ptr"
 thread = "any"
 find = [{ scan = "48 83 EC 28 4C 8B C2" }]
+
+[function."game.store_row"]
+type = "fn(u32, u32, ptr<char8>)"
+thread = "any"
+find = [{ scan = "48 89 6C 24 10 56 41 54" }]
+
+[function."game.read_file"]
+type = "fn(ptr<char8>) -> u32"
+thread = "any"
+find = [{ scan = "48 89 74 24 18 41 56 48 83 EC 40" }]
 "#;
 
 fn component() -> &'static [u8] {
@@ -39,12 +49,23 @@ fn component() -> &'static [u8] {
 
 fn executable() -> Vec<u8> {
     let mut code = vec![0xCC; 0x100];
+    // Each function's own bytes, where its signature finds it.
     code[..10].copy_from_slice(&[0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20]);
     code[0x40..0x46].copy_from_slice(&[0x40, 0x53, 0x48, 0x83, 0xEC, 0x30]);
     code[0x80..0x87].copy_from_slice(&[0x48, 0x83, 0xEC, 0x28, 0x4C, 0x8B, 0xC2]);
+    code[0xC0..0xC8].copy_from_slice(&[0x48, 0x89, 0x6C, 0x24, 0x10, 0x56, 0x41, 0x54]);
+    code[0xE0..0xEB].copy_from_slice(&[
+        0x48, 0x89, 0x74, 0x24, 0x18, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x40,
+    ]);
     PeBuilder::new()
         .section(".text", CODE, &code)
-        .functions(&[(0x1000, 0x1030), (0x1040, 0x1060), (0x1080, 0x10A0)])
+        .functions(&[
+            (0x1000, 0x1030),
+            (0x1040, 0x1060),
+            (0x1080, 0x10A0),
+            (0x10C0, 0x10D8),
+            (0x10E0, 0x10F8),
+        ])
         .build_mapped()
 }
 
@@ -68,7 +89,11 @@ description = "Intercepts the scripted game's functions."
 /// A scripted game with the plugins of `ids`, each with its `[intercepts]`
 /// table, installed and approved in that order.
 fn started(plugins: &[(&str, &str)]) -> TestHost {
-    let mut test = TestHost::new(Limits::default());
+    started_with(Limits::default(), plugins)
+}
+
+fn started_with(limits: Limits, plugins: &[(&str, &str)]) -> TestHost {
+    let mut test = TestHost::new(limits);
     test.use_executable(BASE, executable());
     for (id, order) in plugins {
         let entries = format!("format = \"1.0\"\nnamespace = \"{id}\"\n");
@@ -323,4 +348,103 @@ fn a_handler_is_once_per_function_and_phase() {
             .iter()
             .any(|line| line == "before game.add 1: ErrorKind::InvalidArgument"),
     );
+}
+
+/// Rows of a text table and paths of file replacements: as many as an
+/// intercept instance reads from the snapshot within one handler's limit.
+const ROWS: u32 = 20_000;
+const PATHS: u32 = 5_000;
+/// Calls of each measurement.
+const CALLS: u32 = 20_000;
+
+/// The average time of `CALLS` calls of `call`.
+fn average(mut call: impl FnMut(u32)) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    for index in 0..CALLS {
+        call(index);
+    }
+    started.elapsed() / CALLS
+}
+
+/// What a handler costs on the game's hottest paths: building a row, where
+/// a translation replaces its text from a table, and reading a file, where
+/// a path is looked up among the replaced ones. The numbers go to the
+/// output; the bounds only catch a handler far off.
+#[test]
+fn handlers_on_hot_paths_cost_microseconds() {
+    // Building the tables takes the main instance longer than a frame.
+    let limits = Limits {
+        memory_bytes: 512 * 1024 * 1024,
+        fuel: u64::MAX / 4,
+        call_time: std::time::Duration::from_secs(30),
+        frame_wall: std::time::Duration::from_secs(30),
+        ..Limits::default()
+    };
+    let test = started_with(limits, &[("intercepting", "")]);
+    test.event(
+        "intercepting",
+        Event::Clicked(WidgetRef {
+            window: "main".into(),
+            id: format!("tables:{ROWS}:{PATHS}"),
+        }),
+    );
+    assert!(
+        log(&test, "intercepting").contains(&"tables: accepted".to_owned()),
+        "{:?} {:?}",
+        log(&test, "intercepting"),
+        test.host.plugin("intercepting").unwrap().status()
+    );
+    intercept(&test, "intercepting", "before", "game.store_row", 10);
+    intercept(&test, "intercepting", "before", "game.read_file", 11);
+
+    let row_text = test.place("строка 00000000\0".as_bytes());
+    let store_row = |sheet: u32, row: u32| {
+        test.call_intercepted(
+            "intercepting",
+            "game.store_row",
+            &[
+                Arg::both(u64::from(sheet)),
+                Arg::both(u64::from(row)),
+                Arg::both(row_text),
+            ],
+            |_| Returned::default(),
+        );
+    };
+    let started = std::time::Instant::now();
+    store_row(0, 0);
+    let first = started.elapsed();
+    let hit = average(|index| store_row(index % 100, index));
+    assert_eq!(
+        test.bytes_at(row_text, 15),
+        format!("строка {:08}", CALLS - 1).as_bytes()[..15],
+        "the last row's text replaced the game's"
+    );
+    let miss = average(|index| store_row(1000, index));
+
+    let replaced = test.place(b"chara/equipment/e0042/texture/v01_c0101e0042_top_n.tex\0");
+    let other = test.place(b"chara/equipment/e9999/texture/v01_c0101e9999_top_n.tex\0");
+    let read_file = |path: u64| {
+        test.call_intercepted(
+            "intercepting",
+            "game.read_file",
+            &[Arg::both(path)],
+            |_| Returned::default(),
+        )
+        .0
+        .integer
+    };
+    assert_eq!(read_file(replaced), 1, "{:?}", log(&test, "intercepting"));
+    assert_eq!(read_file(other), 0);
+    let found = average(|_| {
+        read_file(replaced);
+    });
+    let not_found = average(|_| {
+        read_file(other);
+    });
+    println!(
+        "{ROWS} rows, {PATHS} paths: first call {first:?} (reads the tables); row replaced {hit:?}, row without text {miss:?}; path replaced {found:?}, path not replaced {not_found:?}"
+    );
+    for each in [hit, miss, found, not_found] {
+        assert!(each < std::time::Duration::from_millis(1), "{each:?}");
+    }
 }
