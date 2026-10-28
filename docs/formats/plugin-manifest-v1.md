@@ -45,5 +45,6 @@ change = ["camera"]
 - `lens.read`: the domains of the game map's [object model](./game-map-v2.md#domains) the plugin reads through [Lens](./plugin-api-v1.md#lens), at most 64 distinct names of lowercase letters, digits, and underscores. A domain the running game map does not describe, or of a class the host does not present, is listed for the player but not granted.
 - `lens.change`: the domains whose values the plugin [changes](./plugin-api-v1.md#lens), in the same form. A domain the map does not describe, or describes without words for changing it, is listed for the player but not granted.
 - `lens.act`: the domains the plugin takes [actions](./plugin-api-v1.md#lens) in, in the same form. A domain the running game map does not describe, or describes without words for acting in it, is listed for the player but not granted.
+- `intercepts.after`, `intercepts.before`: optional lists of other plugins' ids whose handlers of a function this plugin's handlers run after or before ([intercepts](./plugin-api-v1.md#intercepts)); the table comes with `unreviewed`. A plugin that is not installed, or does not intercept the function, is passed over.
 
 Unknown fields refuse the manifest.

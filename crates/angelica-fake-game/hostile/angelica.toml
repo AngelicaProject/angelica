@@ -11,6 +11,7 @@ description = "A test plugin that tries to break every boundary of the host."
 "chat.print" = true
 "files.replace" = true
 "links.open" = true
+"unreviewed" = true
 
 [links]
 hosts = ["example.com"]

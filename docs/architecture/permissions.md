@@ -19,6 +19,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `sound.play` | playing [sounds](../formats/plugin-api-v1.md#sound) from WAV files in its storage, which the host checks and re-encodes | only for you | Play sounds |
 | `storage.cache` | a [cache](../formats/plugin-api-v1.md#storage) of files outside its folder, of the size `[storage] cache` names | only for you | Keep a cache of files on your disk, followed by the size |
 | `draw.world` | [drawing](../formats/plugin-api-v1.md#drawing-over-the-world) marks, lines, and text over the game world | what you see | Draw marks, lines, and text over the game world |
+| `unreviewed` | [intercepting](../formats/plugin-api-v1.md#intercepts) and changing the game's functions and data that the plugin's own Anatomia entries describe, which nobody but its author reviewed | act in the game | Work inside the game in places only its author describes, which can change how the game behaves |
 
 ## Domains of the game map
 

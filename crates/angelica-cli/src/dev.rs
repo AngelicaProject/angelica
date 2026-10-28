@@ -200,6 +200,8 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
         if let Some(icon) = crate::author::plugin_icon(Path::new(source))? {
             files.insert("icon.png".to_owned(), icon);
         }
+        own_entry_files(Path::new(source), &mut files)?;
+        runtime::package::own_entries(&files, manifest.id())?;
         package(
             &args.installation.join("plugins").join(manifest.id()),
             &files,
@@ -209,6 +211,38 @@ fn install(args: &InstallArgs) -> Result<serde_json::Value, String> {
     }
     report.insert("plugins".into(), plugins.into());
     Ok(serde_json::Value::Object(report))
+}
+
+/// Adds the plugin's own Anatomia entries, every `.toml` file under
+/// `anatomia/` of its folder, to its package.
+fn own_entry_files(source: &Path, files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    let anatomia = source.join("anatomia");
+    if !anatomia.is_dir() {
+        return Ok(());
+    }
+    let mut folders = vec![anatomia];
+    while let Some(folder) = folders.pop() {
+        let listing =
+            std::fs::read_dir(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        for item in listing {
+            let path = item.map_err(|e| e.to_string())?.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "toml")
+            {
+                let relative = path
+                    .strip_prefix(source)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                files.insert(relative, bytes);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Writes dev mode's switch; the running game follows within a second.

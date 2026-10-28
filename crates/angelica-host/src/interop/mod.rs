@@ -13,6 +13,7 @@ mod file_reads;
 mod gallery;
 mod game;
 mod input;
+mod intercepts;
 pub mod memory;
 mod menus;
 mod overlay;

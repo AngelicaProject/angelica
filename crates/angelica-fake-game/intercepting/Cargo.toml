@@ -1,0 +1,17 @@
+[package]
+name = "angelica-intercepting"
+description = "A test plugin that intercepts the scripted game's functions in every way the host allows."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

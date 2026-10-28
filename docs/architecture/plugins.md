@@ -28,9 +28,10 @@ The menu shows what each job did. Without the program, the menu says so when the
 A component instance is single-threaded. A running plugin has:
 
 - a **main instance** on the game's main thread: `start`, `tick`, window events, `ui`, `stop`, and every operation that changes the game;
-- **job instances**, one per job, on host threads: long work such as verifying and converting a large file, with storage access and progress reports. They share nothing with the main instance except the plugin's storage.
+- **job instances**, one per job, on host threads: long work such as verifying and converting a large file, with storage access and progress reports. They share nothing with the main instance except the plugin's storage;
+- **an intercept instance**, which every game thread that called a function the plugin [intercepts](../formats/plugin-api-v1.md#intercepts) enters in turn, on that thread inside the game's call: a handler of at most 50 ms, before or after the game's code, that sees the call's values, pointers as handles, and what the instance prepared from the main instance's latest snapshot, and nothing else of the plugin; it may change the arguments, skip the game's code, or change the result. A new snapshot is prepared in a new intercept instance in the background, which then replaces the one in use.
 
-Hot paths never call a plugin. Work the game does for every row, string, or file — replacing row text, converting letter case — is done natively from rules the plugin activated.
+The host's adapters do the work the game does for every row, string, or file — replacing row text, converting letter case — natively from rules the plugin activated. A plugin's own code runs inside a game call only in an intercept instance, of a function its own Anatomia entries describe.
 
 ## Lifecycle
 

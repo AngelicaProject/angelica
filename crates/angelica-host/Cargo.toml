@@ -19,6 +19,7 @@ angelica-text.workspace = true
 angelica-view.workspace = true
 angelica-sqpack.workspace = true
 angelica-map.workspace = true
+angelica-anatomia.workspace = true
 angelica-pe.workspace = true
 angelica-update.workspace = true
 serde.workspace = true

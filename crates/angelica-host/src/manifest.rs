@@ -61,6 +61,11 @@ pub enum Permission {
     /// browser, for the player's action.
     #[serde(rename = "links.open")]
     LinksOpen,
+    /// Intercept and change the game's functions and data that the
+    /// plugin's own Anatomia entries describe, which nobody but its author
+    /// reviewed.
+    #[serde(rename = "unreviewed")]
+    Unreviewed,
 }
 
 impl Permission {
@@ -80,6 +85,7 @@ impl Permission {
             Self::StorageCache => "storage.cache",
             Self::HttpWebsocket => "http.websocket",
             Self::LinksOpen => "links.open",
+            Self::Unreviewed => "unreviewed",
         }
     }
 
@@ -100,6 +106,9 @@ impl Permission {
             Self::StorageCache => "Keep a cache of files on your disk",
             Self::HttpWebsocket => "Keep live connections to these sites",
             Self::LinksOpen => "Open pages of these sites in your browser when you ask it to",
+            Self::Unreviewed => {
+                "Work inside the game in places only its author describes, which can change how the game behaves"
+            }
         }
     }
 
@@ -107,6 +116,7 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
+            Self::Unreviewed => Class::Acts,
             Self::HttpGet | Self::HttpSend | Self::HttpWebsocket | Self::LinksOpen => {
                 Class::Network
             }
@@ -420,6 +430,18 @@ pub struct StorageSection {
     pub cache: u32,
 }
 
+/// Where a plugin's handlers go among other plugins' handlers of one
+/// function: after those of the plugins in `after`, before those in
+/// `before`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterceptOrder {
+    #[serde(default)]
+    pub after: Vec<String>,
+    #[serde(default)]
+    pub before: Vec<String>,
+}
+
 /// The plugins `messages.send` reaches.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -444,6 +466,8 @@ pub struct Manifest {
     storage: Option<StorageSection>,
     #[serde(default)]
     lens: Option<Lens>,
+    #[serde(default)]
+    intercepts: Option<InterceptOrder>,
     #[serde(skip)]
     pub declared: BTreeSet<Permission>,
     /// Where the package came from; the loader sets it, the file has none.
@@ -453,6 +477,10 @@ pub struct Manifest {
     /// it.
     #[serde(skip)]
     pub icon: Option<std::sync::Arc<[u8]>>,
+    /// The plugin's own Anatomia entries, from its package's `anatomia/`;
+    /// the loader sets them.
+    #[serde(skip)]
+    pub anatomia: Option<std::sync::Arc<angelica_anatomia::Anatomia>>,
 }
 
 /// Where a plugin's package came from.
@@ -565,6 +593,16 @@ impl Manifest {
             }
         }
         manifest.check_sections(&declared)?;
+        if let Some(order) = &manifest.intercepts {
+            if !declared.contains(&Permission::Unreviewed) && !earlier {
+                return fail("[intercepts] comes with the unreviewed permission".into());
+            }
+            for id in order.after.iter().chain(&order.before) {
+                if !valid_id(id) || *id == manifest.plugin.id {
+                    return fail(format!("intercepts: {id} is not another plugin's id"));
+                }
+            }
+        }
         if let Some(lens) = &manifest.lens {
             check_domains("lens.read", &lens.read)?;
             check_domains("lens.act", &lens.act)?;
@@ -695,6 +733,18 @@ impl Manifest {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.plugin.id
+    }
+
+    /// Where the plugin's handlers go among other plugins' handlers.
+    #[must_use]
+    pub fn intercept_order(&self) -> crate::intercepts::Order {
+        self.intercepts
+            .as_ref()
+            .map(|order| crate::intercepts::Order {
+                after: order.after.clone(),
+                before: order.before.clone(),
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -883,6 +933,30 @@ description = "Community translations."
             act: None,
             act_local: false,
         })
+    }
+
+    #[test]
+    fn the_order_of_intercepts_names_other_plugins_and_needs_unreviewed() {
+        let order = "[intercepts]\nafter = [\"typing-fold\"]\nbefore = [\"hello\"]\n";
+        let manifest = Manifest::parse(&format!("{VALID}\"unreviewed\" = true\n{order}")).unwrap();
+        assert_eq!(
+            manifest.intercept_order(),
+            crate::intercepts::Order {
+                after: vec!["typing-fold".into()],
+                before: vec!["hello".into()],
+            }
+        );
+        assert_eq!(
+            Manifest::parse(VALID).unwrap().intercept_order(),
+            crate::intercepts::Order::default()
+        );
+        let without = Manifest::parse(&format!("{VALID}{order}")).unwrap_err();
+        assert!(without.0.contains("unreviewed"), "{without}");
+        let itself = Manifest::parse(&format!(
+            "{VALID}\"unreviewed\" = true\n[intercepts]\nbefore = [\"harmonia\"]\n"
+        ))
+        .unwrap_err();
+        assert!(itself.0.contains("another plugin's id"), "{itself}");
     }
 
     #[test]

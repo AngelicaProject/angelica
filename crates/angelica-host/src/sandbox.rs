@@ -178,6 +178,8 @@ pub struct Services {
     pub starting: AtomicBool,
     /// Whether Angelica's interface is in Russian; English otherwise.
     pub russian: AtomicBool,
+    /// Plugins' handlers in the game's calls.
+    pub intercepts: Arc<crate::intercepts::Intercepts>,
 }
 
 /// One log line of a plugin.
@@ -261,12 +263,23 @@ pub struct Context {
     /// The minor version of plugin API 1 the manifest names, which decides
     /// the kinds of places and parts it may use.
     pub api_minor: u16,
+    /// The plugin's own Anatomia entries resolved for this game, when it
+    /// has them and holds `unreviewed`.
+    pub own: Option<Arc<crate::intercepts::Own>>,
+    /// The plugin's component, for its intercept instances.
+    pub component: Option<Component>,
+    /// Where its handlers go among other plugins' handlers.
+    pub order: crate::intercepts::Order,
 }
 
 /// Which instance a store belongs to.
 pub enum Role {
     Main,
     Job(Arc<Slot>),
+    /// An intercept instance, with the call its handler is in.
+    Intercept(Option<crate::intercepts::Frame>),
+    /// An intercept instance preparing the snapshot it will run with.
+    Prepare(Arc<Vec<u8>>),
 }
 
 /// The time the calls of one budget may use: guest time, which excludes
@@ -328,6 +341,25 @@ pub struct State {
 /// A store with its instance's state.
 #[must_use]
 pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<State> {
+    store_in(&sandbox.engine, context, role)
+}
+
+/// A store for an instance of `context`'s component, in its engine.
+///
+/// # Panics
+/// When the context has no component.
+#[must_use]
+pub fn store_for(context: &Arc<Context>, role: Role) -> Store<State> {
+    let engine = context
+        .component
+        .as_ref()
+        .expect("a context with intercepts has its component")
+        .engine()
+        .clone();
+    store_in(&engine, context.clone(), role)
+}
+
+fn store_in(engine: &Engine, context: Arc<Context>, role: Role) -> Store<State> {
     let memory = usize::try_from(context.memory_bytes).unwrap_or(usize::MAX);
     let limits = StoreLimitsBuilder::new()
         .memory_size(memory)
@@ -336,7 +368,7 @@ pub fn store(sandbox: &Sandbox, context: Arc<Context>, role: Role) -> Store<Stat
         .memories(16)
         .build();
     let mut store = Store::new(
-        &sandbox.engine,
+        engine,
         State {
             context,
             role,
@@ -415,7 +447,7 @@ impl State {
     }
 
     /// Runs a host operation without charging its time to the guest.
-    fn host<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+    pub(crate) fn host<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
         let started = Instant::now();
         let result = work(self);
         self.budget.host += started.elapsed();
@@ -425,7 +457,7 @@ impl State {
     fn main_only(&self) -> crate::error::Result<()> {
         match self.role {
             Role::Main => Ok(()),
-            Role::Job(_) => Err(Error::new(
+            Role::Job(_) | Role::Intercept(_) | Role::Prepare(_) => Err(Error::new(
                 Kind::WrongContext,
                 "only the main instance can do this",
             )),
@@ -575,7 +607,9 @@ impl api::jobs::Host for State {
                 slot.report(fraction, message);
                 Ok(())
             }
-            Role::Main => Err(Error::new(Kind::WrongContext, "report is called from a job").into()),
+            Role::Main | Role::Intercept(_) | Role::Prepare(_) => {
+                Err(Error::new(Kind::WrongContext, "report is called from a job").into())
+            }
         }
     }
 }

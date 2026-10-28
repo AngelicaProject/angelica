@@ -302,6 +302,9 @@ impl Language {
                 Permission::LinksOpen => {
                     "Открывать страницы этих сайтов в вашем браузере, когда вы просите"
                 }
+                Permission::Unreviewed => {
+                    "Работать внутри игры в местах, которые описал только его автор; это может менять поведение игры"
+                }
             },
         }
     }
@@ -464,6 +467,7 @@ mod tests {
             Permission::StorageCache,
             Permission::HttpWebsocket,
             Permission::LinksOpen,
+            Permission::Unreviewed,
         ];
         for permission in permissions {
             assert_ne!(

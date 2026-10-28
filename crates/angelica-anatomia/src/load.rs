@@ -193,7 +193,7 @@ fn read_manifest(table: Table) -> Result<(u32, String, Vec<String>), AnatomiaErr
         });
     }
     let namespace = keys.required_string("namespace").map_err(invalid)?;
-    if !valid_word(&namespace) && !valid_name(&namespace) {
+    if !valid_namespace(&namespace) {
         return Err(invalid(format!("`{namespace}` is not a namespace")));
     }
     let extensions = keys.strings("extensions").map_err(invalid)?;
@@ -1025,6 +1025,17 @@ pub(crate) fn valid_word(word: &str) -> bool {
         && word
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// `ffxiv`, or a plugin id: 1 to 64 lowercase letters, digits, and inner
+/// hyphens.
+fn valid_namespace(namespace: &str) -> bool {
+    (1..=64).contains(&namespace.len())
+        && !namespace.starts_with('-')
+        && !namespace.ends_with('-')
+        && namespace
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// At least two words separated by dots.

@@ -2,6 +2,7 @@
 //! hooks through verified map entries; the scripted game in
 //! `angelica-fake-game` drives the same services from test data.
 #![forbid(unsafe_code)]
+use std::sync::Arc;
 
 /// Where writes to a watched address came from: the address where the
 /// writing instruction ended, its offset in the game's executable when it
@@ -158,6 +159,29 @@ pub trait Game: Send + Sync {
     fn play_sound(&self, wav: Vec<u8>) -> bool {
         let _ = wav;
         false
+    }
+
+    /// The game's executable as it is mapped: where it is loaded and its
+    /// bytes, for resolving plugins' own Anatomia entries; none when it
+    /// cannot be read.
+    fn executable(&self) -> Option<(u64, Arc<Vec<u8>>)> {
+        None
+    }
+
+    /// Makes the game call [`crate::intercepts::Intercepts::after_call`]
+    /// when the function at `address`, with `code`, returns. Called once
+    /// per function; the hook stays until the process exits.
+    ///
+    /// # Errors
+    /// Why the function cannot be hooked.
+    fn enable_intercept(
+        &self,
+        address: u64,
+        code: &crate::intercepts::Code,
+        intercepts: &Arc<crate::intercepts::Intercepts>,
+    ) -> Result<(), String> {
+        let _ = (address, code, intercepts);
+        Err("this game cannot be intercepted".into())
     }
 
     /// Writes `bytes` at `address` of the game's data, for a Lens change;

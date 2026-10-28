@@ -100,7 +100,7 @@ pub fn module_path(module: usize) -> Result<std::path::PathBuf, String> {
 
 /// # Errors
 /// Rejects invalid PE files and inaccessible or excessive executable mappings.
-pub fn executable_snapshot() -> Result<(usize, Vec<u8>, String), String> {
+pub fn executable_snapshot() -> Result<(usize, std::sync::Arc<Vec<u8>>, String), String> {
     // SAFETY: NULL requests the process executable.
     let base = unsafe { GetModuleHandleW(std::ptr::null()) } as usize;
     if base == 0 {
@@ -144,5 +144,5 @@ pub fn executable_snapshot() -> Result<(usize, Vec<u8>, String), String> {
         }
         offset += len;
     }
-    Ok((base, snapshot, hash))
+    Ok((base, std::sync::Arc::new(snapshot), hash))
 }

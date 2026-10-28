@@ -215,6 +215,13 @@ impl Objects {
     }
 
     /// Zeroed memory of `length` bytes, 16-byte aligned.
+    /// Puts `bytes` in the game's memory and returns where.
+    pub fn place(&mut self, bytes: &[u8]) -> u64 {
+        let at = self.allocate(bytes.len());
+        self.write(at, bytes);
+        at
+    }
+
     fn allocate(&mut self, length: usize) -> u64 {
         let start = self.used.next_multiple_of(16);
         self.used = start + length.max(1);

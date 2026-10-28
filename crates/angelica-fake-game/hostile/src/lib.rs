@@ -105,6 +105,13 @@ impl Hostile {
                     }
                 }
             }
+            "intercept" => {
+                self.report = [
+                    outcome(angelica_sdk::intercepts::after("game.spin", 0)),
+                    outcome(angelica_sdk::intercepts::after("game.escape", 1)),
+                ]
+                .join("; ");
+            }
             "permissions" => {
                 self.report = [
                     outcome(lens::prepare("player { level }")),
@@ -120,6 +127,17 @@ impl Hostile {
 impl Plugin for Hostile {
     fn start() -> Result<Self, String> {
         Ok(Self::default())
+    }
+
+    /// Handler 0 never returns; handler 1 reaches for what a handler
+    /// cannot: storage, from the thread of the game's call.
+    fn intercepted(call: angelica_sdk::intercepts::Call) {
+        if call.handler == 0 {
+            loop {
+                black_box(());
+            }
+        }
+        let _ = black_box(storage::write("escaped", b"x"));
     }
 
     fn tick(&mut self, _elapsed: f64) -> Result<(), String> {

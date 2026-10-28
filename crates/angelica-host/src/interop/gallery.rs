@@ -87,6 +87,7 @@ impl crate::game::Game for NoGame {
 /// A host without plugins in `root`.
 fn host(root: &Path) -> Host {
     let services = Arc::new(Services {
+        intercepts: Arc::default(),
         data: Arc::new(crate::game_data::GameData::new(Some(
             &root.join("game-files"),
         ))),

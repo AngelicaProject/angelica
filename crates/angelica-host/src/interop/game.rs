@@ -12,6 +12,9 @@ pub struct WindowsGame {
     pub menus: Arc<crate::menus::Menus>,
     pub lens: Arc<crate::lens::Lens>,
     pub version: String,
+    /// The executable as it was mapped at start, before any hook changed
+    /// its code.
+    pub executable: Arc<Vec<u8>>,
 }
 
 impl WindowsGame {
@@ -133,6 +136,22 @@ impl Game for WindowsGame {
 
     fn play_sound(&self, wav: Vec<u8>) -> bool {
         super::sound::play(wav)
+    }
+
+    fn executable(&self) -> Option<(u64, Arc<Vec<u8>>)> {
+        Some((self.base as u64, self.executable.clone()))
+    }
+
+    fn enable_intercept(
+        &self,
+        address: u64,
+        code: &crate::intercepts::Code,
+        intercepts: &Arc<crate::intercepts::Intercepts>,
+    ) -> Result<(), String> {
+        hooked(
+            "intercept",
+            super::intercepts::install(address, code, intercepts),
+        )
     }
 
     fn write(&self, address: u64, bytes: &[u8]) -> bool {
