@@ -156,7 +156,11 @@ fn is_valid_layout_path(path: &str) -> bool {
 }
 
 /// Parses `windows/<window>.toml`.
-pub(crate) fn parse(relative: &str, text: &str) -> Result<WindowSchema, String> {
+///
+/// # Errors
+///
+/// Says which rule of the schema the text breaks.
+pub fn parse(relative: &str, text: &str) -> Result<WindowSchema, String> {
     let named = relative
         .strip_prefix("windows/")
         .and_then(|rest| rest.strip_suffix(".toml"))

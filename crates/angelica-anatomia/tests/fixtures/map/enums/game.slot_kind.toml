@@ -1,0 +1,2 @@
+doc = "Kinds of slot."
+values = { empty = 0, normal = 1, special = 2, hidden = 3 }

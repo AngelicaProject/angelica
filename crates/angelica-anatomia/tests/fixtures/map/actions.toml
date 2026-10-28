@@ -1,0 +1,16 @@
+[actions.use_thing]
+doc = "Uses the thing."
+call = "game.thing.first"
+domain = "things"
+rate = 2
+when = [{ path = "thing", says = "there is no thing" }]
+
+[actions.use_thing.args.thing]
+arg = 0
+global = "game.thing.instance"
+
+[actions.use_thing.args.how]
+arg = 1
+doc = "How."
+default = 1
+range = [0, 3]

@@ -1,5 +1,6 @@
 //! The `angelica` command.
 
+mod anatomia;
 mod author;
 mod catalog;
 mod check;
@@ -31,6 +32,9 @@ enum Command {
     /// Game map tools.
     #[command(subcommand)]
     Map(MapCommand),
+    /// Anatomia tools: the description of the game that replaces the game map.
+    #[command(subcommand)]
+    Anatomia(anatomia::AnatomiaCommand),
     /// Plugin tools.
     #[command(subcommand)]
     Plugin(PluginCommand),
@@ -101,6 +105,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Map(MapCommand::Verify(args)) => verify::run(&args),
+        Command::Anatomia(command) => anatomia::run(&command),
         Command::Map(MapCommand::Check(args)) => check::run(&args),
         Command::Map(MapCommand::Try(args)) => map_try::run(&args),
         Command::Map(MapCommand::Labels(args)) => labels::run(&args),
