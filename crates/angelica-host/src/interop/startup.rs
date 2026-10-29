@@ -187,16 +187,21 @@ fn diagnostics(root: &Path) -> crate::config::Diagnostics {
     diagnostics
 }
 
-fn initialize() -> Result<(), String> {
-    let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
+/// The installation folder of the runtime at `runtime_path`.
+fn installation_root(runtime_path: &Path) -> Result<&Path, String> {
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
     // `versions/<version>/runtime.dll` is a version `current.json` named.
-    let root = match root.parent() {
+    Ok(match root.parent() {
         Some(versions) if versions.file_name().is_some_and(|name| name == "versions") => versions
             .parent()
             .ok_or("versions has no installation directory")?,
         _ => root,
-    };
+    })
+}
+
+fn initialize() -> Result<(), String> {
+    let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
+    let root = installation_root(&runtime_path)?;
     let initial_logs = root.join("logs");
     std::fs::create_dir_all(&initial_logs).map_err(|e| e.to_string())?;
     let config = Config::load(root).inspect_err(|_| {
@@ -211,9 +216,10 @@ fn initialize() -> Result<(), String> {
     log_start(base, &hash)?;
     let diagnostics = diagnostics(root);
     let dev = Arc::new(crate::dev::DevMode::new(root));
-    let (catalog, map, map_status) = load_map(&map_source(&config, &dev), base, &snapshot, hash);
-    let catalog = Arc::new(catalog);
+    let (catalog, map, described, map_status) =
+        load_map(&map_source(&config, &dev), base, &snapshot, hash);
     let services = services(&config, root, &catalog, map.as_ref(), base, &snapshot)?;
+    services.memory.replace(described);
     let sandbox = Arc::new(Sandbox::new()?);
     let mut host = Host::new(
         sandbox.clone(),
@@ -259,6 +265,7 @@ fn initialize() -> Result<(), String> {
         seen: None,
         sheets: host.services().sheets.clone(),
         lens: host.services().lens.clone(),
+        memory: host.services().memory.clone(),
         data: host.services().data.clone(),
     };
     if diagnostics.plugins {
@@ -359,6 +366,7 @@ fn services(
     });
     Ok(Arc::new(Services {
         intercepts: Arc::default(),
+        memory: Arc::default(),
         data,
         files,
         excel,
@@ -449,22 +457,31 @@ fn map_source(config: &Config, dev: &crate::dev::DevMode) -> MapSource {
     )
 }
 
-/// The map resolved for this executable, the map, and the lines the menu
-/// shows about it, which go to the log too. Without a usable map every entry is absent and no sheet
+/// The map resolved for this executable, the map, its description for
+/// plugins' direct access, and the lines the menu shows about it, which go
+/// to the log too. Without a usable map every entry is absent and no sheet
 /// or state table is offered.
 fn load_map(
     source: &MapSource,
     base: usize,
     snapshot: &[u8],
     hash: String,
-) -> (Catalog, Option<angelica_map::Map>, Vec<String>) {
+) -> (
+    Arc<Catalog>,
+    Option<angelica_map::Map>,
+    Option<crate::memory::Described>,
+    Vec<String>,
+) {
     let mut map_status = Vec::new();
     let mut loaded = None;
-    let catalog = match source
-        .files()
-        .and_then(|files| Catalog::from_signed_files(&files, snapshot, base as u64, hash.clone()))
-    {
-        Ok((map, catalog)) => {
+    let mut described = None;
+    let catalog = match source.files().and_then(|files| {
+        let (map, catalog) =
+            Catalog::from_signed_files(&files, snapshot, base as u64, hash.clone())?;
+        Ok((map, catalog, files))
+    }) {
+        Ok((map, catalog, files)) => {
+            described = map_description(&files, &catalog, base);
             loaded = Some(map);
             map_status.push(format!(
                 "{}: {} for this build, {} entries present, {} absent",
@@ -496,7 +513,48 @@ fn load_map(
     for line in &map_status {
         super::log(line);
     }
-    (catalog, loaded, map_status)
+    (Arc::new(catalog), loaded, described, map_status)
+}
+
+/// The description of the map in `files` that plugins read the game
+/// through directly, with the values `catalog` resolved for the game loaded
+/// at `base`; none when the map does not convert, which the log says.
+fn map_description(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+    catalog: &Catalog,
+    base: usize,
+) -> Option<crate::memory::Described> {
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).ok();
+    let root = files.get("map.toml").and_then(|bytes| text(bytes))?;
+    let sources: Vec<(String, String)> = files
+        .iter()
+        .filter(|(name, _)| {
+            ["entries/", "sheets/", "types/", "enums/", "windows/"]
+                .iter()
+                .any(|folder| name.starts_with(folder))
+                || angelica_map::ROOT_FILES.contains(&name.as_str())
+        })
+        .filter_map(|(name, bytes)| Some((name.clone(), text(bytes)?)))
+        .collect();
+    let described = crate::memory::Described::from_map(&root, &sources, base as u64, |name| {
+        match catalog.present.get(name) {
+            Some(resolved) => Ok(resolved.value),
+            None => Err(catalog
+                .absent
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| "not resolved".into())),
+        }
+    });
+    match described {
+        Ok(described) => Some(described),
+        Err(error) => {
+            super::log(&format!(
+                "the game map cannot be read directly by plugins: {error}"
+            ));
+            None
+        }
+    }
 }
 
 /// An authenticated package from its folder in the plugin directory.
@@ -608,6 +666,8 @@ struct MapData {
     seen: Option<(std::path::PathBuf, Vec<u8>)>,
     sheets: Arc<crate::sheets::Sheets>,
     lens: Arc<crate::lens::Lens>,
+    /// The description plugins read the game through directly.
+    memory: Arc<crate::memory::Central>,
     data: Arc<crate::game_data::GameData>,
 }
 
@@ -641,6 +701,7 @@ impl MapData {
         let (map, catalog) = Catalog::from_signed_files(&files, &snapshot, base as u64, hash)?;
         self.sheets.set(map.sheets().cloned());
         self.lens.replace(schema(&map, &catalog, base, &self.data));
+        self.memory.replace(map_description(&files, &catalog, base));
         Ok(format!(
             "{} reloaded: {} sheet schemas, {} object types, and {} window schemas; entries that hooks use change at the next game start",
             source.name().to_lowercase(),

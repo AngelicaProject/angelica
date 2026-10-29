@@ -4,6 +4,7 @@ members = [
   "crates/angelica-pe",
   "crates/angelica-map",
   "crates/angelica-anatomia",
+  "crates/angelica-views",
   "crates/angelica-hook",
   "crates/angelica-text",
   "crates/angelica-view",
@@ -19,6 +20,7 @@ members = [
   "crates/angelica-fake-game",
   "crates/angelica-fake-game/hostile",
   "crates/angelica-fake-game/intercepting",
+  "crates/angelica-fake-game/memory",
   "examples/hello",
   "examples/inventory",
   "examples/typing-fold",
@@ -36,6 +38,7 @@ authors = ["AngelicaProject contributors"]
 [workspace.dependencies]
 angelica-map = { path = "crates/angelica-map" }
 angelica-anatomia = { path = "crates/angelica-anatomia" }
+angelica-views = { path = "crates/angelica-views" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
 angelica-view = { path = "crates/angelica-view" }

@@ -20,7 +20,7 @@ mod ty;
 use std::path::PathBuf;
 
 pub use catalog::{Catalog, CatalogItem};
-pub use convert::{Converted, convert_map};
+pub use convert::{Converted, convert_map, convert_sources};
 pub use load::Anatomia;
 pub use meaning::{Domain, FieldMeaning, Meaning, Partition, Wording};
 pub use model::{

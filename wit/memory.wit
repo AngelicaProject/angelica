@@ -1,0 +1,118 @@
+package angelica:plugin@1.0.0;
+
+/// Direct access to the game's objects that Anatomia describes: the
+/// central description of the game and the plugin's own entries.
+///
+/// A plugin never holds an address. It holds handles: opaque values the
+/// host issues for an object the game gave it, through a global, a field
+/// it read, an element of an array, or an argument of a call it
+/// intercepts. A handle carries the Anatomia type of what it points to,
+/// and a field is read through it only when the field belongs to that
+/// type or a type it extends. A handle lives:
+///
+/// - for the call, when a handler got it: until the handler returns;
+/// - for the frame, when the main instance got it: until the next `tick`;
+/// - while it is held (`hold`): each use reads the path it was reached by
+///   again, from its global, and fails with `unavailable` when the path no
+///   longer reaches the same object.
+///
+/// Every read is a checked copy: memory that cannot be read gives
+/// `unavailable`, never a fault. Reading a field of the central
+/// description needs its domain in the manifest's `[lens] read`, granted
+/// by the player; an element of an array the description divides by
+/// domain is read only in the domains the plugin holds. The plugin's own
+/// entries need the `unreviewed` permission. Fields the description marks
+/// forbidden are never read.
+///
+/// The main instance and handlers use this interface; jobs do not.
+interface memory {
+    use types.{error};
+
+    /// An object, an array, text, or other memory of the game the plugin
+    /// reached. The same values as `intercepts.handle`: a handler reads
+    /// through the handles of its call.
+    type handle = u64;
+
+    /// A field of a structure the plugin looked up (`field`), for `read`
+    /// and `write`; valid in the instance that looked it up.
+    type field-id = u32;
+
+    /// What a read gives.
+    variant value {
+        /// A zero pointer.
+        none,
+        signed(s64),
+        unsigned(u64),
+        boolean(bool),
+        float32(f32),
+        float64(f64),
+        /// Text of a field that reads as text, without its terminator.
+        text(list<u8>),
+        /// A structure, in place or behind a pointer.
+        object(handle),
+        /// An array, in place or behind a pointer: `length` and `element`.
+        array(handle),
+        /// Memory of a type the description does not give: it can be
+        /// written into a pointer field of the same type, not read.
+        pointer(handle),
+    }
+
+    /// The object of the global `name`: the one it holds, or the one it
+    /// points to (`none` while it points to nothing). The plugin's own
+    /// entries come first, then the central description.
+    global: func(name: string) -> result<value, error>;
+
+    /// Looks up the field `<structure>.<field>`, by its name or an old
+    /// name the description keeps: of the plugin's own structures first,
+    /// then of the central description. Fails for an unknown field and for
+    /// one this game build lacks.
+    field: func(name: string) -> result<field-id, error>;
+
+    /// The value of `field` of the object `of`.
+    read: func(of: handle, field: field-id) -> result<value, error>;
+
+    /// Reads many fields in one call, each as `read` would, at most 4096;
+    /// more gives one `limit-exceeded`.
+    read-batch: func(reads: list<tuple<handle, field-id>>) -> list<result<value, error>>;
+
+    /// How many elements of the array `of` are used: as many as the field
+    /// the description names for it says, or all.
+    length: func(of: handle) -> result<u32, error>;
+
+    /// The element of the array `of` at `index`, below its length.
+    element: func(of: handle, index: u32) -> result<value, error>;
+
+    /// The object `of` as the structure `structure`: one it extends, or
+    /// one that extends it, when the description can tell that the object
+    /// is one (by the value of a field of its base, or by its virtual
+    /// table); `none` when it is not.
+    cast: func(of: handle, structure: string) -> result<option<handle>, error>;
+
+    /// The text of an object whose structure reads as text.
+    text: func(of: handle) -> result<list<u8>, error>;
+
+    /// Replaces the bytes of the text of an object of the plugin's own
+    /// structures that reads as text with as many bytes, without a NUL, in
+    /// place.
+    edit-text: func(of: handle, bytes: list<u8>) -> result<_, error>;
+
+    /// Writes `value` into `field` of the object `of`, in place, in
+    /// writable memory of the game. A number of the field's type and range,
+    /// a `bool`, text that fits a text field's array with its terminator,
+    /// or for a pointer field a handle of the field's type or `none`.
+    /// A field of the plugin's own structures needs `unreviewed`. A field
+    /// of the central description is written only where the Lens catalog
+    /// offers it as a change written in memory, within its range, with its
+    /// domain in the manifest's `[lens] change`; the host puts the value
+    /// back when the plugin stops, where the game has not changed it
+    /// since. A write that cannot be made changes nothing.
+    write: func(of: handle, field: field-id, value: value) -> result<_, error>;
+
+    /// Called from the main instance: a handle of the same object that
+    /// stays valid across frames while its path reaches it; at most 256.
+    /// A handle reached through an intercepted call cannot be held.
+    hold: func(of: handle) -> result<handle, error>;
+
+    /// Called from the main instance: ends a held handle.
+    release: func(held: handle);
+}

@@ -507,6 +507,7 @@ impl TestHost {
         let game = Arc::new(ScriptedGame::default());
         let services = Arc::new(Services {
             intercepts: Arc::default(),
+            memory: Arc::default(),
             data: Arc::new(runtime::game_data::GameData::new(Some(
                 &folder.path().join("game-files"),
             ))),
@@ -928,6 +929,14 @@ impl TestHost {
             angelica_map::Map::from_sources(&format!("format = {}", angelica_map::FORMAT), &files)
                 .unwrap_or_else(|error| panic!("the test's map: {error}"));
         let (objects, mut schema) = objects::Objects::new(map.clone(), absent);
+        let described = runtime::memory::Described::from_map(
+            &format!("format = {}", angelica_map::FORMAT),
+            &files,
+            objects::BASE,
+            |name| objects.resolved(name),
+        )
+        .unwrap_or_else(|error| panic!("the test's map as Anatomia: {error}"));
+        self.services().memory.replace(Some(described));
         let data = self.services().data.clone();
         schema.resolve_windows(&map, &|path| data.read(path).map_err(|error| error.message));
         *self

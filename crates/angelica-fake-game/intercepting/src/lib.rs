@@ -5,6 +5,7 @@
 use angelica_sdk::{
     Plugin,
     intercepts::{self, Call, Phase, Value},
+    memory,
     ui::{Event, Window},
 };
 use std::collections::{HashMap, HashSet};
@@ -86,7 +87,8 @@ impl Plugin for Intercepting {
     /// one to the fifth, on the stack; 9 passes the second argument's
     /// handle on as it is, then a zero pointer; 10 replaces a row's text
     /// from the snapshot's row table, as a translation does, and 11 looks
-    /// a file's path up in its path set, as file replacements do.
+    /// a file's path up in its path set, as file replacements do; 12 reads
+    /// and writes the fields of an object of the plugin's own structure.
     fn intercepted(call: Call) {
         let first = unsigned(call.args.first());
         let returned = unsigned(Some(&call.returned));
@@ -135,6 +137,7 @@ impl Plugin for Intercepting {
             }
             10 => row(&call),
             11 => path(&call),
+            12 => boxed(&call),
             9 => match call.args.get(1) {
                 Some(text @ Value::Text(handle)) => {
                     let read = intercepts::text(*handle)
@@ -160,6 +163,29 @@ impl Plugin for Intercepting {
 }
 
 angelica_sdk::plugin!(Intercepting);
+
+/// Reads an object of the plugin's own `game.box` through its call handle,
+/// adds one to its count, and tries what a handler may not.
+fn boxed(call: &Call) -> Result<(), angelica_sdk::Error> {
+    static COUNT: memory::Field = memory::Field::new("game.box.count");
+    static LABEL: memory::Field = memory::Field::new("game.box.label");
+    let Some(Value::Object(object)) = call.args.first() else {
+        return Ok(());
+    };
+    let count: u32 = memory::read(*object, &COUNT)?;
+    memory::write(*object, &COUNT, count + 1)?;
+    memory::write(*object, &LABEL, b"BOX".as_slice())?;
+    let label: Vec<u8> = memory::read(*object, &LABEL)?;
+    let held = refused(angelica_sdk::api::memory::hold(*object));
+    let central = refused(angelica_sdk::api::memory::field(
+        "character.character_data.level",
+    ));
+    angelica_sdk::info(&format!(
+        "box: count {count} label {} hold {held} central {central}",
+        String::from_utf8_lossy(&label)
+    ));
+    Ok(())
+}
 
 /// A snapshot of `rows` rows of text, `sheet row length text`, and `paths`
 /// file paths, `length path`, each count first.

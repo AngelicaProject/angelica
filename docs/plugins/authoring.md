@@ -69,6 +69,23 @@ Rules that keep a plugin within its limits:
 - `?` converts a host error into the `String` the plugin's methods return.
 - Declare only the permissions the plugin uses: the player approves each one, and a new version that declares more waits for approval again.
 
+What Lens does not offer, a plugin reads [directly](../formats/plugin-api-v1.md#direct-access-to-the-games-objects) through views of the game map's description, under the same `[lens] read` domains:
+
+```rust
+use angelica_sdk::game::{character, inventory};
+
+if let Some(player) = character::local_player()? {
+    let level = player.data()?.level()?;
+}
+if let Some(containers) = inventory::inventory_manager_instance()?.containers()? {
+    for container in containers.iter().flatten() {
+        let size = container.size()?;
+    }
+}
+```
+
+A view lives until the next `tick`; `angelica_sdk::memory::hold` keeps one across frames. For the plugin's own entries in `anatomia/`, add `angelica-views` as a build dependency, call `angelica_views::build()` in `build.rs`, and include the views with `include!(concat!(env!("OUT_DIR"), "/anatomia.rs"))` inside a module.
+
 ## 4. Test without the game
 
 `cargo test` builds the component and runs `tests/`. `angelica_fake_game::TestHost` installs the component in the real host with temporary folders and a scripted game. It allows 1 s of guest time per frame instead of the game's 20 ms, so a busy CI machine does not fault the plugin; fuel limits the calls as in the game, and in the game 20 ms stays the limit. The test plays the game's part:
@@ -97,7 +114,7 @@ Rules that keep a plugin within its limits:
 | what the plugin keeps in view | `test.host.plugin(id).unwrap().panels()`: its panels with their parts |
 | what the plugin popped up or notified | `test.host.services().notifications.current(Instant::now())`: the notes shown now, newest first; a popup's are in `popup` |
 
-The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job. [`crates/angelica-fake-game/tests/inventory.rs`](../../crates/angelica-fake-game/tests/inventory.rs) tests a plugin that reads the bags through Lens.
+The generated `tests/plugin.rs` shows the setup; [`crates/angelica-fake-game/tests/hello.rs`](../../crates/angelica-fake-game/tests/hello.rs) drives an example plugin through every interface. Cover each command, each window action, and each failure the plugin handles: a refused permission, an absent map entry, a failing job. [`crates/angelica-fake-game/tests/inventory.rs`](../../crates/angelica-fake-game/tests/inventory.rs) tests a plugin that reads the bags through Lens, and [`crates/angelica-fake-game/tests/memory.rs`](../../crates/angelica-fake-game/tests/memory.rs) one that reads them through views.
 
 Run the lints the SDK is held to, for the plugin and for its tests:
 

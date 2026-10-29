@@ -601,3 +601,37 @@ fn the_game_map_converts_back_to_the_same_map() {
     let directory = std::env::var("ANGELICA_GAMEMAP").expect("ANGELICA_GAMEMAP");
     assert_round_trip(Path::new(&directory));
 }
+
+/// Every file under `directory`, by its path relative to it.
+fn files_in(directory: &Path) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    let mut folders = vec![directory.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for item in std::fs::read_dir(&folder).unwrap() {
+            let path = item.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let relative = path.strip_prefix(directory).unwrap();
+                let relative = relative
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/");
+                files.push((relative, std::fs::read_to_string(&path).unwrap()));
+            }
+        }
+    }
+    files
+}
+
+#[test]
+fn a_map_given_as_files_converts_as_its_folder_does() {
+    let mut files = files_in(fixture());
+    let map_toml = files
+        .iter()
+        .position(|(path, _)| path == "map.toml")
+        .map(|at| files.remove(at).1)
+        .unwrap();
+    let given = angelica_anatomia::convert_sources(&map_toml, &files).unwrap();
+    assert_eq!(given, convert_map(fixture()).unwrap());
+    assert!(given.anatomia().unwrap().broken().is_empty());
+}

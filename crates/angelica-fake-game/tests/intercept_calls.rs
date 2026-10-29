@@ -40,6 +40,25 @@ find = [{ scan = "48 89 6C 24 10 56 41 54" }]
 type = "fn(ptr<char8>) -> u32"
 thread = "any"
 find = [{ scan = "48 89 74 24 18 41 56 48 83 EC 40" }]
+
+[function."game.open_box"]
+type = "fn(ptr<game.box>) -> u32"
+thread = "any"
+find = [{ scan = "55 48 8B EC 48 83 EC 50" }]
+"#;
+const TYPES: &str = r#"
+[struct."game.box"]
+size = 0x20
+text = "label"
+
+[struct."game.box".fields.count]
+type = "u32"
+at = 0x8
+
+[struct."game.box".fields.label]
+type = "char8[16]"
+text = true
+at = 0x10
 "#;
 
 fn component() -> &'static [u8] {
@@ -54,6 +73,7 @@ fn executable() -> Vec<u8> {
     code[0x40..0x46].copy_from_slice(&[0x40, 0x53, 0x48, 0x83, 0xEC, 0x30]);
     code[0x80..0x87].copy_from_slice(&[0x48, 0x83, 0xEC, 0x28, 0x4C, 0x8B, 0xC2]);
     code[0xC0..0xC8].copy_from_slice(&[0x48, 0x89, 0x6C, 0x24, 0x10, 0x56, 0x41, 0x54]);
+    code[0x60..0x68].copy_from_slice(&[0x55, 0x48, 0x8B, 0xEC, 0x48, 0x83, 0xEC, 0x50]);
     code[0xE0..0xEB].copy_from_slice(&[
         0x48, 0x89, 0x74, 0x24, 0x18, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x40,
     ]);
@@ -62,6 +82,7 @@ fn executable() -> Vec<u8> {
         .functions(&[
             (0x1000, 0x1030),
             (0x1040, 0x1060),
+            (0x1060, 0x1078),
             (0x1080, 0x10A0),
             (0x10C0, 0x10D8),
             (0x10E0, 0x10F8),
@@ -103,6 +124,7 @@ fn started_with(limits: Limits, plugins: &[(&str, &str)]) -> TestHost {
             &[
                 ("anatomia.toml", &entries),
                 ("functions/game.toml", FUNCTIONS),
+                ("types/game.toml", TYPES),
             ],
         )
         .unwrap();
@@ -490,4 +512,26 @@ fn a_snapshot_that_fails_to_prepare_leaves_handlers_with_the_one_they_had() {
             .any(|line| line.contains("handlers keep the snapshot they had: the snapshot is not prepared: the snapshot is broken")),
         "{lines:?}"
     );
+}
+
+#[test]
+fn a_handler_reads_and_writes_the_plugins_own_object_through_its_handle() {
+    let test = started(&[("intercepting", "")]);
+    intercept(&test, "intercepting", "before", "game.open_box", 12);
+    let mut object = vec![0u8; 0x20];
+    object[0x8..0xC].copy_from_slice(&41u32.to_le_bytes());
+    object[0x10..0x14].copy_from_slice(b"box\0");
+    let at = test.place(&object);
+    test.call_intercepted("intercepting", "game.open_box", &[Arg::both(at)], |_| {
+        Returned::default()
+    });
+    let lines = log(&test, "intercepting");
+    assert!(
+        lines.iter().any(|line| line
+            == "box: count 41 label BOX hold ErrorKind::WrongContext central ErrorKind::NotFound"),
+        "a handler holds nothing, and without a game map no central field exists: {lines:?}"
+    );
+    let written = test.bytes_at(at, 0x20);
+    assert_eq!(written[0x8..0xC], 42u32.to_le_bytes());
+    assert_eq!(&written[0x10..0x14], b"BOX\0");
 }

@@ -94,6 +94,7 @@ dependencies = [
  "angelica-pe",
  "angelica-sqpack",
  "angelica-update",
+ "angelica-views",
  "clap",
  "ed25519-dalek",
  "getrandom 0.4.3",
@@ -217,6 +218,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "angelica-memory"
+version = "0.1.0"
+dependencies = [
+ "angelica-sdk",
+]
+
+[[package]]
 name = "angelica-pe"
 version = "0.1.0"
 dependencies = [
@@ -314,6 +322,13 @@ dependencies = [
 [[package]]
 name = "angelica-view"
 version = "0.1.0"
+
+[[package]]
+name = "angelica-views"
+version = "0.1.0"
+dependencies = [
+ "angelica-anatomia",
+]
 
 [[package]]
 name = "anstream"

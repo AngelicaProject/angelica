@@ -53,6 +53,80 @@ pub fn convert_map(directory: &Path) -> Result<Converted, String> {
     convert(&source)
 }
 
+/// Converts a v2 map given as the text of its `map.toml` and of its other
+/// files, each by its path relative to the map directory, as
+/// `angelica_map::Map::from_sources` takes them; build records
+/// (`builds/<version>.toml`) and `THIRD_PARTY_NOTICES.md` may be among
+/// them. A file in no place of the map is not read.
+///
+/// # Errors
+///
+/// As [`convert_map`].
+pub fn convert_sources(map_toml: &str, files: &[(String, String)]) -> Result<Converted, String> {
+    let map: Vec<(String, String)> = files
+        .iter()
+        .filter(|(path, _)| {
+            ["entries/", "sheets/", "types/", "enums/", "windows/"]
+                .iter()
+                .any(|folder| path.starts_with(folder))
+                || angelica_map::ROOT_FILES.contains(&path.as_str())
+        })
+        .cloned()
+        .collect();
+    angelica_map::Map::from_sources(map_toml, &map)
+        .map_err(|error| format!("the map is not valid v2: {error}"))?;
+    convert(&source_of(files)?)
+}
+
+/// The files of a map given by path, sorted into the places
+/// [`read_source`] reads from a directory.
+fn source_of(files: &[(String, String)]) -> Result<Source, String> {
+    let mut files: Vec<&(String, String)> = files.iter().collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let parse = |path: &str, text: &str| -> Result<Table, String> {
+        text.parse::<Table>()
+            .map_err(|error| format!("{path}: {}", error.message()))
+    };
+    // The name of a file directly in `folder`, without `.toml`.
+    let stem = |path: &str, folder: &str| -> Option<String> {
+        path.strip_prefix(folder)?
+            .strip_prefix('/')
+            .filter(|name| !name.contains('/'))?
+            .strip_suffix(".toml")
+            .map(str::to_owned)
+    };
+    let mut source = Source {
+        entries: Vec::new(),
+        types: Vec::new(),
+        enums: Vec::new(),
+        root_files: BTreeMap::new(),
+        copied: Vec::new(),
+        builds: Vec::new(),
+    };
+    for (path, text) in files {
+        if let Some(name) = stem(path, "entries") {
+            source.entries.push((name, parse(path, text)?));
+        } else if let Some(name) = stem(path, "types") {
+            source.types.push((name, parse(path, text)?));
+        } else if let Some(name) = stem(path, "enums") {
+            source.enums.push((name, parse(path, text)?));
+        } else if angelica_map::ROOT_FILES.contains(&path.as_str()) {
+            source.root_files.insert(
+                path.trim_end_matches(".toml").to_owned(),
+                parse(path, text)?,
+            );
+        } else if stem(path, "windows").is_some()
+            || path.starts_with("sheets/")
+            || path == "THIRD_PARTY_NOTICES.md"
+        {
+            source.copied.push((path.clone(), text.clone()));
+        } else if let Some(version) = stem(path, "builds") {
+            source.builds.push((version, text.clone()));
+        }
+    }
+    Ok(source)
+}
+
 fn read_source(directory: &Path) -> Result<Source, String> {
     let read = |path: &Path| {
         std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
@@ -705,6 +779,34 @@ fn convert(source: &Source) -> Result<Converted, String> {
     }
 
     // Build records keep their results under the new names.
+    let anatomia = described(&files)?;
+    if let Some((name, reason)) = anatomia.broken().iter().next() {
+        return Err(format!(
+            "the converted description does not use `{name}`: {reason}"
+        ));
+    }
+    for (version, text) in &source.builds {
+        files.insert(
+            format!("builds/{version}.toml"),
+            convert_record(text, &rename, anatomia.sha256())?,
+        );
+    }
+    Ok(Converted { files, renamed })
+}
+
+impl Converted {
+    /// The description the converted files hold.
+    ///
+    /// # Errors
+    ///
+    /// None for a conversion [`convert_map`] or [`convert_sources`] made.
+    pub fn anatomia(&self) -> Result<Anatomia, String> {
+        described(&self.files)
+    }
+}
+
+/// The description of converted `files`, which the conversion checked.
+fn described(files: &BTreeMap<String, String>) -> Result<Anatomia, String> {
     let sources: Vec<(String, String)> = files
         .iter()
         .filter(|(path, _)| {
@@ -721,20 +823,11 @@ fn convert(source: &Source) -> Result<Converted, String> {
         })
         .map(|(path, text)| (path.clone(), text.clone()))
         .collect();
-    let anatomia = Anatomia::from_sources(&files["anatomia.toml"], &sources)
-        .map_err(|error| format!("the converted description cannot be read: {error}"))?;
-    if let Some((name, reason)) = anatomia.broken().iter().next() {
-        return Err(format!(
-            "the converted description does not use `{name}`: {reason}"
-        ));
-    }
-    for (version, text) in &source.builds {
-        files.insert(
-            format!("builds/{version}.toml"),
-            convert_record(text, &rename, anatomia.sha256())?,
-        );
-    }
-    Ok(Converted { files, renamed })
+    let manifest = files
+        .get("anatomia.toml")
+        .ok_or("the converted description has no anatomia.toml")?;
+    Anatomia::from_sources(manifest, &sources)
+        .map_err(|error| format!("the converted description cannot be read: {error}"))
 }
 
 /// The Anatomia type and the keys of a field the object model reads.

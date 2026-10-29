@@ -10,7 +10,8 @@ package angelica:plugin@1.0.0;
 /// enter the instance one at a time. The intercept instance has its own
 /// memory, which it keeps between calls, and shares nothing with the main
 /// instance but the snapshot it prepared (`handler.prepare`). A handler may
-/// use `runtime.log` and this interface; every other import traps.
+/// use `runtime.log`, this interface, and `memory`; every other import
+/// traps.
 ///
 /// A `before` handler may change the arguments (`set-argument`) or make the
 /// function return at once (`skip`); an `after` handler may change the

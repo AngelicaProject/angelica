@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 angelica-anatomia.workspace = true
+angelica-views.workspace = true
 angelica-games.workspace = true
 angelica-map.workspace = true
 angelica-pe.workspace = true
