@@ -43,6 +43,16 @@ pub struct Resolution {
 }
 
 impl Resolution {
+    /// Results of entries resolved elsewhere, such as the same entries of
+    /// the game map the description was converted from.
+    #[must_use]
+    pub fn from_results(results: BTreeMap<String, Result<Value, Absence>>) -> Self {
+        Self {
+            results,
+            confirmed: Vec::new(),
+        }
+    }
+
     #[must_use]
     pub fn results(&self) -> &BTreeMap<String, Result<Value, Absence>> {
         &self.results
