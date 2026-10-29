@@ -579,6 +579,7 @@ impl TestHost {
         let game = Arc::new(ScriptedGame::default());
         let services = Arc::new(Services {
             intercepts: Arc::default(),
+            gpu: Arc::default(),
             memory: Arc::default(),
             data: Arc::new(runtime::game_data::GameData::new(Some(
                 &folder.path().join("game-files"),

@@ -15,12 +15,14 @@ pub mod config;
 pub mod dev;
 pub mod draw;
 pub mod error;
+pub use angelica_look::{fonts, theme};
 pub mod excel_text;
 pub mod file_formats;
 pub mod file_replacements;
-pub mod fonts;
+
 pub mod game;
 pub mod game_data;
+pub mod gpu;
 pub mod host;
 pub mod http;
 pub mod icons;
@@ -52,7 +54,7 @@ pub mod sockets;
 pub mod sound;
 pub mod storage;
 pub mod text_case;
-pub mod theme;
+
 pub mod view;
 pub mod wasi;
 

@@ -199,6 +199,17 @@ pub trait Game: Send + Sync {
         Err("this game cannot call plugins back".into())
     }
 
+    /// Compiles the entry point `entry` of HLSL for shader model 5.0 into
+    /// the GPU's code, a vertex shader or a pixel shader. The scripted
+    /// game, which draws nothing, accepts any.
+    ///
+    /// # Errors
+    /// The compiler's message.
+    fn compile_shader(&self, hlsl: &str, entry: &str, vertex: bool) -> Result<Vec<u8>, String> {
+        let _ = (hlsl, vertex);
+        Ok(entry.as_bytes().to_vec())
+    }
+
     /// Writes `bytes` at `address` of the game's data, for a Lens change;
     /// false when the range is not writable data.
     fn write(&self, address: u64, bytes: &[u8]) -> bool {

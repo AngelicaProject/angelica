@@ -183,6 +183,9 @@ pub struct Services {
     /// The game map's description for plugins' direct access, and the
     /// central values they wrote.
     pub memory: Arc<crate::memory::Central>,
+    /// Plugins' surfaces and GPU objects, and what the renderer has yet
+    /// to do.
+    pub gpu: Arc<crate::gpu::Gpu>,
 }
 
 /// One log line of a plugin.

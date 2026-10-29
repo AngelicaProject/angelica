@@ -474,6 +474,13 @@ impl Menu {
         let plugins = host.plugins();
         let statuses: Vec<Status> = plugins.iter().map(|plugin| plugin.status()).collect();
         let screen = context.content_rect();
+        host.services().gpu.set_look(
+            self.theme == theme::Theme::Dark,
+            self.settings
+                .size
+                .unwrap_or_default()
+                .scale(screen.height()),
+        );
         let view = View {
             host,
             plugins: &plugins,

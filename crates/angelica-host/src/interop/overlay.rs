@@ -73,6 +73,10 @@ struct Frames {
     chain: usize,
     /// Frames Angelica drew into the game's back buffer.
     drawn: u64,
+    /// Plugins' GPU objects on the painter's device.
+    surfaces: Option<super::surfaces::Surfaces>,
+    /// How many of plugins' GPU operations failed, for the log.
+    gpu_failures: u64,
 }
 
 /// Keeps the module that holds `address` loaded until the process exits.
@@ -416,6 +420,11 @@ impl Overlay {
             return Err("GetClientRect failed".into());
         }
         let input = self.raw_input(&rect, scale, now.duration_since(frame.started))?;
+        let taken = self.host.services().gpu.route(
+            &surface_input(&input, scale),
+            wants_pointer(&frame.context),
+            frame.context.text_edit_focused(),
+        );
         let menu = self.menu_open();
         let panel = &mut frame.panel;
         let chosen = self.input.chosen_key.swap(0, Ordering::AcqRel);
@@ -443,21 +452,14 @@ impl Overlay {
         if self.host.services().notifications.take_attention() {
             flash(self.input.window());
         }
-        self.input
-            .mouse
-            .store(wants_pointer(&frame.context), Ordering::Release);
         self.input.set_cursor(output.platform_output.cursor_icon);
         // The game sets its cursor every frame on the window's thread, which
         // presents too; set after it, Angelica's cursor is the one shown.
         self.input.show_frame_cursor();
         // The game keeps the keyboard unless the player types in a text
         // field; a pressed button or a chosen row does not take it.
-        self.input
-            .keyboard
-            .store(frame.context.text_edit_focused(), Ordering::Release);
-        let primitives = frame
-            .context
-            .tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
+        self.capture(&frame.context, taken);
+        let primitives = self.primitives(frame, &description, &mut output)?;
         let result = frame.painter.paint(
             chain,
             &primitives,
@@ -472,6 +474,80 @@ impl Overlay {
         frame.drawn += 1;
         Ok(())
     }
+    /// Takes the mouse and the keyboard from the game while Angelica's
+    /// interface or a plugin's surface uses them.
+    fn capture(&self, context: &egui::Context, taken: crate::gpu::input::Taken) {
+        self.input
+            .mouse
+            .store(wants_pointer(context) || taken.mouse, Ordering::Release);
+        self.input.keyboard.store(
+            context.text_edit_focused() || taken.keyboard,
+            Ordering::Release,
+        );
+    }
+
+    /// What the painter draws this frame: plugins' surfaces from the bottom
+    /// up, then Angelica's interface.
+    fn primitives(
+        &self,
+        frame: &mut Frames,
+        description: &windows::Win32::Graphics::Dxgi::DXGI_SWAP_CHAIN_DESC,
+        output: &mut egui::FullOutput,
+    ) -> Result<Vec<egui::epaint::ClippedPrimitive>, String> {
+        let surfaces = self.surfaces(frame, description)?;
+        let mut primitives = surface_primitives(&surfaces, output.pixels_per_point);
+        primitives.extend(
+            frame
+                .context
+                .tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point),
+        );
+        Ok(primitives)
+    }
+
+    /// Runs plugins' GPU operations of this frame on the game's device and
+    /// hands their surfaces' images to the painter; gives the surfaces from
+    /// the bottom up.
+    fn surfaces(
+        &self,
+        frame: &mut Frames,
+        description: &windows::Win32::Graphics::Dxgi::DXGI_SWAP_CHAIN_DESC,
+    ) -> Result<Vec<crate::gpu::Placed>, String> {
+        let services = self.host.services();
+        let gpu = &services.gpu;
+        gpu.set_view(
+            (description.BufferDesc.Width, description.BufferDesc.Height),
+            services.game.view_projection(),
+        );
+        let taken = gpu.take();
+        let (device, context) = frame.painter.device();
+        if frame
+            .surfaces
+            .as_ref()
+            .is_none_or(|surfaces| !surfaces.serves(device))
+        {
+            frame.surfaces = Some(super::surfaces::Surfaces::new(device, context)?);
+        }
+        let Some(surfaces) = frame.surfaces.as_mut() else {
+            return Ok(Vec::new());
+        };
+        let mut failed = Vec::new();
+        let images = surfaces.run(taken.ops, &taken.placed, &mut failed);
+        for reason in failed {
+            frame.gpu_failures += 1;
+            if frame.gpu_failures <= 20 {
+                super::log(&format!("a plugin's GPU operation failed: {reason}"));
+            }
+        }
+        let placed = images.iter().map(|image| image.4.clone()).collect();
+        frame.painter.set_surfaces(
+            images
+                .into_iter()
+                .map(|(id, texture, view, size, _)| (id, texture, view, size))
+                .collect(),
+        );
+        Ok(placed)
+    }
+
     /// This frame's input, in points of the window's `rect` at `scale`.
     fn raw_input(
         &self,
@@ -528,6 +604,8 @@ impl Overlay {
             window,
             chain: chain.as_raw() as usize,
             drawn: 0,
+            surfaces: None,
+            gpu_failures: 0,
         })
     }
 
@@ -602,6 +680,100 @@ fn removed(drawn: u64, reason: &str) -> String {
     } else {
         format!("the game's Direct3D device stopped after Angelica drew {drawn} frames: {reason}")
     }
+}
+
+/// The images of plugins' surfaces as egui meshes in points, from the
+/// bottom up, each with its opacity; the painter draws them under
+/// Angelica's menu.
+fn surface_primitives(
+    surfaces: &[crate::gpu::Placed],
+    scale: f32,
+) -> Vec<egui::epaint::ClippedPrimitive> {
+    surfaces
+        .iter()
+        .map(|surface| {
+            #[allow(clippy::cast_precision_loss)]
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(surface.area.x as f32 / scale, surface.area.y as f32 / scale),
+                egui::vec2(
+                    surface.area.width as f32 / scale,
+                    surface.area.height as f32 / scale,
+                ),
+            );
+            let opacity =
+                num_traits::cast::<f32, u8>((surface.opacity * 255.0).round()).unwrap_or(u8::MAX);
+            let mut mesh = egui::epaint::Mesh::with_texture(egui::TextureId::User(surface.id));
+            mesh.add_rect_with_uv(
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::from_rgba_premultiplied(opacity, opacity, opacity, opacity),
+            );
+            egui::epaint::ClippedPrimitive {
+                clip_rect: rect,
+                primitive: egui::epaint::Primitive::Mesh(mesh),
+            }
+        })
+        .collect()
+}
+
+/// This frame's input as the surfaces take it, in pixels.
+fn surface_input(input: &egui::RawInput, scale: f32) -> Vec<crate::gpu::input::Input> {
+    use crate::gpu::input::{Button, Input, Modifiers};
+    let modifiers = |held: &egui::Modifiers| Modifiers {
+        shift: held.shift,
+        ctrl: held.ctrl || held.command,
+        alt: held.alt,
+    };
+    input
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            egui::Event::PointerMoved(at) => Some(Input::Moved {
+                x: at.x * scale,
+                y: at.y * scale,
+            }),
+            egui::Event::PointerGone => Some(Input::Gone),
+            egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: held,
+            } => Some(Input::Button {
+                x: pos.x * scale,
+                y: pos.y * scale,
+                button: match button {
+                    egui::PointerButton::Secondary => Button::Right,
+                    egui::PointerButton::Middle => Button::Middle,
+                    _ => Button::Left,
+                },
+                pressed: *pressed,
+                modifiers: modifiers(held),
+            }),
+            egui::Event::MouseWheel { delta, unit, .. } => {
+                let k = match unit {
+                    egui::MouseWheelUnit::Point => scale,
+                    egui::MouseWheelUnit::Line => 40.0 * scale,
+                    egui::MouseWheelUnit::Page => 400.0 * scale,
+                };
+                Some(Input::Wheel {
+                    x: delta.x * k,
+                    y: delta.y * k,
+                })
+            }
+            egui::Event::Key {
+                key,
+                pressed,
+                modifiers: held,
+                ..
+            } => Some(Input::Key {
+                name: key.name().to_owned(),
+                pressed: *pressed,
+                modifiers: modifiers(held),
+            }),
+            egui::Event::Text(text) => Some(Input::Text(text.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Whether Angelica takes the pointer from the game: egui uses it or it is

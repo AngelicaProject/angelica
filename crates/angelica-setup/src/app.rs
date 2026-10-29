@@ -100,15 +100,15 @@ fn fonts() -> egui::FontDefinitions {
     for (name, bytes) in [
         (
             "golos",
-            &include_bytes!("../../angelica-host/fonts/GolosText-Regular.ttf")[..],
+            &include_bytes!("../../angelica-look/fonts/GolosText-Regular.ttf")[..],
         ),
         (
             "golos-medium",
-            &include_bytes!("../../angelica-host/fonts/GolosText-Medium.ttf")[..],
+            &include_bytes!("../../angelica-look/fonts/GolosText-Medium.ttf")[..],
         ),
         (
             "quicksand",
-            &include_bytes!("../../angelica-host/fonts/Quicksand-SemiBold.ttf")[..],
+            &include_bytes!("../../angelica-look/fonts/Quicksand-SemiBold.ttf")[..],
         ),
     ] {
         fonts

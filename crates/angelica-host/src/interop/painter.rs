@@ -106,7 +106,11 @@ impl Dynamic {
 
 /// Writes `bytes` at the start of the dynamic `buffer`, discarding what it
 /// held.
-fn write(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8]) -> Result<(), String> {
+pub(super) fn write(
+    context: &ID3D11DeviceContext,
+    buffer: &ID3D11Buffer,
+    bytes: &[u8],
+) -> Result<(), String> {
     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
     // SAFETY: the buffer is dynamic with CPU write access and has room for
     // `bytes`; the mapping is written once and unmapped before any draw.
@@ -122,10 +126,13 @@ fn write(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8]) -> 
 
 /// Shader class instances a stage can hold, the most D3D11 allows.
 const INSTANCES: usize = 256;
+/// The resource, sampler, and constant buffer slots of each stage that
+/// Angelica sets, from 0: the menu uses the first, plugins' surfaces all.
+pub(super) const SLOTS: usize = 8;
 
 /// Everything the overlay sets in the game's immediate context, saved before
 /// it draws and put back after.
-struct Saved {
+pub(super) struct Saved {
     scissors: [RECT; 16],
     scissor_count: u32,
     viewports: [D3D11_VIEWPORT; 16],
@@ -136,10 +143,12 @@ struct Saved {
     sample_mask: u32,
     depth: Option<ID3D11DepthStencilState>,
     stencil: u32,
-    resources: [Option<ID3D11ShaderResourceView>; 1],
-    samplers: [Option<ID3D11SamplerState>; 1],
-    vs_constants: [Option<ID3D11Buffer>; 1],
-    ps_constants: [Option<ID3D11Buffer>; 1],
+    resources: [Option<ID3D11ShaderResourceView>; SLOTS],
+    samplers: [Option<ID3D11SamplerState>; SLOTS],
+    vs_resources: [Option<ID3D11ShaderResourceView>; SLOTS],
+    vs_samplers: [Option<ID3D11SamplerState>; SLOTS],
+    vs_constants: [Option<ID3D11Buffer>; SLOTS],
+    ps_constants: [Option<ID3D11Buffer>; SLOTS],
     pixel: (Option<ID3D11PixelShader>, Vec<Option<ID3D11ClassInstance>>),
     vertex: (Option<ID3D11VertexShader>, Vec<Option<ID3D11ClassInstance>>),
     geometry: (
@@ -181,7 +190,7 @@ impl Saved {
     ///
     /// # Safety
     /// `context` is the device's immediate context, used on this thread.
-    unsafe fn read(context: &ID3D11DeviceContext) -> Self {
+    pub(super) unsafe fn read(context: &ID3D11DeviceContext) -> Self {
         // SAFETY: every output matches the getter's documented size and is
         // owned by this function; the caller owns the context's thread.
         unsafe {
@@ -198,6 +207,8 @@ impl Saved {
                 stencil: 0,
                 resources: Default::default(),
                 samplers: Default::default(),
+                vs_resources: Default::default(),
+                vs_samplers: Default::default(),
                 vs_constants: Default::default(),
                 ps_constants: Default::default(),
                 pixel: shader_of(|s, i, n| context.PSGetShader(s, i, n)),
@@ -233,6 +244,8 @@ impl Saved {
                 .OMGetDepthStencilState(Some(&raw mut saved.depth), Some(&raw mut saved.stencil));
             context.PSGetShaderResources(0, Some(&mut saved.resources));
             context.PSGetSamplers(0, Some(&mut saved.samplers));
+            context.VSGetShaderResources(0, Some(&mut saved.vs_resources));
+            context.VSGetSamplers(0, Some(&mut saved.vs_samplers));
             context.VSGetConstantBuffers(0, Some(&mut saved.vs_constants));
             context.PSGetConstantBuffers(0, Some(&mut saved.ps_constants));
             context.IAGetIndexBuffer(
@@ -256,7 +269,7 @@ impl Saved {
     ///
     /// # Safety
     /// As for [`Saved::read`], on the context it was read from.
-    unsafe fn restore(&self, context: &ID3D11DeviceContext) {
+    pub(super) unsafe fn restore(&self, context: &ID3D11DeviceContext) {
         let scissors = &self.scissors[..(self.scissor_count as usize).min(16)];
         let viewports = &self.viewports[..(self.viewport_count as usize).min(16)];
         // SAFETY: every input was read from this context and is alive.
@@ -272,6 +285,8 @@ impl Saved {
             context.OMSetDepthStencilState(self.depth.as_ref(), self.stencil);
             context.PSSetShaderResources(0, Some(&self.resources));
             context.PSSetSamplers(0, Some(&self.samplers));
+            context.VSSetShaderResources(0, Some(&self.vs_resources));
+            context.VSSetSamplers(0, Some(&self.vs_samplers));
             context.VSSetConstantBuffers(0, Some(&self.vs_constants));
             context.PSSetConstantBuffers(0, Some(&self.ps_constants));
             context.PSSetShader(self.pixel.0.as_ref(), Some(&self.pixel.1));
@@ -319,7 +334,7 @@ pub struct Painter {
     target: Option<Target>,
 }
 
-fn needed<T>(value: Option<T>, label: &str) -> Result<T, String> {
+pub(super) fn needed<T>(value: Option<T>, label: &str) -> Result<T, String> {
     value.ok_or_else(|| format!("D3D11 returned no {label}"))
 }
 fn shader(entry: windows::core::PCSTR, target: windows::core::PCSTR) -> Result<Vec<u8>, String> {
@@ -638,6 +653,25 @@ impl Painter {
             self.textures.remove(&id);
         }
         result
+    }
+
+    /// The device and its immediate context this painter draws with.
+    pub(super) fn device(&self) -> (&ID3D11Device, &ID3D11DeviceContext) {
+        (&self.device, &self.immediate)
+    }
+
+    /// Makes the images of plugins' surfaces this frame's textures
+    /// `TextureId::User` of their ids, in place of the frame before's.
+    pub(super) fn set_surfaces(
+        &mut self,
+        surfaces: Vec<(u64, ID3D11Texture2D, ID3D11ShaderResourceView, [usize; 2])>,
+    ) {
+        self.textures
+            .retain(|id, _| !matches!(id, TextureId::User(_)));
+        for (id, image, view, size) in surfaces {
+            self.textures
+                .insert(TextureId::User(id), Texture { size, image, view });
+        }
     }
 
     /// Whether `chain` presents on the device this painter draws with.

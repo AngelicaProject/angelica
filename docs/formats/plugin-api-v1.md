@@ -1,6 +1,6 @@
 # Plugin API 1.0
 
-The plugin API is the WIT package `angelica:plugin@1.0.0` in [`wit/`](../../wit). A plugin is a WebAssembly component of its `plugin` world: it imports the host's interfaces and exports `guest`; one that [intercepts](#intercepts) exports `handler` too, and one that makes [thunks](#calls-and-thunks) `thunk-handler`, as the SDK's `intercepting` world does. The WIT files carry the doc comment of every function; this document states the rules they share. [`angelica-sdk`](../../crates/angelica-sdk) provides Rust bindings, a `Plugin` trait, and helpers for every interface.
+The plugin API is the WIT package `angelica:plugin@1.0.0` in [`wit/`](../../wit). A plugin is a WebAssembly component of its `plugin` world: it imports the host's interfaces and exports `guest`; one that [intercepts](#intercepts) exports `handler` too, one that makes [thunks](#calls-and-thunks) `thunk-handler`, and one that takes input on its [surfaces](#surfaces) `surface-handler`, as the SDK's `intercepting` world does. The WIT files carry the doc comment of every function; this document states the rules they share. [`angelica-sdk`](../../crates/angelica-sdk) provides Rust bindings, a `Plugin` trait, and helpers for every interface.
 
 A manifest declares the API version it was built for in `plugin.api` ([manifest](./plugin-manifest-v1.md)). This host runs `1.0`.
 
@@ -30,6 +30,8 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `intercepts` | handlers in the game's calls of functions the plugin's own Anatomia entries describe | `unreviewed` |
 | `memory` | the game's objects that the game map and the plugin's own Anatomia entries describe, read and written through handles | the domains of `[lens] read` and `[lens] change`; `unreviewed` for the plugin's own entries |
 | `calls` | calls of the game's functions that the plugin's own Anatomia entries describe, and thunks the game calls back | `unreviewed` and `server` |
+| `gpu` | surfaces over the game that the plugin draws on with the GPU, the game's window and camera | none |
+| `look` | Angelica's theme, scale, language, and fonts as the player set them | none |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -366,10 +368,25 @@ A plugin that holds `unreviewed` and `server` calls the game's functions that it
 
 The SDK's `calls` module wraps the interface, and [`angelica-views`](../../crates/angelica-views) generates a typed function for every function of a plugin's own entries that takes and returns what a call can.
 
+## Surfaces
+
+A plugin draws on **surfaces**: layers over the game that belong to it, which it renders with the GPU through the `gpu` interface, shaped after WebGPU. The host composites every plugin's surfaces over the game each frame, from the bottom up: the surface the player clicked last is on top, and Angelica's menu stays above them all. A surface the plugin did not render in a frame keeps its last image. Only the main instance draws.
+
+- `gpu.create-surface(area)` makes a surface over a rectangle of the game's window, in pixels, at the top; `gpu.set-surface` moves it, sets its opacity, the rectangles of its own pixels where it takes the mouse, and whether it takes the keyboard while it has focus. A surface takes nothing by default: every input reaches the game.
+- `gpu.create-buffer` (vertex, index, or uniform), `create-texture` (`rgba8-unorm`, `rgba8-unorm-srgb`, `r8-unorm`), `create-sampler`, `create-shader` (WGSL), `create-pipeline` (a vertex and a fragment entry point, the vertex layout, the topology, and the blend), and `create-bind-group` (uniform buffers, textures, and samplers by binding) make the plugin's objects; `write-buffer` and `write-texture` fill them before the next render. A shader's resources are in group 0 at bindings 0 to 7 and its vertex inputs at locations 0 to 7; the host translates it for the game's Direct3D 11 device and refuses one that does not parse, validate, or compile, with the reason.
+- `gpu.render(surface, clear, commands)` draws the surface's image for the frame: it clears it, or draws over its last image without a clear, then runs the commands in order: set a pipeline, a bind group, a vertex or an index buffer, a scissor rectangle, and draw. A surface holds premultiplied colors.
+- `gpu.screen()` and `gpu.camera()` give the game's window in pixels and the camera's view and projection this frame, for drawing at places of the world.
+
+The host checks what keeps the game safe and plugins apart, not what a plugin draws: every object belongs to the plugin, shaders are valid, a write lies inside its buffer or texture, and the plugin stays within 256 MiB of GPU memory, 4096 objects, and 10000 draws a frame. A draw that reads past the end of a buffer or a texture reads zeros, as Direct3D 11's robust access does. The plugin's objects and surfaces go when it stops. When the game makes its Direct3D device again, plugins' objects are lost: surfaces stay empty until their plugins make their objects again.
+
+The player's input on a surface reaches the plugin's `surface-handler.surface-input` before its `tick`: the pointer moving over a surface that takes the mouse there or leaving it, presses and releases, the wheel, and, while the surface has focus and takes the keyboard, keys and typed text. A press puts its surface on top, gives it focus, and keeps the pointer with it until the release. The mouse goes to the topmost surface that takes it at the pointer, after Angelica's menu; the keyboard goes to the focused surface unless a text field of Angelica's menu is in use. What reaches no surface reaches the game.
+
+`look.settings()` gives the player's theme, the scale of Angelica's windows, and the language, and `look.font(name)` the bytes of Angelica's fonts. The [interface kit](../../crates/angelica-kit) draws an immediate-mode interface with them on a surface that covers the game's window and takes the mouse only where its windows are, so a plugin's windows look like Angelica's menu; a plugin may draw anything else on the same surface or on its own.
+
 ## WASI
 
 A component built by Rust's standard library imports WASI. The host provides `wasi:random` (`random`, `insecure`, `insecure-seed`; at most 1 MiB per call) and `wasi:clocks` (`monotonic-clock.now` and `resolution`, `wall-clock`), which expose nothing of the player's system and which `HashMap` and `Instant` use. Every other WASI function — files, environment, sockets, standard streams, polling — traps when called. A component that imports anything other than `angelica:plugin/*@1.0.0` and WASI is refused at installation.
 
 ## Compatibility
 
-Interfaces and functions of `angelica:plugin@1.0.0` do not change. New interfaces join the package, as `intercepts`, `handler`, `memory`, `calls`, and `thunk-handler` did, and a component that neither imports nor exports them runs unchanged. Places and parts grow without a new package version: a later 1.x adds [kinds and properties](#places-and-parts), which a plugin uses by raising `plugin.api` in its manifest to that version; a host refuses a plugin whose `plugin.api` is newer than the one it runs.
+Interfaces and functions of `angelica:plugin@1.0.0` do not change. New interfaces join the package, as `intercepts`, `handler`, `memory`, `calls`, `thunk-handler`, `gpu`, `look`, and `surface-handler` did, and a component that neither imports nor exports them runs unchanged. Places and parts grow without a new package version: a later 1.x adds [kinds and properties](#places-and-parts), which a plugin uses by raising `plugin.api` in its manifest to that version; a host refuses a plugin whose `plugin.api` is newer than the one it runs.
