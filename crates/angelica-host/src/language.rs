@@ -305,6 +305,7 @@ impl Language {
                 Permission::Unreviewed => {
                     "Работать внутри игры в местах, которые описал только его автор; это может менять поведение игры"
                 }
+                Permission::Server => "Выполнять действия в игре, которые описал только его автор",
             },
         }
     }
@@ -468,6 +469,7 @@ mod tests {
             Permission::HttpWebsocket,
             Permission::LinksOpen,
             Permission::Unreviewed,
+            Permission::Server,
         ];
         for permission in permissions {
             assert_ne!(

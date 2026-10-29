@@ -184,6 +184,21 @@ pub trait Game: Send + Sync {
         Err("this game cannot be intercepted".into())
     }
 
+    /// Where the game calls the thunk in `slot`, which calls
+    /// [`crate::intercepts::Intercepts::called`] with `slot`. A slot is
+    /// given once and keeps its address until the process exits.
+    ///
+    /// # Errors
+    /// Why the game cannot call plugins back.
+    fn thunk(
+        &self,
+        slot: usize,
+        intercepts: &Arc<crate::intercepts::Intercepts>,
+    ) -> Result<u64, String> {
+        let _ = (slot, intercepts);
+        Err("this game cannot call plugins back".into())
+    }
+
     /// Writes `bytes` at `address` of the game's data, for a Lens change;
     /// false when the range is not writable data.
     fn write(&self, address: u64, bytes: &[u8]) -> bool {

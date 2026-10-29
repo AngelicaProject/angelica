@@ -84,7 +84,7 @@ if let Some(containers) = inventory::inventory_manager_instance()?.containers()?
 }
 ```
 
-A view lives until the next `tick`; `angelica_sdk::memory::hold` keeps one across frames. For the plugin's own entries in `anatomia/`, add `angelica-views` as a build dependency, call `angelica_views::build()` in `build.rs`, and include the views with `include!(concat!(env!("OUT_DIR"), "/anatomia.rs"))` inside a module.
+A view lives until the next `tick`; `angelica_sdk::memory::hold` keeps one across frames. For the plugin's own entries in `anatomia/`, add `angelica-views` as a build dependency, call `angelica_views::build()` in `build.rs`, and include the views with `include!(concat!(env!("OUT_DIR"), "/anatomia.rs"))` inside a module. The views give a function for every function of the plugin's own entries, which [calls](../formats/plugin-api-v1.md#calls-and-thunks) it in the game with the `unreviewed` and `server` permissions; `angelica_sdk::calls::thunk` makes a callback the game calls back, which runs `Plugin::thunk`.
 
 ## 4. Test without the game
 

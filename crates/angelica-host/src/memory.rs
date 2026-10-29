@@ -14,11 +14,13 @@
 //! stops.
 #![forbid(unsafe_code)]
 use crate::error::{Error, Kind, Result};
+use crate::intercepts::Returned;
+use crate::sandbox::bindings::angelica::plugin::calls as calls_api;
 use crate::sandbox::bindings::angelica::plugin::memory as api;
 use crate::sandbox::{Role, State};
 use angelica_anatomia::{
     Absence, Anatomia, Enum, Kind as EntryKind, Partition, Place, Primitive, Resolution, Struct,
-    StructField, Text, Ty, TypeDef, Value as Resolved,
+    StructField, Text, Thread, Ty, TypeDef, Value as Resolved,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -371,6 +373,8 @@ pub enum Target {
     Array(Arc<ArrayOf>),
     /// Memory of a type no read goes through, by the type's name.
     Opaque(String),
+    /// A thunk of the plugin's, of this type.
+    Function(angelica_anatomia::FnType),
 }
 
 /// An array a handle points to.
@@ -460,6 +464,8 @@ impl Slot {
     }
 }
 
+/// A thunk's handle: its slot from 1, with no lifetime bits.
+const THUNK: u64 = 0;
 const CALL: u64 = 1;
 const FRAME: u64 = 2;
 const HELD: u64 = 3;
@@ -546,6 +552,29 @@ impl Handles {
         }
         self.slots.get(index - 1).ok_or_else(|| stale(handle))
     }
+}
+
+/// `function` without the names of its parameters, which do not change
+/// how it is called.
+#[must_use]
+pub fn unnamed(function: &angelica_anatomia::FnType) -> angelica_anatomia::FnType {
+    angelica_anatomia::FnType {
+        params: function
+            .params
+            .iter()
+            .map(|param| angelica_anatomia::Param {
+                name: None,
+                ty: param.ty.clone(),
+            })
+            .collect(),
+        ret: function.ret.clone(),
+    }
+}
+
+/// The handle of the thunk in `slot`.
+#[must_use]
+pub fn thunk_handle(slot: usize) -> u64 {
+    slot as u64 + 1
 }
 
 fn stale(handle: u64) -> Error {
@@ -1065,6 +1094,10 @@ impl Reader<'_> {
                 }
             }
             Ty::Opaque => Ok(opaque("opaque".to_owned(), at)),
+            Ty::Fn(function) => match self.word(at)? {
+                0 => Ok(Got::Plain(api::Value::None)),
+                pointer => Ok(opaque(Ty::Fn(function.clone()).to_string(), pointer)),
+            },
             other => Err(Error::invalid(format!("a value of {other} cannot be read"))),
         }
     }
@@ -1559,37 +1592,7 @@ impl Reader<'_> {
                 let bytes = if let Some(primitive) = source.primitive(&found.ty) {
                     encode(value, primitive, range)?
                 } else {
-                    match (source.plain(&found.ty)?, value) {
-                        (Ty::Array(inner, length), api::Value::Text(text))
-                            if matches!(source.plain(inner)?, Ty::Char8) =>
-                        {
-                            if text.len() >= *length as usize || text.contains(&0) {
-                                return Err(Error::invalid(format!(
-                                    "the text needs fewer than {length} bytes and no NUL"
-                                )));
-                            }
-                            let mut bytes = text.clone();
-                            bytes.push(0);
-                            bytes
-                        }
-                        (Ty::Ptr(inner), _) => {
-                            let address = match (value, given) {
-                                (api::Value::None, _) => 0,
-                                (_, Some(given)) => {
-                                    Self::pointee(source, inner.as_deref(), given)?;
-                                    given.address
-                                }
-                                _ => return Err(wrong()),
-                            };
-                            address.to_le_bytes().to_vec()
-                        }
-                        _ => {
-                            return Err(Error::invalid(format!(
-                                "{} cannot be written",
-                                field.entry()
-                            )));
-                        }
-                    }
+                    Self::placed(source, &found.ty, value, given, &field.entry())?
                 };
                 (at, bytes)
             }
@@ -1610,6 +1613,55 @@ impl Reader<'_> {
         Ok(())
     }
 
+    /// The bytes a value of `ty`, which no primitive stores, takes in
+    /// memory: text in a text field's array, or a pointer; `given` is what
+    /// a handle in `value` stands for.
+    fn placed(
+        source: Source<'_>,
+        ty: &Ty,
+        value: &api::Value,
+        given: Option<&Slot>,
+        entry: &str,
+    ) -> Result<Vec<u8>> {
+        let wrong = || Error::invalid(format!("the value does not fit {entry}"));
+        Ok(match (source.plain(ty)?, value) {
+            (Ty::Array(inner, length), api::Value::Text(text))
+                if matches!(source.plain(inner)?, Ty::Char8) =>
+            {
+                if text.len() >= *length as usize || text.contains(&0) {
+                    return Err(Error::invalid(format!(
+                        "the text needs fewer than {length} bytes and no NUL"
+                    )));
+                }
+                let mut bytes = text.clone();
+                bytes.push(0);
+                bytes
+            }
+            (Ty::Fn(function), _) => {
+                let address = match (value, given) {
+                    (api::Value::None, _) => 0,
+                    (_, Some(given)) if given.target == Target::Function(unnamed(function)) => {
+                        given.address
+                    }
+                    _ => return Err(wrong()),
+                };
+                address.to_le_bytes().to_vec()
+            }
+            (Ty::Ptr(inner), _) => {
+                let address = match (value, given) {
+                    (api::Value::None, _) => 0,
+                    (_, Some(given)) => {
+                        Self::pointee(source, inner.as_deref(), given)?;
+                        given.address
+                    }
+                    _ => return Err(wrong()),
+                };
+                address.to_le_bytes().to_vec()
+            }
+            _ => return Err(Error::invalid(format!("{entry} cannot be written"))),
+        })
+    }
+
     /// Checks that `given` may go into a pointer to `inner`: an object of
     /// its structure or of one that extends it from its start, or memory
     /// of the same other type.
@@ -1623,6 +1675,7 @@ impl Reader<'_> {
             {
                 *own == source.own && source.base_offset(object, name) == Some(0)
             }
+            (Some(Ty::Fn(function)), Target::Function(thunk)) => unnamed(function) == *thunk,
             (Some(other), Target::Opaque(kind)) => *kind == other.to_string(),
             (None, Target::Opaque(kind)) => kind == "ptr",
             _ => false,
@@ -1688,6 +1741,15 @@ impl State {
                         "the held object is gone: its path reaches another one now",
                     ))
                 }
+            }
+            (THUNK, _) => {
+                let thunk = usize::try_from(handle)
+                    .ok()
+                    .and_then(|index| index.checked_sub(1))
+                    .and_then(|slot| self.context.services.intercepts.thunk_of(slot))
+                    .filter(|(plugin, _, _)| *plugin == self.context.id)
+                    .ok_or_else(|| stale(handle))?;
+                Ok(Slot::called(thunk.1, Target::Function(thunk.2)))
             }
             (CALL | FRAME | HELD, _) => Err(Error::new(
                 Kind::WrongContext,
@@ -1912,5 +1974,196 @@ impl api::Host for State {
         {
             *slot = None;
         }
+    }
+}
+
+/// The 64 bits `value` passes as an argument of the type `ty` of the
+/// plugin's own entries; text the call reads is kept in `texts` until the
+/// call returns.
+fn argument(
+    state: &State,
+    reader: &Reader<'_>,
+    source: Source<'_>,
+    ty: &Ty,
+    value: &api::Value,
+    texts: &mut Vec<Vec<u8>>,
+) -> Result<u64> {
+    if let Some(primitive) = source.primitive(ty) {
+        let mut bits = [0u8; 8];
+        let bytes = encode(value, primitive, None)?;
+        bits[..bytes.len()].copy_from_slice(&bytes);
+        return Ok(u64::from_le_bytes(bits));
+    }
+    let given = match value {
+        api::Value::None => return Ok(0),
+        api::Value::Object(handle) | api::Value::Array(handle) | api::Value::Pointer(handle) => {
+            Some(state.slot_of(reader, *handle)?)
+        }
+        _ => None,
+    };
+    let wrong = || Error::invalid(format!("the value is not a {ty}"));
+    match (source.plain(ty)?, value, given) {
+        (Ty::Ptr(Some(inner)), api::Value::Text(text), _)
+            if matches!(source.plain(inner)?, Ty::Char8) =>
+        {
+            if text.contains(&0) {
+                return Err(Error::invalid("text passed to a call has no NUL"));
+            }
+            let mut terminated = text.clone();
+            terminated.push(0);
+            let pointer = terminated.as_ptr() as u64;
+            texts.push(terminated);
+            Ok(pointer)
+        }
+        (Ty::Fn(function), _, Some(given)) => {
+            if given.target == Target::Function(unnamed(function)) {
+                Ok(given.address)
+            } else {
+                Err(Error::invalid(format!(
+                    "the handle is not a thunk of the type {ty}"
+                )))
+            }
+        }
+        (Ty::Ptr(inner), _, Some(given)) => {
+            Reader::pointee(source, inner.as_deref(), &given)?;
+            Ok(given.address)
+        }
+        _ => Err(wrong()),
+    }
+}
+
+/// What a call of a function that returns `ty` gave.
+fn returned(source: Source<'_>, ty: &Ty, returned: Returned) -> Result<Got> {
+    if let Some(primitive) = source.primitive(ty) {
+        let bits = if matches!(primitive, Primitive::F32 | Primitive::F64) {
+            returned.float
+        } else {
+            returned.integer
+        };
+        let size = primitive.size() * 8;
+        let bits = if size == 64 {
+            bits
+        } else {
+            bits & ((1 << size) - 1)
+        };
+        return Ok(Got::Plain(plain_value(bits, primitive)));
+    }
+    let address = returned.integer;
+    let target = match source.plain(ty)? {
+        _ if address == 0 => return Ok(Got::Plain(api::Value::None)),
+        Ty::Ptr(Some(inner)) => match source.plain(inner)? {
+            Ty::Named(name, args) if args.is_empty() && source.structure(name).is_some() => {
+                return Ok(Got::Object(Slot::called(
+                    address,
+                    Target::Struct {
+                        own: source.own,
+                        name: name.clone(),
+                    },
+                )));
+            }
+            Ty::Char8 => Target::Text { most: TEXT_MOST },
+            other => Target::Opaque(other.to_string()),
+        },
+        Ty::Ptr(None) => Target::Opaque("ptr".to_owned()),
+        Ty::Fn(function) => Target::Opaque(Ty::Fn(function.clone()).to_string()),
+        other => {
+            return Err(Error::invalid(format!(
+                "a call cannot return a value of {other}"
+            )));
+        }
+    };
+    Ok(Got::Pointer(Slot::called(address, target)))
+}
+
+impl calls_api::Host for State {
+    fn call(
+        &mut self,
+        function: String,
+        args: Vec<api::Value>,
+    ) -> std::result::Result<api::Value, api::Error> {
+        self.host(|state| {
+            let context = state.context.clone();
+            let own = crate::intercepts::calling(&context)?;
+            let source = own.source();
+            let name = own.anatomia.canonical(&function).to_owned();
+            let Some(EntryKind::Function { ty, thread, .. }) =
+                own.anatomia.get(&name).map(|entry| &entry.kind)
+            else {
+                return Err(Error::new(
+                    Kind::NotFound,
+                    format!("{function} is not a function of the plugin's entries"),
+                ));
+            };
+            match (&state.role, thread) {
+                (Role::Main, _) | (Role::Intercept(Some(_)), Thread::Any) => {}
+                (Role::Intercept(Some(_)), Thread::Main) => {
+                    return Err(Error::new(
+                        Kind::WrongContext,
+                        format!("{name} runs on the main thread: only the main instance calls it"),
+                    ));
+                }
+                _ => {
+                    return Err(Error::new(
+                        Kind::WrongContext,
+                        "only the main instance and handlers call the game",
+                    ));
+                }
+            }
+            if args.len() != ty.params.len() {
+                return Err(Error::invalid(format!(
+                    "{name} takes {} arguments",
+                    ty.params.len()
+                )));
+            }
+            if args.len() > crate::intercepts::MAX_ARGS {
+                return Err(Error::invalid(format!(
+                    "a call passes at most {} arguments",
+                    crate::intercepts::MAX_ARGS
+                )));
+            }
+            let address = own.function(&name)?;
+            let mut texts = Vec::new();
+            let bits = state.reading(|reader| {
+                ty.params
+                    .iter()
+                    .zip(&args)
+                    .map(|(param, value)| {
+                        argument(state, reader, source, &param.ty, value, &mut texts)
+                    })
+                    .collect::<Result<Vec<u64>>>()
+            })?;
+            let result = context
+                .services
+                .game
+                .call(address, &bits)
+                .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+            drop(texts);
+            let got = match &ty.ret {
+                None => Got::Plain(api::Value::None),
+                Some(ret) => returned(source, ret, result)?,
+            };
+            state.issue(got)
+        })
+        .map_err(Into::into)
+    }
+
+    fn thunk(
+        &mut self,
+        signature: String,
+        handler: u32,
+        fallback: Option<String>,
+    ) -> std::result::Result<api::Handle, api::Error> {
+        self.host(|state| {
+            state.main_memory()?;
+            let context = state.context.clone();
+            let (slot, _) = context.services.intercepts.thunk(
+                &context,
+                &signature,
+                handler,
+                fallback.as_deref(),
+            )?;
+            Ok::<_, Error>(thunk_handle(slot))
+        })
+        .map_err(Into::into)
     }
 }

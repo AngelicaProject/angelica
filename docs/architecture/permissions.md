@@ -20,6 +20,7 @@ Every plugin, once approved, has its own windows, log, storage folder, and jobs;
 | `storage.cache` | a [cache](../formats/plugin-api-v1.md#storage) of files outside its folder, of the size `[storage] cache` names | only for you | Keep a cache of files on your disk, followed by the size |
 | `draw.world` | [drawing](../formats/plugin-api-v1.md#drawing-over-the-world) marks, lines, and text over the game world | what you see | Draw marks, lines, and text over the game world |
 | `unreviewed` | [intercepting](../formats/plugin-api-v1.md#intercepts) and changing the game's functions and data that the plugin's own Anatomia entries describe, which nobody but its author reviewed | act in the game | Work inside the game in places only its author describes, which can change how the game behaves |
+| `server` | [calling](../formats/plugin-api-v1.md#calls-and-thunks) the game's functions that the plugin's own Anatomia entries describe and giving the game thunks, with `unreviewed`: such a function may send a request to the game's servers | act in the game | Take actions in the game that only its author describes |
 
 ## Domains of the game map
 

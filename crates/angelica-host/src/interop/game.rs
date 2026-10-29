@@ -142,6 +142,14 @@ impl Game for WindowsGame {
         Some((self.base as u64, self.executable.clone()))
     }
 
+    fn thunk(
+        &self,
+        slot: usize,
+        intercepts: &Arc<crate::intercepts::Intercepts>,
+    ) -> Result<u64, String> {
+        super::thunks::address(slot, intercepts)
+    }
+
     fn enable_intercept(
         &self,
         address: u64,

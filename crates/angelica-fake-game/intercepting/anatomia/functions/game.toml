@@ -1,0 +1,41 @@
+[function."game.add"]
+type = "fn(u32, u32) -> u32"
+thread = "any"
+find = [{ scan = "48 89 5C 24 08 57 48 83 EC 20" }]
+
+[function."game.mixed"]
+type = "fn(f32, f64, u64, u64, u64) -> f64"
+thread = "any"
+find = [{ scan = "40 53 48 83 EC 30" }]
+
+[function."game.text"]
+type = "fn(u32, ptr<char8>) -> ptr"
+thread = "any"
+find = [{ scan = "48 83 EC 28 4C 8B C2" }]
+
+[function."game.store_row"]
+type = "fn(u32, u32, ptr<char8>)"
+thread = "any"
+find = [{ scan = "48 89 6C 24 10 56 41 54" }]
+
+[function."game.read_file"]
+type = "fn(ptr<char8>) -> u32"
+thread = "any"
+find = [{ scan = "48 89 74 24 18 41 56 48 83 EC 40" }]
+
+[function."game.open_box"]
+type = "fn(ptr<game.box>) -> u32"
+thread = "any"
+find = [{ scan = "55 48 8B EC 48 83 EC 50" }]
+
+[function."game.each"]
+doc = "Calls `callback` with 0, 1, … up to `count`, and gives the sum of what it returned."
+type = "fn(callback: fn(u32) -> u32, count: u32) -> u32"
+thread = "any"
+find = [{ scan = "41 54 41 55 41 56 48 83" }]
+
+[function."game.twice"]
+doc = "Gives twice its argument."
+type = "fn(value: u32) -> u32"
+thread = "main"
+find = [{ scan = "53 56 57 48 83 EC 20 90" }]
