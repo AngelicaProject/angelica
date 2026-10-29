@@ -11,7 +11,7 @@ use runtime::lens::{
 use std::collections::BTreeMap;
 
 /// Where the objects start in the scripted game's memory.
-const BASE: u64 = 0x1000_0000;
+pub(crate) const BASE: u64 = 0x1000_0000;
 const PAGE: usize = 4096;
 
 /// An argument of a call a test makes.
@@ -96,6 +96,8 @@ pub struct Objects {
     /// The field each function that sets a value sets, by its address: its
     /// type and name.
     setters: BTreeMap<u64, (String, String)>,
+    /// Every entry of the map in the scripted build, or why it is absent.
+    resolved: BTreeMap<String, Result<Resolved, String>>,
 }
 
 impl Memory for Objects {
@@ -191,7 +193,7 @@ impl Objects {
             }
         }
         let globals = objects.globals.clone();
-        let schema = Schema::new(&map, BASE, |name| {
+        let entry = |name: &str| {
             if absent.contains(&name) {
                 return Err("absent in the scripted build".into());
             }
@@ -209,9 +211,26 @@ impl Objects {
                     .map(Resolved::Address)
                     .ok_or_else(|| "not a root's global, an event's code, or an action's".into()),
             }
-        });
+        };
+        let schema = Schema::new(&map, BASE, entry);
+        objects.resolved = map
+            .entries()
+            .map(|item| (item.name.clone(), entry(&item.name)))
+            .collect();
         objects.map = Some(map);
         (objects, schema)
+    }
+
+    /// The value of the map's entry `name` in the scripted build, or why
+    /// it is absent.
+    ///
+    /// # Errors
+    /// An entry the scripted build lacks.
+    pub fn resolved(&self, name: &str) -> Result<Resolved, String> {
+        self.resolved
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Err(format!("{name} is not an entry of the map")))
     }
 
     /// Zeroed memory of `length` bytes, 16-byte aligned.

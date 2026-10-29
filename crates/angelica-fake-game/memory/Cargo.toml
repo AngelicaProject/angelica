@@ -1,0 +1,17 @@
+[package]
+name = "angelica-memory"
+description = "A test plugin that reads and writes the scripted game's objects through views."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

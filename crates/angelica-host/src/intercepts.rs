@@ -15,9 +15,7 @@
 use crate::error::{Error, Kind, Result};
 pub use crate::lens::act::Returned;
 use crate::sandbox::{self, Context, Role, State};
-use angelica_anatomia::{
-    Anatomia, Kind as EntryKind, Place, Primitive, Resolution, Text, Ty, TypeDef,
-};
+use angelica_anatomia::{Anatomia, Kind as EntryKind, Primitive, Resolution, Ty, TypeDef};
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -48,13 +46,9 @@ pub const MAX_SNAPSHOT: usize = 64 * 1024 * 1024;
 pub const MAX_ARGS: usize = crate::lens::act::MOST_ARGS;
 /// How many arguments the convention passes in registers.
 pub const REGISTER_ARGS: usize = 4;
-/// The most bytes a handler reads of 8-bit text a pointer argument gives.
-const TEXT_MOST: usize = 64 * 1024;
 /// Guest instructions of one handler call, in fuel units; the time limit
 /// is what stops a handler, this only keeps fuel from running out first.
 const HANDLER_FUEL: u64 = u64::MAX / 2;
-/// How deep a structure's text may lie in structures it holds.
-const TEXT_DEPTH: usize = 4;
 
 /// The code of a function the game runs, as a hook checks it: every range
 /// of it, and the length of its prologue.
@@ -77,10 +71,17 @@ pub struct Own {
 
 impl Own {
     /// Resolves `anatomia` against the game's executable loaded at `base`,
-    /// as `image` is mapped there.
+    /// as `image` is mapped there. A field at a constant offset is the
+    /// author's word, as everything in the plugin's own entries is: no
+    /// build record confirms it.
     #[must_use]
     pub fn resolve(anatomia: Arc<Anatomia>, base: u64, image: &angelica_pe::Image<'_>) -> Self {
-        let resolution = anatomia.resolve(image, base, &std::collections::BTreeSet::new());
+        let constants = anatomia
+            .entries()
+            .filter(|entry| matches!(entry.kind, EntryKind::Field { at: Some(_), .. }))
+            .map(|entry| entry.name.clone())
+            .collect();
+        let resolution = anatomia.resolve(image, base, &constants);
         let mut code = BTreeMap::new();
         for (name, value) in resolution.present() {
             if !matches!(
@@ -120,20 +121,19 @@ impl Own {
             .map(|(name, absence)| (name, absence.to_string()))
     }
 
-    fn offset(&self, name: &str) -> Option<u64> {
-        match self.resolution.get(name) {
-            Some(Ok(angelica_anatomia::Value::Offset(offset))) => Some(u64::from(*offset)),
-            _ => None,
+    /// The entries as direct access reads them.
+    #[must_use]
+    pub fn source(&self) -> crate::memory::Source<'_> {
+        crate::memory::Source {
+            anatomia: &self.anatomia,
+            resolution: &self.resolution,
+            base: self.base,
+            own: true,
         }
     }
 
     fn structure(&self, name: &str) -> Option<&angelica_anatomia::Struct> {
-        match self.anatomia.types().get(name) {
-            Some(TypeDef::Struct(structure)) if !self.anatomia.broken().contains_key(name) => {
-                Some(structure)
-            }
-            _ => None,
-        }
+        self.source().structure(name)
     }
 }
 
@@ -199,9 +199,9 @@ fn shape(ty: &Ty, own: &Own) -> Option<Shape> {
                 Some(Shape::Object(name.clone()))
             }
             Ty::Char8 => Some(Shape::Text),
-            other => Some(Shape::Pointer(format!("{other:?}"))),
+            other => Some(Shape::Pointer(other.to_string())),
         },
-        Ty::Ptr(None) => Some(Shape::Pointer(String::new())),
+        Ty::Ptr(None) => Some(Shape::Pointer("ptr".to_owned())),
         _ => None,
     }
 }
@@ -241,7 +241,6 @@ pub struct Order {
 /// A plugin with handlers.
 struct Registered {
     context: Arc<Context>,
-    own: Arc<Own>,
     pre: bindings::InterceptHandlerPre<State>,
     enabled: AtomicBool,
     /// The intercept instance handlers run in.
@@ -294,11 +293,9 @@ pub struct Intercepts {
 /// changed in it.
 pub struct Frame {
     phase: api::Phase,
-    /// What every handle of the call stands for, by its number.
-    objects: Vec<(u64, Shape)>,
-    serial: u64,
+    /// What every handle of the call stands for.
+    pub(crate) handles: crate::memory::Handles,
     snapshot: Arc<Vec<u8>>,
-    own: Arc<Own>,
     params: Arc<[Shape]>,
     returns: Option<Shape>,
     /// The arguments, with the handler's changes.
@@ -455,7 +452,7 @@ impl Intercepts {
             })?),
         };
 
-        let plugin = self.registered(context, &own)?;
+        let plugin = self.registered(context)?;
         let mut targets = self.targets.write().unwrap_or_else(PoisonError::into_inner);
         let chain = targets.entry(address).or_default();
         if chain
@@ -502,7 +499,7 @@ impl Intercepts {
             .remove(&address);
     }
 
-    fn registered(&self, context: &Arc<Context>, own: &Arc<Own>) -> Result<Arc<Registered>> {
+    fn registered(&self, context: &Arc<Context>) -> Result<Arc<Registered>> {
         let mut plugins = self.plugins.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(found) = plugins.get(&context.id) {
             return Ok(found.clone());
@@ -522,7 +519,6 @@ impl Intercepts {
         })?;
         let registered = Arc::new(Registered {
             context: context.clone(),
-            own: own.clone(),
             pre,
             enabled: AtomicBool::new(true),
             instance: RwLock::new(Arc::new(Mutex::new(Instance {
@@ -554,13 +550,13 @@ impl Intercepts {
                 "a snapshot holds at most 64 MiB",
             ));
         }
-        let own = context.own.clone().ok_or_else(|| {
-            Error::new(
+        if context.own.is_none() {
+            return Err(Error::new(
                 Kind::Unavailable,
                 "the plugin's own entries are not resolved in this game",
-            )
-        })?;
-        let plugin = self.registered(context, &own)?;
+            ));
+        }
+        let plugin = self.registered(context)?;
         let generation = plugin.published.fetch_add(1, Ordering::AcqRel) + 1;
         plugin.preparing.fetch_add(1, Ordering::AcqRel);
         let snapshot = Arc::new(bytes);
@@ -775,8 +771,8 @@ fn place(chain: &Chain, plugin: &Arc<Registered>, function: &str) -> usize {
 }
 
 /// Links an intercept instance's imports for `component`: `runtime`, this
-/// interface, and the WASI the standard library needs; everything else
-/// traps.
+/// interface, `memory`, and the WASI the standard library needs;
+/// everything else traps.
 fn handler_pre(
     component: &wasmtime::component::Component,
 ) -> std::result::Result<bindings::InterceptHandlerPre<State>, String> {
@@ -788,6 +784,11 @@ fn handler_pre(
     )
     .map_err(|e| e.to_string())?;
     api::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state).map_err(|e| e.to_string())?;
+    crate::sandbox::bindings::angelica::plugin::memory::add_to_linker::<_, HasSelf<_>>(
+        &mut linker,
+        |state| state,
+    )
+    .map_err(|e| e.to_string())?;
     let names: Vec<String> = component
         .component_type()
         .imports(engine)
@@ -831,17 +832,7 @@ impl Frame {
             Shape::F64 => api::Value::Float64(f64::from_bits(raw)),
             _ if raw == 0 => api::Value::None,
             Shape::Object(_) | Shape::Text | Shape::Pointer(_) => {
-                let found = self
-                    .objects
-                    .iter()
-                    .position(|(address, kind)| *address == raw && kind == shape);
-                let handle = if let Some(at) = found {
-                    at + 1
-                } else {
-                    self.objects.push((raw, shape.clone()));
-                    self.objects.len()
-                };
-                let handle = (self.serial << 8) | handle as u64;
+                let handle = self.handles.issue_called(raw, target(shape));
                 match shape {
                     Shape::Object(_) => api::Value::Object(handle),
                     Shape::Text => api::Value::Text(handle),
@@ -883,31 +874,34 @@ impl Frame {
                 pointer,
                 api::Value::Object(handle) | api::Value::Text(handle) | api::Value::Pointer(handle),
             ) if pointer.pointer() => {
-                let (address, kind) = self.object(*handle)?;
-                if kind == pointer {
-                    Ok(*address)
+                let slot = self.handles.get(*handle)?;
+                if slot.target == target(pointer) {
+                    Ok(slot.address)
                 } else {
                     Err(Error::new(
                         Kind::InvalidArgument,
-                        format!("the handle is a {kind:?}, not a {pointer:?}"),
+                        format!("the handle is a {:?}, not a {pointer:?}", slot.target),
                     ))
                 }
             }
             _ => wrong(),
         }
     }
+}
 
-    fn object(&self, handle: u64) -> Result<&(u64, Shape)> {
-        let index = usize::try_from(handle & 0xFF).unwrap_or(0);
-        if handle >> 8 != self.serial || index == 0 {
-            return Err(Error::new(
-                Kind::InvalidArgument,
-                "the handle is not of this call",
-            ));
-        }
-        self.objects
-            .get(index - 1)
-            .ok_or_else(|| Error::new(Kind::InvalidArgument, "the handle is not of this call"))
+/// What a handle of a pointer of `shape` points to.
+fn target(shape: &Shape) -> crate::memory::Target {
+    use crate::memory::Target;
+    match shape {
+        Shape::Object(name) => Target::Struct {
+            own: true,
+            name: name.clone(),
+        },
+        Shape::Text => Target::Text {
+            most: crate::memory::TEXT_MOST,
+        },
+        Shape::Pointer(name) => Target::Opaque(name.clone()),
+        other => Target::Opaque(format!("{other:?}")),
     }
 }
 
@@ -968,10 +962,8 @@ fn run(handler: &Handler, args: &[Arg], result: Option<Returned>, skipped: bool)
     let mut instance = instance.lock().unwrap_or_else(PoisonError::into_inner);
     let mut frame = Frame {
         phase: handler.phase,
-        objects: Vec::new(),
-        serial,
+        handles: crate::memory::Handles::call(serial),
         snapshot: instance.snapshot.clone(),
-        own: plugin.own.clone(),
         params: handler.params.clone(),
         returns: handler.returns.clone(),
         args: args.to_vec(),
@@ -1020,114 +1012,6 @@ fn run(handler: &Handler, args: &[Arg], result: Option<Returned>, skipped: bool)
     }
 }
 
-/// Where the text of an object of `structure` at `object` is: its bytes
-/// start at the returned address and hold at most the returned length.
-fn text_location(
-    memory: &dyn crate::lens::Memory,
-    own: &Own,
-    structure: &str,
-    object: u64,
-) -> Result<(u64, usize)> {
-    let mut structure = structure.to_owned();
-    let mut object = object;
-    for _ in 0..TEXT_DEPTH {
-        let definition = own.structure(&structure).ok_or_else(|| {
-            Error::new(
-                Kind::InvalidArgument,
-                format!("{structure} is not a structure of the plugin"),
-            )
-        })?;
-        let field_name = definition.text.as_ref().ok_or_else(|| {
-            Error::new(
-                Kind::InvalidArgument,
-                format!("{structure} does not read as text"),
-            )
-        })?;
-        let field = &definition.fields[field_name];
-        let located = match &field.place {
-            Place::Located => format!("{structure}.{field_name}"),
-            Place::Bits { .. } => {
-                return Err(Error::new(Kind::InvalidArgument, "text is not in bits"));
-            }
-        };
-        let offset = own
-            .offset(&located)
-            .ok_or_else(|| Error::new(Kind::Unavailable, format!("{located} is absent")))?;
-        let at = object
-            .checked_add(offset)
-            .ok_or_else(|| Error::new(Kind::Unavailable, "the text is outside memory"))?;
-        match (&field.ty, field.text) {
-            (Ty::Array(inner, length), Some(Text::Terminated)) if **inner == Ty::Char8 => {
-                return Ok((at, *length as usize));
-            }
-            (Ty::Ptr(_), Some(Text::Most(most))) => {
-                let mut pointer = [0u8; 8];
-                if !memory.read(at, &mut pointer) {
-                    return Err(Error::new(
-                        Kind::Unavailable,
-                        "the text's pointer cannot be read",
-                    ));
-                }
-                let pointer = u64::from_le_bytes(pointer);
-                if pointer == 0 {
-                    return Ok((0, 0));
-                }
-                return Ok((pointer, most as usize));
-            }
-            (Ty::Named(inner, _), Some(Text::Most(_))) => {
-                structure.clone_from(inner);
-                object = at;
-            }
-            _ => {
-                return Err(Error::new(
-                    Kind::InvalidArgument,
-                    format!("{located} is not text"),
-                ));
-            }
-        }
-    }
-    Err(Error::new(
-        Kind::InvalidArgument,
-        "the text lies too deep in structures",
-    ))
-}
-
-/// The bytes of a text up to its terminator.
-fn read_text(memory: &dyn crate::lens::Memory, at: u64, most: usize) -> Result<Vec<u8>> {
-    let mut text = Vec::new();
-    let mut chunk = [0u8; 64];
-    while text.len() < most {
-        let want = chunk.len().min(most - text.len());
-        let address = at
-            .checked_add(text.len() as u64)
-            .ok_or_else(|| Error::new(Kind::Unavailable, "the text is outside memory"))?;
-        // A chunk may cross into memory that cannot be read; byte by byte
-        // finds the terminator before it.
-        if memory.read(address, &mut chunk[..want]) {
-            match chunk[..want].iter().position(|byte| *byte == 0) {
-                Some(end) => {
-                    text.extend_from_slice(&chunk[..end]);
-                    return Ok(text);
-                }
-                None => text.extend_from_slice(&chunk[..want]),
-            }
-        } else {
-            let mut byte = [0u8; 1];
-            if !memory.read(address, &mut byte) {
-                return Err(Error::new(Kind::Unavailable, "the text cannot be read"));
-            }
-            if byte[0] == 0 {
-                return Ok(text);
-            }
-            text.push(byte[0]);
-        }
-    }
-    Err(Error::new(
-        Kind::Unavailable,
-        "the text has no terminator within its limit",
-    ))
-}
-
 impl State {
     fn frame(&self) -> Result<&Frame> {
         match &self.role {
@@ -1148,22 +1032,6 @@ impl State {
                 },
             )),
             _ => Err(Error::new(Kind::WrongContext, "only a handler can do this")),
-        }
-    }
-
-    /// Where the text of a handle of this call is, and the most bytes it
-    /// holds.
-    fn text_at(&self, of: api::Handle) -> Result<(u64, usize)> {
-        let frame = self.frame()?;
-        let (address, shape) = frame.object(of)?;
-        let memory = self.context.services.game.memory();
-        match shape {
-            Shape::Object(structure) => text_location(memory, &frame.own, structure, *address),
-            Shape::Text => Ok((*address, TEXT_MOST)),
-            _ => Err(Error::new(
-                Kind::InvalidArgument,
-                "the handle is neither text nor an object that reads as text",
-            )),
         }
     }
 
@@ -1304,14 +1172,10 @@ impl api::Host for State {
     }
 
     fn text(&mut self, of: api::Handle) -> std::result::Result<Vec<u8>, api::Error> {
-        self.text_at(of)
-            .and_then(|(at, most)| {
-                if at == 0 {
-                    return Ok(Vec::new());
-                }
-                read_text(self.context.services.game.memory(), at, most)
-            })
-            .map_err(Into::into)
+        if let Err(error) = self.frame() {
+            return Err(error.into());
+        }
+        crate::sandbox::bindings::angelica::plugin::memory::Host::text(self, of)
     }
 
     fn edit_text(
@@ -1319,36 +1183,9 @@ impl api::Host for State {
         of: api::Handle,
         bytes: Vec<u8>,
     ) -> std::result::Result<(), api::Error> {
-        self.text_at(of)
-            .and_then(|(at, most)| {
-                let game = &self.context.services.game;
-                let current = if at == 0 {
-                    Vec::new()
-                } else {
-                    read_text(game.memory(), at, most)?
-                };
-                if bytes.len() != current.len() || bytes.contains(&0) {
-                    return Err(Error::new(
-                        Kind::InvalidArgument,
-                        format!(
-                            "the new text has {} bytes or a NUL; the text has {} bytes",
-                            bytes.len(),
-                            current.len()
-                        ),
-                    ));
-                }
-                if bytes.is_empty() || bytes == current {
-                    return Ok(());
-                }
-                if game.write(at, &bytes) {
-                    Ok(())
-                } else {
-                    Err(Error::new(
-                        Kind::Unavailable,
-                        "the text is not in writable memory",
-                    ))
-                }
-            })
-            .map_err(Into::into)
+        if let Err(error) = self.frame() {
+            return Err(error.into());
+        }
+        crate::sandbox::bindings::angelica::plugin::memory::Host::edit_text(self, of, bytes)
     }
 }

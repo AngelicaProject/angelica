@@ -24,6 +24,9 @@ pub enum AnatomiaCommand {
     /// Resolve every entry of a description against the game's executable,
     /// and check the Lens catalog and the schemas against the build.
     Verify(VerifyArgs),
+    /// Write the Rust views of a description: the central one into the
+    /// SDK's `game` module, or a plugin's own.
+    Views(ViewsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -56,6 +59,24 @@ pub struct VerifyArgs {
     output: Output,
 }
 
+#[derive(Debug, Args)]
+pub struct ViewsArgs {
+    /// The description directory (the one with `anatomia.toml`), or a game
+    /// map v2 directory (the one with `map.toml`), which is converted first.
+    #[arg(long)]
+    anatomia: PathBuf,
+    /// The Rust file to write.
+    #[arg(long)]
+    out: PathBuf,
+    /// The path of the SDK crate where the file is compiled.
+    #[arg(long, default_value = "::angelica_sdk")]
+    sdk: String,
+    /// Views of the central description: no views of globals that hold no
+    /// object, which only a plugin's own entries read.
+    #[arg(long)]
+    central: bool,
+}
+
 pub fn run(command: &AnatomiaCommand) -> ExitCode {
     match command {
         AnatomiaCommand::Convert(args) => match convert(args) {
@@ -63,6 +84,13 @@ pub fn run(command: &AnatomiaCommand) -> ExitCode {
                 print!("{text}");
                 ExitCode::SUCCESS
             }
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        AnatomiaCommand::Views(args) => match views(args) {
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("error: {error}");
                 ExitCode::FAILURE
@@ -120,6 +148,16 @@ fn convert(args: &ConvertArgs) -> Result<String, String> {
         let _ = writeln!(text, "  {old} is now {new}, with the old name as an alias");
     }
     Ok(text)
+}
+
+fn views(args: &ViewsArgs) -> Result<(), String> {
+    let anatomia = if args.anatomia.join("map.toml").exists() {
+        angelica_anatomia::convert_map(&args.anatomia)?.anatomia()?
+    } else {
+        Anatomia::load(&args.anatomia).map_err(|error| error.to_string())?
+    };
+    let code = angelica_views::generate(&anatomia, &args.sdk, args.central);
+    std::fs::write(&args.out, code).map_err(|error| format!("{}: {error}", args.out.display()))
 }
 
 type Report = BTreeMap<String, Result<(), String>>;

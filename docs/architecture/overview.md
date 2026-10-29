@@ -46,7 +46,8 @@ Each crate owns one boundary:
 - `angelica-sqpack`: read-only access to the installed game's archives and Excel sheets. No `unsafe`.
 - `angelica-text`: the game's encoded strings and the [text table](../formats/text-table-v1.md) format, shared by the host and plugins. No `unsafe`.
 - `angelica-view`: what plugins show: places and parts as typed values, their encoding as the plugin API's data, and the host's checks of them. Shared by the host and the SDK. No `unsafe`.
-- `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, and helpers.
+- `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, helpers, and the views of the game map's description (`game`), which `angelica anatomia views` generates.
+- `angelica-views`: the generator of typed views of an Anatomia description for Rust plugins, which a plugin's `build.rs` runs on its own entries. No `unsafe`.
 - `angelica-fake-game`: runs plugins in the real host against a scripted game.
 - `angelica-games`: where the game is installed, for the installer and the `angelica` command. No `unsafe`.
 - `angelica-cli`: the `angelica` command: `where` to find the game folders and the installation each loads, `map verify`, `map check`, `map try`, and `map labels`, `anatomia convert` and `anatomia verify` for Anatomia descriptions, `schema` and `query` to explore the object model and check queries, `look` to run a query in the game in dev mode, `excel` to explore the installed game's sheets, `exe` to disassemble the executable and propose signatures, `plugin new` to create a plugin project, `plugin compile`, `plugin key`, `plugin pack`, `plugin publish`, `plugin install`, and `plugin update` for plugins from their authors, and `dev` for dev mode and signed local installations. Every command can report in JSON.

@@ -280,11 +280,11 @@ The same description and executable always give the same text.
 
 ## A plugin's own entries
 
-A plugin carries its own description in `anatomia/` beside its `angelica.toml`, in the layout above, with `namespace` set to its plugin id. `angelica dev install` puts the folder in the plugin's package, which the installation's file set authenticates, and refuses entries the host would refuse: an `anatomia/` without `anatomia.toml`, or another namespace. The host reads the entries when it loads the package and resolves them against the game's executable when the plugin starts, for a plugin that holds the `unreviewed` permission; an entry absent there is logged. The plugin's names refer to its own entries and types only. A plugin [intercepts](./plugin-api-v1.md#intercepts) the functions they describe.
+A plugin carries its own description in `anatomia/` beside its `angelica.toml`, in the layout above, with `namespace` set to its plugin id. `angelica dev install` puts the folder in the plugin's package, which the installation's file set authenticates, and refuses entries the host would refuse: an `anatomia/` without `anatomia.toml`, or another namespace. The host reads the entries when it loads the package and resolves them against the game's executable when the plugin starts, for a plugin that holds the `unreviewed` permission; an entry absent there is logged. A field at a constant offset is present without a build record: the plugin's entries are its author's word. Types and `find` steps of the plugin's entries refer to its own entries and types only. A plugin [intercepts](./plugin-api-v1.md#intercepts) the functions they describe and [reads and writes](./plugin-api-v1.md#direct-access-to-the-games-objects) the objects they describe; when it names an entry or field, its own entries come before the central description's.
 
 ## Conversion from game map v2
 
-`angelica anatomia convert` reads a valid game map v2 and writes a description and its Lens catalog. Converting the result back gives the same map as the v2 reader reads it. TOML comments are not carried over.
+`angelica anatomia convert` reads a valid game map v2 and writes a description and its Lens catalog. Converting the result back gives the same map as the v2 reader reads it. TOML comments are not carried over. The host converts the game map it loads the same way, in memory, and gives each converted entry the value its v2 entry resolved to; plugins read the game directly through that description. `angelica anatomia views` writes the Rust views of a description, or of a map it converts first.
 
 | Game map v2 | Anatomia 1 |
 | --- | --- |

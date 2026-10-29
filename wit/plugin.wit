@@ -60,6 +60,7 @@ world plugin {
     import sound;
     import websocket;
     import intercepts;
+    import memory;
     export guest;
 }
 

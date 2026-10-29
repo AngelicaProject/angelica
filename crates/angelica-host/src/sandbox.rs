@@ -180,6 +180,9 @@ pub struct Services {
     pub russian: AtomicBool,
     /// Plugins' handlers in the game's calls.
     pub intercepts: Arc<crate::intercepts::Intercepts>,
+    /// The game map's description for plugins' direct access, and the
+    /// central values they wrote.
+    pub memory: Arc<crate::memory::Central>,
 }
 
 /// One log line of a plugin.
@@ -336,6 +339,8 @@ pub struct State {
     queries: crate::lens::Queries,
     /// True while the instance handles an action of the player.
     player_action: bool,
+    /// The handles and fields of its direct access to the game.
+    pub(crate) memory: crate::memory::Instance,
 }
 
 /// A store with its instance's state.
@@ -377,6 +382,7 @@ fn store_in(engine: &Engine, context: Arc<Context>, role: Role) -> Store<State> 
             exceeded: None,
             queries: crate::lens::Queries::default(),
             player_action: false,
+            memory: crate::memory::Instance::default(),
         },
     );
     store.limiter(|state| &mut state.limits);

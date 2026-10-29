@@ -754,6 +754,9 @@ impl Host {
             .lens
             .changes
             .remove_plugin(id, &crate::sandbox::GameCaller(self.services.game.as_ref()));
+        self.services
+            .memory
+            .restore(id, self.services.game.as_ref());
     }
 
     fn fault(&self, plugin: &Plugin, reason: String) {
@@ -1090,6 +1093,8 @@ impl Host {
         } = *frame;
         let guest = instance.bindings.angelica_plugin_guest();
         let store = &mut instance.store;
+        // Handles of the frame before end here.
+        store.data_mut().memory.next_frame();
         match sandbox::call(store, |store| guest.call_tick(store, elapsed)) {
             Ok(Ok(())) => {}
             Ok(Err(reason)) => return Some(format!("tick failed: {reason}")),
