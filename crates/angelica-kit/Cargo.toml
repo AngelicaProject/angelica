@@ -1,0 +1,18 @@
+[package]
+name = "angelica-kit"
+description = "The interface kit: Angelica's look on a plugin's own surface, egui drawn through the GPU API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+angelica-look.workspace = true
+angelica-sdk.workspace = true
+egui.workspace = true
+
+[lints]
+workspace = true

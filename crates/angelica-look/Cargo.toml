@@ -1,0 +1,23 @@
+[package]
+name = "angelica-look"
+description = "Angelica's look: its themes, type, and the drawn pieces of its interface, for egui."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["faces"]
+# Carries the bytes of Angelica's fonts; a plugin gets them from the host.
+faces = []
+
+[dependencies]
+egui.workspace = true
+num-traits.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

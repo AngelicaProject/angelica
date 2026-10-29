@@ -21,6 +21,7 @@ mod painter;
 pub mod proxy;
 mod sound;
 mod startup;
+mod surfaces;
 mod system_menu;
 mod text_case;
 mod thunks;

@@ -55,9 +55,27 @@ struct Settings {
     enabled: bool,
 }
 
+/// A main instance of `pre` in `store`: the plugin's bindings, and its
+/// handler of input on its surfaces when it exports one.
+fn instantiate(
+    pre: &PluginPre<State>,
+    store: &mut Store<State>,
+) -> Result<(Bindings, Option<crate::gpu::bindings::SurfaceInput>), String> {
+    let instance = pre
+        .instance_pre()
+        .instantiate(&mut *store)
+        .map_err(|e| sandbox::describe_trap(store, &e))?;
+    let bindings =
+        Bindings::new(&mut *store, &instance).map_err(|e| sandbox::describe_trap(store, &e))?;
+    let surfaces = crate::gpu::bindings::SurfaceInput::new(&mut *store, &instance).ok();
+    Ok((bindings, surfaces))
+}
+
 struct Running {
     store: Store<State>,
     bindings: Bindings,
+    /// The handler of input on the plugin's surfaces, when it exports one.
+    surfaces: Option<crate::gpu::bindings::SurfaceInput>,
 }
 
 pub struct Plugin {
@@ -599,12 +617,9 @@ impl Host {
         );
         let result = caught(|| {
             sandbox::call(&mut store, |store| {
-                let bindings = plugin
-                    .pre
-                    .instantiate(&mut *store)
-                    .map_err(|e| sandbox::describe_trap(store, &e))?;
+                let (bindings, surfaces) = instantiate(&plugin.pre, store)?;
                 match bindings.angelica_plugin_guest().call_start(&mut *store) {
-                    Ok(Ok(())) => Ok(bindings),
+                    Ok(Ok(())) => Ok((bindings, surfaces)),
                     Ok(Err(reason)) => Err(format!("start failed: {reason}")),
                     Err(trap) => Err(format!(
                         "start trapped: {}",
@@ -615,13 +630,17 @@ impl Host {
         })
         .and_then(|result| result);
         match result {
-            Ok(bindings) => {
+            Ok((bindings, surfaces)) => {
                 self.services.messages.started(&id);
                 *plugin.jobs.lock().unwrap_or_else(PoisonError::into_inner) = Some(jobs);
                 *plugin
                     .running
                     .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(Running { store, bindings });
+                    .unwrap_or_else(PoisonError::into_inner) = Some(Running {
+                    store,
+                    bindings,
+                    surfaces,
+                });
                 plugin.set_status(Status::Running);
             }
             Err(reason) => {
@@ -750,6 +769,7 @@ impl Host {
         self.services.notifications.remove_plugin(id);
         self.services.sockets.remove_plugin(id);
         self.services.messages.remove_plugin(id);
+        self.services.gpu.remove_plugin(id);
         self.services
             .lens
             .changes
@@ -1095,6 +1115,22 @@ impl Host {
         let store = &mut instance.store;
         // Handles of the frame before end here.
         store.data_mut().memory.next_frame();
+        let input = self.services.gpu.take_input(id);
+        if !input.is_empty()
+            && let Some(surfaces) = &instance.surfaces
+        {
+            let events: Vec<_> = input.into_iter().map(crate::gpu::bindings::event).collect();
+            if let Err(trap) = sandbox::call(store, |store| {
+                surfaces
+                    .angelica_plugin_surface_handler()
+                    .call_surface_input(store, &events)
+            }) {
+                return Some(format!(
+                    "surface input trapped: {}",
+                    sandbox::describe_trap(store, &trap)
+                ));
+            }
+        }
         match sandbox::call(store, |store| guest.call_tick(store, elapsed)) {
             Ok(Ok(())) => {}
             Ok(Err(reason)) => return Some(format!("tick failed: {reason}")),

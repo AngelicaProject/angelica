@@ -1,0 +1,20 @@
+package angelica:plugin@1.0.0;
+
+/// Angelica's look as the player set it, so a plugin that draws on its
+/// surfaces with the interface kit looks like Angelica's menu.
+interface look {
+    /// The player's theme and how large Angelica's windows are.
+    record look-settings {
+        dark: bool,
+        /// How many times its normal size the menu is drawn.
+        scale: f32,
+        /// Whether Angelica's interface is in Russian; English otherwise.
+        russian: bool,
+    }
+
+    settings: func() -> look-settings;
+
+    /// The bytes of Angelica's font face `name`: `golos`, `golos-medium`,
+    /// `golos-semibold`, `quicksand-semibold`, or `jetbrains-mono`.
+    font: func(name: string) -> option<list<u8>>;
+}

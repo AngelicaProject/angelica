@@ -1,0 +1,18 @@
+[package]
+name = "angelica-surface"
+description = "An example plugin that draws its own window and a mark in the world on its surface."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+angelica-kit.workspace = true
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

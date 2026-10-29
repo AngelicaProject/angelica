@@ -142,6 +142,10 @@ impl Game for WindowsGame {
         Some((self.base as u64, self.executable.clone()))
     }
 
+    fn compile_shader(&self, hlsl: &str, entry: &str, vertex: bool) -> Result<Vec<u8>, String> {
+        super::surfaces::compile(hlsl, entry, vertex)
+    }
+
     fn thunk(
         &self,
         slot: usize,

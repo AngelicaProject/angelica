@@ -35,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile -p angelica-inventory -p angelica-memory -p angelica-intercepting --target wasm32-wasip2 --all-features --locked -- -D warnings
+      - run: cargo clippy -p angelica-sdk -p angelica-hello -p angelica-hostile -p angelica-inventory -p angelica-memory -p angelica-intercepting -p angelica-kit -p angelica-surface --target wasm32-wasip2 --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
 
   # The installer and game discovery for a game in Wine on Linux

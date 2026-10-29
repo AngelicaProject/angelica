@@ -555,4 +555,68 @@ mod tests {
         std::fs::write(&path, r#"{"format":2,"language":"ru"}"#).unwrap();
         assert_eq!(Settings::load(&path).language, None);
     }
+
+    #[test]
+    fn the_fonts_cover_every_interface_string() {
+        use crate::manifest::Permission;
+        let context = egui::Context::default();
+        context.set_fonts(crate::fonts::definitions(Vec::new()));
+        // New fonts take effect when a frame begins.
+        for _ in 0..2 {
+            let mut output = context.run_ui(egui::RawInput::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        let mut texts = vec![
+            "angelica ЁёЪъ «» — … · ← → ↑ ↓ ≤ ⌄".replace('⌄', ""),
+            "Insert Esc".into(),
+        ];
+        let permissions = [
+            Permission::FilesReplace,
+            Permission::ChatCommands,
+            Permission::ChatPrint,
+            Permission::HttpGet,
+            Permission::HttpSend,
+            Permission::DrawWorld,
+            Permission::MessagesSend,
+            Permission::ClipboardWrite,
+            Permission::Notifications,
+            Permission::SoundPlay,
+            Permission::StorageCache,
+            Permission::HttpWebsocket,
+            Permission::LinksOpen,
+            Permission::Unreviewed,
+            Permission::Server,
+        ];
+        for language in Language::ALL {
+            texts.push(language.name().into());
+            texts.extend(
+                language
+                    .strings()
+                    .entries()
+                    .into_iter()
+                    .map(|(_, text)| text.to_owned()),
+            );
+            for permission in permissions {
+                texts.push(language.permission(permission).into());
+                texts.push(language.class(permission.class()).into());
+            }
+        }
+        context.fonts_mut(|fonts| {
+            for family in crate::fonts::all_families() {
+                let font = egui::FontId::new(16.0, family.clone());
+                for text in &texts {
+                    // egui's own check takes the first face for the
+                    // replacement; a glyph no face has has no width.
+                    let missing: String = text
+                        .chars()
+                        .filter(|&c| fonts.glyph_width(&font, c) <= 0.0)
+                        .collect();
+                    assert!(
+                        missing.is_empty(),
+                        "{family:?} lacks {missing:?} of {text:?}"
+                    );
+                }
+            }
+        });
+    }
 }

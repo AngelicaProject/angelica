@@ -1,0 +1,12 @@
+manifest = 1
+
+[plugin]
+id = "surface"
+name = "Where am I"
+version = "0.1.0"
+api = "1.0"
+description = "A window of its own with your character's level and position, and a mark over your character in the world."
+authors = ["AngelicaProject contributors"]
+
+[lens]
+read = ["character", "location"]

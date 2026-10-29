@@ -366,6 +366,7 @@ fn services(
     });
     Ok(Arc::new(Services {
         intercepts: Arc::default(),
+        gpu: Arc::default(),
         memory: Arc::default(),
         data,
         files,

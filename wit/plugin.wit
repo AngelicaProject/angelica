@@ -62,16 +62,20 @@ world plugin {
     import intercepts;
     import memory;
     import calls;
+    import gpu;
+    import look;
     export guest;
 }
 
-/// A plugin that may also intercept and make thunks: what the SDK builds.
-/// A component of the `plugin` world without `handler` and
-/// `thunk-handler` runs as before.
+/// A plugin that may also intercept, make thunks, and take input on its
+/// surfaces: what the SDK builds. A component of the `plugin` world
+/// without `handler`, `thunk-handler`, and `surface-handler` runs as
+/// before.
 world intercepting {
     include plugin;
     export handler;
     export thunk-handler;
+    export surface-handler;
 }
 
 /// What the host calls in an intercept instance.
@@ -82,4 +86,9 @@ world intercept-handler {
 /// What the host calls in an intercept instance for a thunk.
 world thunk-called {
     export thunk-handler;
+}
+
+/// What the host calls in a main instance for input on its surfaces.
+world surface-input {
+    export surface-handler;
 }

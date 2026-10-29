@@ -86,6 +86,8 @@ if let Some(containers) = inventory::inventory_manager_instance()?.containers()?
 
 A view lives until the next `tick`; `angelica_sdk::memory::hold` keeps one across frames. For the plugin's own entries in `anatomia/`, add `angelica-views` as a build dependency, call `angelica_views::build()` in `build.rs`, and include the views with `include!(concat!(env!("OUT_DIR"), "/anatomia.rs"))` inside a module. The views give a function for every function of the plugin's own entries, which [calls](../formats/plugin-api-v1.md#calls-and-thunks) it in the game with the `unreviewed` and `server` permissions; `angelica_sdk::calls::thunk` makes a callback the game calls back, which runs `Plugin::thunk`.
 
+A plugin draws its own windows and anything else on [surfaces](../formats/plugin-api-v1.md#surfaces): `angelica-kit` gives windows in Angelica's look over egui, as [`examples/surface`](../../examples/surface) shows, and `angelica_sdk::gpu` the GPU itself.
+
 ## 4. Test without the game
 
 `cargo test` builds the component and runs `tests/`. `angelica_fake_game::TestHost` installs the component in the real host with temporary folders and a scripted game. It allows 1 s of guest time per frame instead of the game's 20 ms, so a busy CI machine does not fault the plugin; fuel limits the calls as in the game, and in the game 20 ms stays the limit. The test plays the game's part:

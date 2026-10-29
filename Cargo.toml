@@ -5,6 +5,8 @@ members = [
   "crates/angelica-map",
   "crates/angelica-anatomia",
   "crates/angelica-views",
+  "crates/angelica-look",
+  "crates/angelica-kit",
   "crates/angelica-hook",
   "crates/angelica-text",
   "crates/angelica-view",
@@ -24,6 +26,7 @@ members = [
   "examples/hello",
   "examples/inventory",
   "examples/typing-fold",
+  "examples/surface",
 ]
 
 [workspace.package]
@@ -39,6 +42,8 @@ authors = ["AngelicaProject contributors"]
 angelica-map = { path = "crates/angelica-map" }
 angelica-anatomia = { path = "crates/angelica-anatomia" }
 angelica-views = { path = "crates/angelica-views" }
+angelica-look = { path = "crates/angelica-look", default-features = false }
+angelica-kit = { path = "crates/angelica-kit" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
 angelica-view = { path = "crates/angelica-view" }
@@ -67,6 +72,7 @@ semver = "1.0.28"
 wasmtime = { version = "49.0.4", default-features = false, features = ["std", "runtime", "cranelift", "component-model"] }
 egui = { version = "0.36.2", default-features = false }
 num-traits = "0.2.19"
+naga = { version = "=24.0.0", default-features = false }
 windows = { version = "0.62.2", default-features = false }
 ureq = { version = "=3.4.2", default-features = false, features = ["gzip"] }
 native-tls = "0.2.18"

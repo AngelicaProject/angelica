@@ -1,0 +1,286 @@
+package angelica:plugin@1.0.0;
+
+/// Surfaces: layers over the game that belong to the plugin, which it draws
+/// on with the GPU, shaped after WebGPU. The host composites the plugin's
+/// surfaces over the game in z-order each frame: the one the player clicked
+/// last is on top. A surface the plugin did not render this frame keeps its
+/// last image. Angelica's own menu stays above every surface.
+///
+/// The plugin creates buffers, textures, samplers, shaders in WGSL,
+/// pipelines, and bind groups, and renders a surface with a list of
+/// commands. The host checks that every object belongs to the plugin and
+/// that shaders are valid WGSL, and keeps the plugin within its limits: 256
+/// MiB of GPU memory and 4096 objects. What the plugin draws is its own:
+/// the host neither shapes nor reads it. Reads past the end of a buffer or
+/// texture give zeros, as the GPU's robust access does. The plugin's
+/// objects and surfaces go when it stops.
+///
+/// Only the main instance uses this interface.
+interface gpu {
+    use types.{error};
+
+    /// A rectangle in pixels of the game's window, from its top left.
+    record rect {
+        x: s32,
+        y: s32,
+        width: u32,
+        height: u32,
+    }
+
+    record size {
+        width: u32,
+        height: u32,
+    }
+
+    /// A color with components from 0 to 1, not premultiplied.
+    record color {
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    }
+
+    /// Any object of the plugin's: a surface, a buffer, a texture, a
+    /// sampler, a shader, a pipeline, or a bind group. Ids are the
+    /// plugin's own and never reused while it runs.
+    type object = u32;
+
+    /// The size of the game's window in pixels; zero before the game drew
+    /// its first frame.
+    screen: func() -> size;
+
+    /// The game camera's view and projection this frame, as one matrix of
+    /// 16 floats in rows, which takes a point of the world in row-vector
+    /// form to the screen's clip space; none while the game has no camera.
+    camera: func() -> option<list<f32>>;
+
+    /// A surface over `area`, at the top.
+    create-surface: func(area: rect) -> result<object, error>;
+
+    /// Moves a surface to `area` and sets how opaque it is, from 0 to 1;
+    /// where it takes the mouse from the game, as rectangles of the
+    /// surface's own pixels; and whether it takes the keyboard while it
+    /// has focus. A surface that takes nothing lets every input through.
+    set-surface: func(surface: object, area: rect, opacity: f32, input: list<rect>, keyboard: bool) -> result<_, error>;
+
+    /// The surface the player clicked last, and so the one on top.
+    focused: func() -> option<object>;
+
+    /// Ends an object; a surface disappears. Objects that refer to it
+    /// keep it until they end too.
+    destroy: func(object: object);
+
+    flags buffer-usage {
+        vertex,
+        index,
+        /// Not with the others.
+        uniform,
+    }
+
+    /// A buffer of `size` bytes, at most 64 MiB; a uniform buffer's size is
+    /// a multiple of 16.
+    create-buffer: func(size: u32, usage: buffer-usage) -> result<object, error>;
+
+    /// Writes `bytes` into a buffer at `offset`, before the next render.
+    write-buffer: func(buffer: object, offset: u32, bytes: list<u8>) -> result<_, error>;
+
+    enum texture-format {
+        rgba8-unorm,
+        rgba8-unorm-srgb,
+        r8-unorm,
+    }
+
+    /// A texture of `width` by `height` texels, at most 8192 each.
+    create-texture: func(width: u32, height: u32, format: texture-format) -> result<object, error>;
+
+    /// Writes texels into a texture's `area`, row by row without gaps.
+    write-texture: func(texture: object, area: rect, bytes: list<u8>) -> result<_, error>;
+
+    enum filter {
+        nearest,
+        linear,
+    }
+
+    enum address-mode {
+        clamp,
+        repeat,
+        mirror,
+    }
+
+    create-sampler: func(filter: filter, address: address-mode) -> result<object, error>;
+
+    /// A shader module from WGSL. Its resources are in group 0, at
+    /// bindings 0 to 7; a vertex shader's inputs are at locations 0 to 7.
+    /// The error names what is wrong in the source.
+    create-shader: func(wgsl: string) -> result<object, error>;
+
+    enum vertex-format {
+        float32,
+        float32x2,
+        float32x3,
+        float32x4,
+        unorm8x4,
+        uint32,
+        sint32,
+    }
+
+    record vertex-attribute {
+        location: u32,
+        format: vertex-format,
+        offset: u32,
+    }
+
+    enum topology {
+        triangle-list,
+        triangle-strip,
+        line-list,
+        line-strip,
+        point-list,
+    }
+
+    /// How a pipeline's output covers what the surface holds. The surface
+    /// holds premultiplied colors.
+    enum blend {
+        replace,
+        alpha,
+        premultiplied,
+        additive,
+    }
+
+    record pipeline-desc {
+        shader: object,
+        vertex-entry: string,
+        fragment-entry: string,
+        /// The bytes from one vertex to the next.
+        stride: u32,
+        attributes: list<vertex-attribute>,
+        topology: topology,
+        blend: blend,
+    }
+
+    create-pipeline: func(desc: pipeline-desc) -> result<object, error>;
+
+    /// A buffer, a texture, or a sampler at a binding of group 0.
+    record binding {
+        index: u32,
+        bound: object,
+    }
+
+    create-bind-group: func(bindings: list<binding>) -> result<object, error>;
+
+    record draw {
+        vertices: u32,
+        instances: u32,
+        first-vertex: u32,
+        first-instance: u32,
+    }
+
+    record draw-indexed {
+        indices: u32,
+        instances: u32,
+        first-index: u32,
+        base-vertex: s32,
+        first-instance: u32,
+    }
+
+    record index-buffer {
+        buffer: object,
+        offset: u32,
+        /// 32-bit indices; 16-bit otherwise.
+        wide: bool,
+    }
+
+    record vertex-buffer {
+        buffer: object,
+        offset: u32,
+    }
+
+    variant command {
+        pipeline(object),
+        bind-group(object),
+        vertex-buffer(vertex-buffer),
+        index-buffer(index-buffer),
+        /// Draws only inside this rectangle of the surface's pixels.
+        scissor(rect),
+        draw(draw),
+        draw-indexed(draw-indexed),
+    }
+
+    /// Draws the surface's image for this frame: clears it to `clear`, or
+    /// draws over its last image without one, then runs `commands` in
+    /// order. A draw needs a pipeline. At most 10000 draws per frame of
+    /// the plugin.
+    render: func(surface: object, clear: option<color>, commands: list<command>) -> result<_, error>;
+}
+
+/// What a plugin with surfaces exports: the player's input on them.
+interface surface-handler {
+    use gpu.{object};
+
+    enum button {
+        left,
+        right,
+        middle,
+    }
+
+    record modifiers {
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+    }
+
+    /// A position in a surface's pixels.
+    record pointer {
+        surface: object,
+        x: f32,
+        y: f32,
+    }
+
+    record press {
+        surface: object,
+        x: f32,
+        y: f32,
+        button: button,
+        modifiers: modifiers,
+    }
+
+    record wheel {
+        surface: object,
+        x: f32,
+        y: f32,
+    }
+
+    record key {
+        surface: object,
+        /// The key's name: `A` to `Z`, `Num0` to `Num9`, `Enter`, `Escape`,
+        /// `Backspace`, `Tab`, `Space`, `Delete`, `ArrowLeft`, and the
+        /// others of the same kind.
+        name: string,
+        modifiers: modifiers,
+    }
+
+    record typed {
+        surface: object,
+        text: string,
+    }
+
+    variant surface-event {
+        /// The pointer moved over a surface that takes it there.
+        pointer-moved(pointer),
+        /// The pointer left the surface, or went under another.
+        pointer-left(object),
+        pressed(press),
+        released(press),
+        /// The wheel turned, in pixels.
+        wheel(wheel),
+        /// A key, while the surface has focus and takes the keyboard.
+        key-pressed(key),
+        key-released(key),
+        text(typed),
+        /// Another surface or the game took focus.
+        focus-lost(object),
+    }
+
+    /// The input of this frame on the plugin's surfaces, before `tick`.
+    surface-input: func(events: list<surface-event>);
+}

@@ -32,7 +32,9 @@ ed25519-dalek.workspace = true
 getrandom.workspace = true
 wasmtime.workspace = true
 egui.workspace = true
+angelica-look = { workspace = true, features = ["faces"] }
 num-traits.workspace = true
+naga = { workspace = true, features = ["wgsl-in", "hlsl-out"] }
 ureq.workspace = true
 native-tls.workspace = true
 tungstenite.workspace = true

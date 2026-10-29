@@ -12,7 +12,10 @@ pub const STRONG: &str = "strong";
 /// Quicksand semibold: the word `angelica`.
 pub const WORDMARK: &str = "wordmark";
 
-const FACES: [(&str, &[u8]); 5] = [
+/// The faces of Angelica's fonts by name, in the build that carries their
+/// bytes.
+#[cfg(feature = "faces")]
+pub const FACES: [(&str, &[u8]); 5] = [
     ("golos", include_bytes!("../fonts/GolosText-Regular.ttf")),
     (
         "golos-medium",
@@ -32,6 +35,15 @@ const FACES: [(&str, &[u8]); 5] = [
     ),
 ];
 
+/// The names of the faces, which [`definitions_of`] expects.
+pub const FACE_NAMES: [&str; 5] = [
+    "golos",
+    "golos-medium",
+    "golos-semibold",
+    "quicksand-semibold",
+    "jetbrains-mono",
+];
+
 /// The families and their own faces.
 const FAMILIES: [(&str, &str); 3] = [
     (MEDIUM, "golos-medium"),
@@ -41,13 +53,28 @@ const FAMILIES: [(&str, &str); 3] = [
 
 /// Angelica's font families, each followed by `fallbacks` in order: fonts
 /// of the system for the scripts Angelica's own do not cover.
+#[cfg(feature = "faces")]
 #[must_use]
 pub fn definitions(fallbacks: Vec<(String, Vec<u8>)>) -> egui::FontDefinitions {
+    definitions_of(
+        FACES
+            .iter()
+            .map(|(name, bytes)| ((*name).to_owned(), egui::FontData::from_static(bytes)))
+            .collect(),
+        fallbacks,
+    )
+}
+
+/// Angelica's font families from `faces`, by the names of
+/// [`FACE_NAMES`], each followed by `fallbacks` in order.
+#[must_use]
+pub fn definitions_of(
+    faces: Vec<(String, egui::FontData)>,
+    fallbacks: Vec<(String, Vec<u8>)>,
+) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::empty();
-    for (name, bytes) in FACES {
-        fonts
-            .font_data
-            .insert(name.into(), Arc::new(egui::FontData::from_static(bytes)));
+    for (name, data) in faces {
+        fonts.font_data.insert(name, Arc::new(data));
     }
     let mut families = vec![
         (egui::FontFamily::Proportional, "golos"),
@@ -78,8 +105,8 @@ pub fn definitions(fallbacks: Vec<(String, Vec<u8>)>) -> egui::FontDefinitions {
 }
 
 /// Every family Angelica draws with.
-#[cfg(test)]
-fn all_families() -> Vec<egui::FontFamily> {
+#[must_use]
+pub fn all_families() -> Vec<egui::FontFamily> {
     let mut families = vec![egui::FontFamily::Proportional, egui::FontFamily::Monospace];
     families.extend(
         FAMILIES
@@ -93,6 +120,7 @@ fn all_families() -> Vec<egui::FontFamily> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "faces")]
     #[test]
     fn every_family_has_its_own_face_first() {
         let fonts = definitions(Vec::new());
@@ -100,69 +128,5 @@ mod tests {
             let names = &fonts.families[&family];
             assert!(fonts.font_data.contains_key(&names[0]), "{family:?}");
         }
-    }
-
-    #[test]
-    fn the_fonts_cover_every_interface_string() {
-        use crate::{language::Language, manifest::Permission};
-        let context = egui::Context::default();
-        context.set_fonts(definitions(Vec::new()));
-        // New fonts take effect when a frame begins.
-        for _ in 0..2 {
-            let mut output = context.run_ui(egui::RawInput::default(), |_| {});
-            output.textures_delta.clear();
-        }
-        let mut texts = vec![
-            "angelica ЁёЪъ «» — … · ← → ↑ ↓ ≤ ⌄".replace('⌄', ""),
-            "Insert Esc".into(),
-        ];
-        let permissions = [
-            Permission::FilesReplace,
-            Permission::ChatCommands,
-            Permission::ChatPrint,
-            Permission::HttpGet,
-            Permission::HttpSend,
-            Permission::DrawWorld,
-            Permission::MessagesSend,
-            Permission::ClipboardWrite,
-            Permission::Notifications,
-            Permission::SoundPlay,
-            Permission::StorageCache,
-            Permission::HttpWebsocket,
-            Permission::LinksOpen,
-            Permission::Unreviewed,
-            Permission::Server,
-        ];
-        for language in Language::ALL {
-            texts.push(language.name().into());
-            texts.extend(
-                language
-                    .strings()
-                    .entries()
-                    .into_iter()
-                    .map(|(_, text)| text.to_owned()),
-            );
-            for permission in permissions {
-                texts.push(language.permission(permission).into());
-                texts.push(language.class(permission.class()).into());
-            }
-        }
-        context.fonts_mut(|fonts| {
-            for family in all_families() {
-                let font = egui::FontId::new(16.0, family.clone());
-                for text in &texts {
-                    // egui's own check takes the first face for the
-                    // replacement; a glyph no face has has no width.
-                    let missing: String = text
-                        .chars()
-                        .filter(|&c| fonts.glyph_width(&font, c) <= 0.0)
-                        .collect();
-                    assert!(
-                        missing.is_empty(),
-                        "{family:?} lacks {missing:?} of {text:?}"
-                    );
-                }
-            }
-        });
     }
 }
