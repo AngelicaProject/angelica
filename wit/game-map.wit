@@ -1,0 +1,9 @@
+package angelica:plugin@1.0.0;
+
+/// The game map the host loaded, as its files: what the Lens library plans
+/// queries with. The same data the map's repository publishes.
+interface game-map {
+    /// Every text file of the game map by its path in the map's folder,
+    /// `map.toml` first; empty without a game map.
+    files: func() -> list<tuple<string, string>>;
+}

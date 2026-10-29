@@ -53,6 +53,10 @@ pub const HANDLER_TIME: Duration = Duration::from_millis(50);
 pub const PREPARE_TIME: Duration = Duration::from_secs(30);
 /// The largest snapshot.
 pub const MAX_SNAPSHOT: usize = 64 * 1024 * 1024;
+/// The largest report of a handler.
+pub const MOST_REPORT: usize = 64 * 1024;
+/// The most reports that wait for the main instance.
+pub const MOST_REPORTS: usize = 1024;
 /// The most arguments an intercepted function has.
 pub const MAX_ARGS: usize = crate::lens::act::MOST_ARGS;
 /// How many arguments the convention passes in registers.
@@ -143,10 +147,6 @@ impl Own {
         }
     }
 
-    fn structure(&self, name: &str) -> Option<&angelica_anatomia::Struct> {
-        self.source().structure(name)
-    }
-
     /// Where the function `name` of these entries is in the running game.
     ///
     /// # Errors
@@ -206,8 +206,9 @@ enum Shape {
     Boolean,
     F32,
     F64,
-    /// A pointer to a structure of the plugin's entries.
-    Object(String),
+    /// A pointer to a structure: of the plugin's entries, or of the
+    /// central description.
+    Object(String, bool),
     /// A pointer to 8-bit text.
     Text,
     /// Another pointer, by what it points to; empty for unknown memory.
@@ -220,21 +221,21 @@ impl Shape {
     }
 
     fn pointer(&self) -> bool {
-        matches!(self, Self::Object(_) | Self::Text | Self::Pointer(_))
+        matches!(self, Self::Object(..) | Self::Text | Self::Pointer(_))
     }
 }
 
-fn shape(ty: &Ty, own: &Own) -> Option<Shape> {
+fn shape(ty: &Ty, source: crate::memory::Source<'_>) -> Option<Shape> {
     match ty {
         Ty::Primitive(primitive) => Some(primitive_shape(*primitive)),
-        Ty::Named(name, args) if args.is_empty() => match own.anatomia.types().get(name)? {
+        Ty::Named(name, args) if args.is_empty() => match source.anatomia.types().get(name)? {
             TypeDef::Enum(enumeration) => enumeration.ty.map(primitive_shape),
-            TypeDef::Alias { ty, .. } => shape(ty, own),
+            TypeDef::Alias { ty, .. } => shape(ty, source),
             _ => None,
         },
         Ty::Ptr(Some(inner)) => match inner.as_ref() {
-            Ty::Named(name, args) if args.is_empty() && own.structure(name).is_some() => {
-                Some(Shape::Object(name.clone()))
+            Ty::Named(name, args) if args.is_empty() && source.structure(name).is_some() => {
+                Some(Shape::Object(name.clone(), source.own))
             }
             Ty::Char8 => Some(Shape::Text),
             other => Some(Shape::Pointer(other.to_string())),
@@ -258,6 +259,158 @@ fn primitive_shape(primitive: Primitive) -> Shape {
     }
 }
 
+/// A function a plugin may intercept, as its handlers see it.
+struct Interceptable {
+    address: u64,
+    code: Code,
+    params: Arc<[Shape]>,
+    returns: Option<Shape>,
+    changes: bool,
+    renames: Arc<BTreeMap<String, String>>,
+}
+
+/// The function `function` as `context`'s plugin may intercept it: one of
+/// its own entries with `unreviewed`, or a function of the central
+/// description that a Lens event watches, with the event's domain in
+/// `[lens] read`; changing such a call needs it in `[lens] change`.
+fn interceptable(context: &Context, function: &str) -> Result<Interceptable> {
+    let own_function = context.own.as_ref().filter(|own| {
+        matches!(
+            own.anatomia
+                .get(own.anatomia.canonical(function))
+                .map(|entry| &entry.kind),
+            Some(EntryKind::Function { .. })
+        )
+    });
+    if let Some(own) = own_function {
+        if !context
+            .permissions
+            .contains(&crate::manifest::Permission::Unreviewed)
+        {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                "intercepting the plugin's own entries needs the unreviewed permission",
+            ));
+        }
+        let name = own.anatomia.canonical(function).to_owned();
+        let Some(EntryKind::Function { ty, .. }) = own.anatomia.get(&name).map(|entry| &entry.kind)
+        else {
+            return Err(Error::invalid(format!("{function} is not a function")));
+        };
+        let address = own.function(&name)?;
+        let code = own.code.get(&name).cloned().ok_or_else(|| {
+            Error::new(
+                Kind::Unavailable,
+                format!("the code of {function} is not known exactly"),
+            )
+        })?;
+        let (params, returns) = call_shapes(function, ty, own.source())?;
+        return Ok(Interceptable {
+            address,
+            code,
+            params,
+            returns,
+            changes: true,
+            renames: Arc::default(),
+        });
+    }
+    central(context, function)
+}
+
+/// What the handlers of `function`, of the type `ty` in `source`, see of
+/// its arguments and its result.
+fn call_shapes(
+    function: &str,
+    ty: &angelica_anatomia::FnType,
+    source: crate::memory::Source<'_>,
+) -> Result<(Arc<[Shape]>, Option<Shape>)> {
+    if ty.params.len() > MAX_ARGS {
+        return Err(Error::invalid(format!(
+            "{function} has more than {MAX_ARGS} arguments"
+        )));
+    }
+    let params = ty
+        .params
+        .iter()
+        .map(|param| shape(&param.ty, source))
+        .collect::<Option<Arc<[Shape]>>>()
+        .ok_or_else(|| {
+            Error::invalid(format!(
+                "an argument of {function} is not a number, a bool, an enum with a type, or a pointer"
+            ))
+        })?;
+    let returns = match &ty.ret {
+        None => None,
+        Some(ret) => Some(shape(ret, source).ok_or_else(|| {
+            Error::invalid(format!("{function} returns what a handler cannot take"))
+        })?),
+    };
+    Ok((params, returns))
+}
+
+/// A function of the game map that a Lens event is at, as `context`'s
+/// plugin may intercept it.
+fn central(context: &Context, function: &str) -> Result<Interceptable> {
+    let described = context
+        .services
+        .memory
+        .current()
+        .ok_or_else(|| Error::new(Kind::Unavailable, "no game map is loaded"))?;
+    let name = described.anatomia.canonical(function).to_owned();
+    let watched = described.events.get(&name).ok_or_else(|| {
+        Error::new(
+            Kind::NotFound,
+            format!("{function} is neither a function of the plugin's entries nor one a Lens event watches"),
+        )
+    })?;
+    if !context.lens_read.contains(&watched.domain) {
+        return Err(Error::new(
+            Kind::PermissionDenied,
+            format!(
+                "intercepting {function} needs the domain {} in [lens] read",
+                watched.domain
+            ),
+        ));
+    }
+    let Some(EntryKind::Function { ty, .. }) =
+        described.anatomia.get(&name).map(|entry| &entry.kind)
+    else {
+        return Err(Error::invalid(format!("{function} is not a function")));
+    };
+    let address = described.source().address(&name)?;
+    let code = context.services.game.code_of(address).ok_or_else(|| {
+        Error::new(
+            Kind::Unavailable,
+            format!("the code of {function} is not known exactly"),
+        )
+    })?;
+    let (params, returns) = call_shapes(function, ty, described.source())?;
+    // A pointer the function's type leaves untyped points to the object
+    // the event says.
+    let params: Arc<[Shape]> = params
+        .iter()
+        .enumerate()
+        .map(
+            |(position, shape)| match (shape, watched.objects.get(&position)) {
+                (Shape::Pointer(_), Some(object))
+                    if described.source().structure(object).is_some() =>
+                {
+                    Shape::Object(object.clone(), false)
+                }
+                _ => shape.clone(),
+            },
+        )
+        .collect();
+    Ok(Interceptable {
+        address,
+        code,
+        params,
+        returns,
+        changes: context.lens_change.contains(&watched.domain),
+        renames: Arc::new(watched.renames.clone()),
+    })
+}
+
 /// One plugin's handler of one function in one phase.
 struct Handler {
     plugin: Arc<Registered>,
@@ -266,6 +419,10 @@ struct Handler {
     phase: api::Phase,
     params: Arc<[Shape]>,
     returns: Option<Shape>,
+    /// Whether the handler may change the call.
+    changes: bool,
+    /// The domain renames of the objects the call's pointers reach.
+    renames: Arc<BTreeMap<String, String>>,
 }
 
 /// The order a plugin's manifest asks for its handlers among other
@@ -289,6 +446,8 @@ struct Registered {
     preparing: AtomicU64,
     calls: AtomicU64,
     nanos: AtomicU64,
+    /// What handlers reported for the main instance.
+    reports: Mutex<std::collections::VecDeque<Vec<u8>>>,
 }
 
 impl Registered {
@@ -354,6 +513,10 @@ pub struct Frame {
     phase: api::Phase,
     /// Whether the call is of a thunk, whose handler gives what it returns.
     thunk: bool,
+    /// Whether the handler may change the call and the text it gave.
+    changes: bool,
+    /// The domain renames of the objects the call's pointers reach.
+    renames: Arc<BTreeMap<String, String>>,
     /// What every handle of the call stands for.
     pub(crate) handles: crate::memory::Handles,
     snapshot: Arc<Vec<u8>>,
@@ -457,84 +620,9 @@ impl Intercepts {
         handler: u32,
         phase: api::Phase,
     ) -> Result<Option<(u64, Code)>> {
-        if !context
-            .permissions
-            .contains(&crate::manifest::Permission::Unreviewed)
-        {
-            return Err(Error::new(
-                Kind::PermissionDenied,
-                "intercepting needs the unreviewed permission",
-            ));
-        }
-        let own = context.own.clone().ok_or_else(|| {
-            Error::new(
-                Kind::Unavailable,
-                "the plugin's own entries are not resolved in this game",
-            )
-        })?;
-        let name = own.anatomia.canonical(function).to_owned();
-        let entry = own.anatomia.get(&name).ok_or_else(|| {
-            Error::new(
-                Kind::NotFound,
-                format!("{function} is not an entry of the plugin"),
-            )
-        })?;
-        let EntryKind::Function { ty, .. } = &entry.kind else {
-            return Err(Error::new(
-                Kind::InvalidArgument,
-                format!("{function} is not a function"),
-            ));
-        };
-        let address = match own.resolution.get(&name) {
-            Some(Ok(value)) => own.base + u64::from(value.get()),
-            Some(Err(absence)) => {
-                return Err(Error::new(
-                    Kind::Unavailable,
-                    format!("{function} is absent: {absence}"),
-                ));
-            }
-            None => {
-                return Err(Error::new(
-                    Kind::Unavailable,
-                    format!("{function} was not resolved"),
-                ));
-            }
-        };
-        let code = own.code.get(&name).cloned().ok_or_else(|| {
-            Error::new(
-                Kind::Unavailable,
-                format!("the code of {function} is not known exactly"),
-            )
-        })?;
-        if ty.params.len() > MAX_ARGS {
-            return Err(Error::new(
-                Kind::InvalidArgument,
-                format!("{function} has more than {MAX_ARGS} arguments"),
-            ));
-        }
-        let params = ty
-            .params
-            .iter()
-            .map(|param| shape(&param.ty, &own))
-            .collect::<Option<Arc<[Shape]>>>()
-            .ok_or_else(|| {
-                Error::new(
-                    Kind::InvalidArgument,
-                    format!(
-                        "an argument of {function} is not a number, a bool, an enum with a type, or a pointer"
-                    ),
-                )
-            })?;
-        let returns = match &ty.ret {
-            None => None,
-            Some(ret) => Some(shape(ret, &own).ok_or_else(|| {
-                Error::new(
-                    Kind::InvalidArgument,
-                    format!("{function} returns what a handler cannot take"),
-                )
-            })?),
-        };
-
+        let target = interceptable(context, function)?;
+        let (address, code, params, returns) =
+            (target.address, target.code, target.params, target.returns);
         let plugin = self.registered(context)?;
         let mut targets = self.targets.write().unwrap_or_else(PoisonError::into_inner);
         let chain = targets.entry(address).or_default();
@@ -558,6 +646,8 @@ impl Intercepts {
                 phase,
                 params: params.clone(),
                 returns,
+                changes: target.changes,
+                renames: target.renames,
             }),
         );
         chain.arity = chain.arity.max(params.len());
@@ -568,6 +658,50 @@ impl Intercepts {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(address);
         Ok(first.then_some((address, code)))
+    }
+
+    /// Keeps `bytes` that a handler of `context`'s plugin reported.
+    ///
+    /// # Errors
+    /// More than 64 KiB, and a full queue.
+    pub fn report(&self, context: &Arc<Context>, bytes: Vec<u8>) -> Result<()> {
+        if bytes.len() > MOST_REPORT {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                "a report holds at most 64 KiB",
+            ));
+        }
+        let plugin = self.registered(context)?;
+        let mut reports = plugin
+            .reports
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if reports.len() >= MOST_REPORTS {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("at most {MOST_REPORTS} reports wait for the main instance"),
+            ));
+        }
+        reports.push_back(bytes);
+        Ok(())
+    }
+
+    /// What `plugin`'s handlers reported since, in order.
+    pub fn reports(&self, plugin: &str) -> Vec<Vec<u8>> {
+        let registered = self
+            .plugins
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(plugin)
+            .cloned();
+        registered.map_or_else(Vec::new, |registered| {
+            registered
+                .reports
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .drain(..)
+                .collect()
+        })
     }
 
     /// Forgets that `address` was hooked, when hooking it failed.
@@ -610,6 +744,7 @@ impl Intercepts {
             preparing: AtomicU64::new(0),
             calls: AtomicU64::new(0),
             nanos: AtomicU64::new(0),
+            reports: Mutex::default(),
         });
         plugins.insert(context.id.clone(), registered.clone());
         Ok(registered)
@@ -628,12 +763,6 @@ impl Intercepts {
             return Err(Error::new(
                 Kind::LimitExceeded,
                 "a snapshot holds at most 64 MiB",
-            ));
-        }
-        if context.own.is_none() {
-            return Err(Error::new(
-                Kind::Unavailable,
-                "the plugin's own entries are not resolved in this game",
             ));
         }
         let plugin = self.registered(context)?;
@@ -851,8 +980,8 @@ fn place(chain: &Chain, plugin: &Arc<Registered>, function: &str) -> usize {
 }
 
 /// Links an intercept instance's imports for `component`: `runtime`, this
-/// interface, `memory`, `calls`, and the WASI the standard library
-/// needs; everything else traps.
+/// interface, `memory`, `calls`, `game-map`, and the WASI the standard
+/// library needs; everything else traps.
 fn handler_pre(
     component: &wasmtime::component::Component,
 ) -> std::result::Result<bindings::InterceptHandlerPre<State>, String> {
@@ -870,6 +999,11 @@ fn handler_pre(
     )
     .map_err(|e| e.to_string())?;
     crate::sandbox::bindings::angelica::plugin::calls::add_to_linker::<_, HasSelf<_>>(
+        &mut linker,
+        |state| state,
+    )
+    .map_err(|e| e.to_string())?;
+    crate::sandbox::bindings::angelica::plugin::game_map::add_to_linker::<_, HasSelf<_>>(
         &mut linker,
         |state| state,
     )
@@ -896,6 +1030,11 @@ fn raw(arg: Arg, shape: &Shape) -> u64 {
 }
 
 impl Frame {
+    /// Whether the handler may change the call and the text it gave.
+    pub(crate) fn may_change(&self) -> bool {
+        self.changes
+    }
+
     /// What a handler sees of `raw`, a value of `shape`; a pointer gets a
     /// handle of this call.
     fn value(&mut self, raw: u64, shape: &Shape) -> api::Value {
@@ -916,10 +1055,12 @@ impl Frame {
             Shape::F32 => api::Value::Float32(f32::from_bits(raw as u32)),
             Shape::F64 => api::Value::Float64(f64::from_bits(raw)),
             _ if raw == 0 => api::Value::None,
-            Shape::Object(_) | Shape::Text | Shape::Pointer(_) => {
-                let handle = self.handles.issue_called(raw, target(shape));
+            Shape::Object(..) | Shape::Text | Shape::Pointer(_) => {
+                let handle = self
+                    .handles
+                    .issue_called(raw, target(shape), self.renames.clone());
                 match shape {
-                    Shape::Object(_) => api::Value::Object(handle),
+                    Shape::Object(..) => api::Value::Object(handle),
                     Shape::Text => api::Value::Text(handle),
                     _ => api::Value::Pointer(handle),
                 }
@@ -978,8 +1119,8 @@ impl Frame {
 fn target(shape: &Shape) -> crate::memory::Target {
     use crate::memory::Target;
     match shape {
-        Shape::Object(name) => Target::Struct {
-            own: true,
+        Shape::Object(name, own) => Target::Struct {
+            own: *own,
             name: name.clone(),
         },
         Shape::Text => Target::Text {
@@ -1048,6 +1189,8 @@ fn run(handler: &Handler, args: &[Arg], result: Option<Returned>, skipped: bool)
     let mut frame = Frame {
         phase: handler.phase,
         thunk: false,
+        changes: handler.changes,
+        renames: handler.renames.clone(),
         handles: crate::memory::Handles::call(serial),
         snapshot: instance.snapshot.clone(),
         params: handler.params.clone(),
@@ -1113,6 +1256,10 @@ impl State {
                 Kind::WrongContext,
                 "a thunk's handler returns its value",
             )),
+            Role::Intercept(Some(frame)) if !frame.changes => Err(Error::new(
+                Kind::PermissionDenied,
+                "changing this call needs its event's domain in [lens] change",
+            )),
             Role::Intercept(Some(frame)) if frame.phase == phase => Ok(frame),
             Role::Intercept(Some(_)) => Err(Error::new(
                 Kind::WrongContext,
@@ -1172,6 +1319,23 @@ impl api::Host for State {
         let context = self.context.clone();
         self.host(|_| context.services.intercepts.publish(&context, bytes))
             .map_err(Into::into)
+    }
+
+    fn report(&mut self, bytes: Vec<u8>) -> std::result::Result<(), api::Error> {
+        if !matches!(self.role, Role::Intercept(Some(_))) {
+            return Err(Error::new(Kind::WrongContext, "only a handler reports").into());
+        }
+        let context = self.context.clone();
+        self.host(|_| context.services.intercepts.report(&context, bytes))
+            .map_err(Into::into)
+    }
+
+    fn reports(&mut self) -> Vec<Vec<u8>> {
+        if !matches!(self.role, Role::Main) {
+            return Vec::new();
+        }
+        let context = self.context.clone();
+        context.services.intercepts.reports(&context.id)
     }
 
     fn snapshot(&mut self) -> Vec<u8> {
@@ -1342,7 +1506,7 @@ impl Intercepts {
         let params: Arc<[Shape]> = ty
             .params
             .iter()
-            .map(|param| shape(&param.ty, &own))
+            .map(|param| shape(&param.ty, own.source()))
             .collect::<Option<Vec<_>>>()
             .filter(|params| params.len() <= MAX_ARGS)
             .ok_or_else(|| {
@@ -1353,7 +1517,7 @@ impl Intercepts {
             .into();
         let returns = match &ty.ret {
             None => None,
-            Some(ret) => Some(shape(ret, &own).ok_or_else(|| {
+            Some(ret) => Some(shape(ret, own.source()).ok_or_else(|| {
                 Error::invalid("a thunk returns an integer, a float, a bool, an enum, or a pointer")
             })?),
         };
@@ -1524,6 +1688,8 @@ fn run_thunk(thunk: &Thunk, args: &[Arg]) -> Option<Returned> {
     let mut frame = Frame {
         phase: api::Phase::Before,
         thunk: true,
+        changes: true,
+        renames: Arc::default(),
         handles: crate::memory::Handles::call(serial),
         snapshot: snapshot.clone(),
         params: thunk.params.clone(),

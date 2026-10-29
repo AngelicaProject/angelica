@@ -1,0 +1,18 @@
+[package]
+name = "angelica-lens"
+description = "Lens as a library in the plugin: queries, watches, rules, changes, and actions over the game map, built on the core's primitives."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+angelica-map.workspace = true
+angelica-query.workspace = true
+angelica-sdk.workspace = true
+
+[lints]
+workspace = true

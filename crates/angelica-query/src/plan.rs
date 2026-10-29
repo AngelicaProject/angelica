@@ -2,9 +2,9 @@
 //! every name known, every domain on the way permitted, every place present
 //! in the running build. Running the plan only reads memory.
 #![forbid(unsafe_code)]
-use super::query::{self, Filter, Literal, Op, Query, Test};
-use super::schema::{RootAt, Schema};
 use crate::error::{Error, Kind, Result};
+use crate::query::{self, Filter, Literal, Op, Query, Test};
+use crate::schema::{RootAt, Schema};
 use angelica_map::{Event, Field, Length, Meaning, Objects, Renames, Shape, ValueKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -37,7 +37,7 @@ pub struct Hop {
 /// Where a value of an event's call is when the event fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgAt {
-    /// A general-purpose register, by its position in [`super::Call`].
+    /// A general-purpose register, by its position in the call.
     Integer(u8),
     /// The low 64 bits of an xmm register.
     Float(u8),
@@ -71,7 +71,7 @@ pub struct Read {
 
 impl Read {
     /// The read starting from `base` instead, with its guards.
-    pub(crate) fn rebase(&mut self, base: Base) {
+    pub fn rebase(&mut self, base: Base) {
         self.base = base;
         for guard in &mut self.guards {
             guard.read.rebase(base);
@@ -158,7 +158,7 @@ pub struct Column {
     pub meaning: ColumnMeaning,
     pub unit: Option<String>,
     pub domain: String,
-    pub(crate) read: Read,
+    pub read: Read,
 }
 
 /// Where a plan starts.
@@ -176,8 +176,8 @@ pub struct Prepared {
     pub columns: Vec<Column>,
     /// Every domain the query reads.
     pub domains: BTreeSet<String>,
-    pub(crate) start: Start,
-    pub(crate) steps: Vec<Step>,
+    pub start: Start,
+    pub steps: Vec<Step>,
 }
 
 impl Prepared {
@@ -448,8 +448,14 @@ impl<'a> Planner<'a> {
                     ),
                 )
             })?;
+            // Into the structure at `offset`, then through its pointer: one
+            // step per field, so each names a field of its own.
             hops.push(Hop {
-                offset: offset.saturating_add(inner),
+                offset,
+                pointer: false,
+            });
+            hops.push(Hop {
+                offset: inner,
                 pointer: true,
             });
             return Ok(0);

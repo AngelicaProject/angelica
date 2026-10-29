@@ -32,6 +32,7 @@ A manifest declares the API version it was built for in `plugin.api` ([manifest]
 | `calls` | calls of the game's functions that the plugin's own Anatomia entries describe, and thunks the game calls back | `unreviewed` and `server` |
 | `gpu` | surfaces over the game that the plugin draws on with the GPU, the game's window and camera | none |
 | `look` | Angelica's theme, scale, language, and fonts as the player set them | none |
+| `game-map` | the files of the game map the host loaded, for the Lens library | none |
 
 Every plugin has its log, folder, windows, and jobs. The host keeps the last 200 lines of the log; they go into the report the player copies from the Angelica menu for the plugin's author, so a plugin logs what it did and why it failed in words its author can act on. An operation that needs a permission the player did not grant returns `permission-denied`.
 
@@ -367,6 +368,15 @@ A plugin that holds `unreviewed` and `server` calls the game's functions that it
 `calls.thunk(signature, handler, fallback)`, from the main instance, makes a thunk of the type `signature` (`fn(u32, ptr<game.node>) -> bool`), of the plugin's own types, and gives its handle, which the plugin passes to a call or writes into a pointer field of the same type with `memory.write`; parameter names do not change a type. Each time the game calls it, the host calls `thunk-handler.called` with `handler` and the arguments in the plugin's intercept instance, under a handler's rules: at most 50 ms, and a trap or a call past the limit disables every handler of the plugin. It gives what the thunk returns, a value of its type. When the handler fails or gives another type, when the plugin's handlers are disabled or the plugin has stopped, and when the game calls the thunk from inside a handler, the thunk calls `fallback`, a function of the plugin's entries of the same type, with the same arguments, or returns zero without one. A thunk's address is fixed in Angelica's runtime and given to one thunk only, which keeps it until the game exits; at most 256 thunks exist in the game at once.
 
 The SDK's `calls` module wraps the interface, and [`angelica-views`](../../crates/angelica-views) generates a typed function for every function of a plugin's own entries that takes and returns what a call can.
+
+## Lens in the plugin
+
+The [Lens library](../architecture/lens.md#the-library) runs Lens inside the plugin on the primitives below. `game-map.files()` gives it the game map's files, `map.toml` first; it plans with them and reads through handles.
+
+- A plugin may [intercept](#intercepts) a function of the game map that a Lens event is at, other than a derived event: with the event's domain in `[lens] read` it reads the call, and with it in `[lens] change` it may change the arguments, skip the game's code, set the result, or edit the call's text. A pointer argument the function's type leaves untyped is a handle of the structure the event says, and the domains of the objects behind a pointer belong to the argument's.
+- A handler reports bytes to the main instance with `intercepts.report`, at most 64 KiB each and 1024 waiting; the main instance takes them with `intercepts.reports`. The library reports a watch's rows and a rule's decisions this way, and passes the plugin's own reports by.
+- A plugin that watches or decides through the library passes its `prepare` and `intercepted` on to it; the library takes the handler numbers from `0xF0000000` and keeps its watches and rules in the snapshot beside the plugin's own bytes.
+- `set`, `restore`, and `act` go through the [`lens`](#lens) interface, whose guarantees the core keeps.
 
 ## Surfaces
 

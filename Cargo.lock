@@ -159,6 +159,7 @@ dependencies = [
  "angelica-look",
  "angelica-map",
  "angelica-pe",
+ "angelica-query",
  "angelica-sqpack",
  "angelica-text",
  "angelica-update",
@@ -214,6 +215,23 @@ dependencies = [
  "angelica-look",
  "angelica-sdk",
  "egui",
+]
+
+[[package]]
+name = "angelica-lens"
+version = "0.1.0"
+dependencies = [
+ "angelica-map",
+ "angelica-query",
+ "angelica-sdk",
+]
+
+[[package]]
+name = "angelica-lens-library"
+version = "0.1.0"
+dependencies = [
+ "angelica-lens",
+ "angelica-sdk",
 ]
 
 [[package]]
@@ -274,6 +292,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "angelica-query"
+version = "0.1.0"
+dependencies = [
+ "angelica-map",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

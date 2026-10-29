@@ -168,6 +168,12 @@ pub trait Game: Send + Sync {
         None
     }
 
+    /// The code of the game's function at `address`, as a hook checks it;
+    /// none where the executable does not tell it exactly.
+    fn code_of(&self, address: u64) -> Option<crate::intercepts::Code> {
+        code_in(&self.executable()?, address)
+    }
+
     /// Makes the game call [`crate::intercepts::Intercepts::after_call`]
     /// when the function at `address`, with `code`, returns. Called once
     /// per function; the hook stays until the process exits.
@@ -216,4 +222,24 @@ pub trait Game: Send + Sync {
         let _ = (address, bytes);
         false
     }
+}
+
+/// The code of the function at `address` in `executable`, loaded where it
+/// says and mapped as its bytes, as a hook checks it.
+#[must_use]
+pub fn code_in(executable: &(u64, Arc<Vec<u8>>), address: u64) -> Option<crate::intercepts::Code> {
+    let (base, bytes) = executable;
+    let image = angelica_pe::Image::parse(bytes, angelica_pe::Layout::Mapped).ok()?;
+    let rva = u32::try_from(address.checked_sub(*base)?).ok()?;
+    let found = angelica_map::function_code(&image, rva)?;
+    let at = |rva: u32| base + u64::from(rva);
+    Some(crate::intercepts::Code {
+        start: at(found.start),
+        ranges: found
+            .ranges
+            .iter()
+            .map(|range| at(range.start)..at(range.end))
+            .collect(),
+        prologue: u64::from(found.prologue.unwrap_or(0)),
+    })
 }

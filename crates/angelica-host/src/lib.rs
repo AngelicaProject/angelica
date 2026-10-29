@@ -14,8 +14,8 @@ pub mod commands;
 pub mod config;
 pub mod dev;
 pub mod draw;
-pub mod error;
 pub use angelica_look::{fonts, theme};
+pub use angelica_query::error;
 pub mod excel_text;
 pub mod file_formats;
 pub mod file_replacements;
@@ -40,7 +40,7 @@ pub mod menu;
 pub mod menus;
 pub mod messages;
 #[cfg(test)]
-mod mutations;
+use angelica_query::mutations;
 pub mod notifications;
 pub mod package;
 pub mod panel;

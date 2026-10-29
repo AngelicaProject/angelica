@@ -414,7 +414,7 @@ fn schema(
     base: usize,
     data: &crate::game_data::GameData,
 ) -> crate::lens::Schema {
-    let mut schema = crate::lens::Schema::from_catalog(map, catalog, base as u64);
+    let mut schema = crate::lens::schema_from_catalog(map, catalog, base as u64);
     schema.resolve_windows(map, &|path| data.read(path).map_err(|error| error.message));
     schema
 }

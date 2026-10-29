@@ -67,9 +67,9 @@ pub mod websocket;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        calls, chat, clipboard, commands, draw, events, excel, file_replacements, game_files, gpu,
-        http, intercepts, jobs, lens, links, look, memory, messages, notifications, runtime, sound,
-        storage, types, websocket,
+        calls, chat, clipboard, commands, draw, events, excel, file_replacements, game_files,
+        game_map, gpu, http, intercepts, jobs, lens, links, look, memory, messages, notifications,
+        runtime, sound, storage, types, websocket,
     };
 }
 

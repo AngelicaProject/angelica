@@ -1,7 +1,9 @@
 package angelica:plugin@1.0.0;
 
 /// Handlers in the game's calls of functions the plugin describes in its
-/// own Anatomia entries, with the `unreviewed` permission.
+/// own Anatomia entries, with the `unreviewed` permission, and of the game
+/// map's functions that a Lens event is at, with the event's domain in
+/// `[lens] read`; changing such a call needs the domain in `[lens] change`.
 ///
 /// `before` makes the host call the guest's `handler.intercepted` each time
 /// the game calls the function, before its code runs; `after`, each time
@@ -76,8 +78,8 @@ interface intercepts {
     }
 
     /// Called from the main instance: calls the handler before every call
-    /// of `function`, a function of the plugin's own entries that is
-    /// present in this build. The function's arguments are at most 16, each
+    /// of `function`, a function of the plugin's own entries or a function
+    /// of the game map that a Lens event is at, present in this build. The function's arguments are at most 16, each
     /// an integer, a float, a `bool`, an enum with a type, or a pointer,
     /// and it returns one of these or nothing. Once per function and phase.
     before: func(function: string, handler: u32) -> result<_, error>;
@@ -107,6 +109,14 @@ interface intercepts {
     /// Called from an `after` handler: the function returns `value`, of the
     /// type it returns, to the handlers after it and the game.
     set-result: func(value: value) -> result<_, error>;
+
+    /// Called from a handler: `bytes`, at most 64 KiB, for the main instance
+    /// to take with `reports`; at most 1024 wait at once.
+    report: func(bytes: list<u8>) -> result<_, error>;
+
+    /// Called from the main instance: what the plugin's handlers reported
+    /// since, in order.
+    reports: func() -> list<list<u8>>;
 
     /// Called from a handler: the text of an `object` whose structure reads
     /// as text, or of a `text`, without its terminator.

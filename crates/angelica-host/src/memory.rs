@@ -70,7 +70,7 @@ impl<'a> Source<'a> {
     }
 
     /// The address of a present entry that has one.
-    fn address(self, entry: &str) -> Result<u64> {
+    pub(crate) fn address(self, entry: &str) -> Result<u64> {
         match self.resolution.get(entry) {
             Some(Ok(Resolved::Address(rva))) => Ok(self.base + u64::from(*rva)),
             Some(Ok(Resolved::Offset(_))) => Err(Error::invalid(format!(
@@ -181,12 +181,33 @@ struct Change {
     range: Option<(f64, f64)>,
 }
 
+/// A Lens event at a function of the central description: what a plugin
+/// that intercepts the function reads and changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watched {
+    pub event: String,
+    /// The event's domain, as its `whose` and `as` rename it.
+    pub domain: String,
+    /// Below the call's pointers, each domain of the objects they point to
+    /// belongs to the argument's.
+    pub renames: BTreeMap<String, String>,
+    /// The structure each pointer argument of the event points to, by its
+    /// position, where the function's type says only `ptr`.
+    pub objects: BTreeMap<usize, String>,
+}
+
 /// The central description, converted from the game map the host loaded,
 /// with what its entries resolved to in the running game.
 pub struct Described {
     pub anatomia: Arc<Anatomia>,
     pub resolution: Resolution,
     pub base: u64,
+    /// The game map's files as the host read them, `map.toml` first, for
+    /// the Lens library.
+    pub files: Arc<Vec<(String, String)>>,
+    /// The Lens events at functions, by the function's name; the host's
+    /// derived events are not among them.
+    pub events: BTreeMap<String, Watched>,
     /// The domains renamed below each global a Lens root starts at.
     roots: BTreeMap<String, BTreeMap<String, String>>,
     /// The fields the Lens catalog offers as changes written in memory.
@@ -207,6 +228,9 @@ impl Described {
         entry: impl Fn(&str) -> std::result::Result<angelica_map::Value, String>,
     ) -> std::result::Result<Self, String> {
         let converted = angelica_anatomia::convert_sources(map_toml, files)?;
+        let map =
+            angelica_map::Map::from_sources(map_toml, files).map_err(|error| error.to_string())?;
+        let events = watched(&map, &converted.renamed);
         let anatomia = converted.anatomia()?;
         let back: BTreeMap<&str, &str> = converted
             .renamed
@@ -274,10 +298,14 @@ impl Described {
                 (name, Change { range })
             })
             .collect();
+        let mut all = vec![("map.toml".to_owned(), map_toml.to_owned())];
+        all.extend(files.iter().cloned());
         Ok(Self {
             anatomia: Arc::new(anatomia),
             resolution: Resolution::from_results(results),
             base,
+            files: Arc::new(all),
+            events,
             roots,
             changes,
         })
@@ -292,6 +320,52 @@ impl Described {
             own: false,
         }
     }
+}
+
+/// The Lens events of `map` at functions, by the function's name in the
+/// converted description.
+fn watched(
+    map: &angelica_map::Map,
+    renamed: &BTreeMap<String, String>,
+) -> BTreeMap<String, Watched> {
+    let objects = map.objects();
+    objects
+        .events
+        .values()
+        .filter(|event| event.derived.is_none())
+        .filter(|event| {
+            matches!(
+                map.get(&event.at).map(|entry| &entry.kind),
+                Some(angelica_map::EntryKind::Function { .. })
+            )
+        })
+        .map(|event| {
+            let mut outer = angelica_map::Renames::default();
+            outer.enter(&event.entering);
+            let mut below = BTreeMap::new();
+            let mut pointees = BTreeMap::new();
+            for arg in event.args.values() {
+                if let angelica_map::Shape::Ref(to) = &arg.shape
+                    && let Some(target) = objects.types.get(to)
+                {
+                    below.insert(target.domain.clone(), outer.domain(&arg.domain).to_owned());
+                    if let angelica_map::ArgSource::Argument(position) = arg.source {
+                        pointees.insert(usize::from(position), to.clone());
+                    }
+                }
+            }
+            let function = renamed.get(&event.at).unwrap_or(&event.at).clone();
+            (
+                function,
+                Watched {
+                    event: event.name.clone(),
+                    domain: outer.domain(&event.domain).to_owned(),
+                    renames: below,
+                    objects: pointees,
+                },
+            )
+        })
+        .collect()
 }
 
 /// A central value a plugin wrote, to put back when it stops.
@@ -528,7 +602,12 @@ impl Handles {
 
     /// The handle of what a call gave at `address`, the same for the same
     /// object.
-    pub fn issue_called(&mut self, address: u64, target: Target) -> u64 {
+    pub fn issue_called(
+        &mut self,
+        address: u64,
+        target: Target,
+        renames: Arc<BTreeMap<String, String>>,
+    ) -> u64 {
         if let Some(index) = self
             .slots
             .iter()
@@ -536,7 +615,12 @@ impl Handles {
         {
             return self.handle(index);
         }
-        self.slots.push(Slot::called(address, target));
+        self.slots.push(Slot {
+            address,
+            target,
+            renames,
+            path: None,
+        });
         self.handle(self.slots.len() - 1)
     }
 
@@ -1699,6 +1783,13 @@ impl State {
                 "only the main instance and handlers read the game's memory",
             ));
         }
+        self.describing(work)
+    }
+
+    /// Runs `work` with what this instance reads the game with, also while
+    /// an intercept instance prepares, which looks fields up and reads
+    /// nothing.
+    fn describing<T>(&self, work: impl FnOnce(&Reader<'_>) -> Result<T>) -> Result<T> {
         let context = &self.context;
         let own = context.own.clone();
         let described = context.services.memory.current();
@@ -1811,7 +1902,13 @@ impl api::Host for State {
 
     fn field(&mut self, name: String) -> std::result::Result<api::FieldId, api::Error> {
         self.host(|state| {
-            let found = state.reading(|reader| reader.lookup(&name))?;
+            if matches!(state.role, Role::Job(_)) {
+                return Err(Error::new(
+                    Kind::WrongContext,
+                    "a job looks up no field of the game",
+                ));
+            }
+            let found = state.describing(|reader| reader.lookup(&name))?;
             let fields = &mut state.memory.fields;
             let index = match fields.iter().position(|field| *field == found) {
                 Some(index) => index,
@@ -1906,6 +2003,13 @@ impl api::Host for State {
         bytes: Vec<u8>,
     ) -> std::result::Result<(), api::Error> {
         self.host(|state| {
+            if let Role::Intercept(Some(frame)) = &state.role
+                && !frame.may_change()
+            {
+                return Err(denied(
+                    "changing this call's text needs its event's domain in [lens] change",
+                ));
+            }
             state.reading(|reader| reader.edit_text(&state.slot_of(reader, of)?, &bytes))
         })
         .map_err(Into::into)
@@ -2165,5 +2269,15 @@ impl calls_api::Host for State {
             Ok::<_, Error>(thunk_handle(slot))
         })
         .map_err(Into::into)
+    }
+}
+
+impl crate::sandbox::bindings::angelica::plugin::game_map::Host for State {
+    fn files(&mut self) -> Vec<(String, String)> {
+        self.context
+            .services
+            .memory
+            .current()
+            .map_or_else(Vec::new, |described| described.files.as_ref().clone())
     }
 }

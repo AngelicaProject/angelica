@@ -4,6 +4,16 @@
 use angelica_map::{EntryKind, Map, Objects, Value, ValueKind};
 use std::collections::BTreeMap;
 
+/// Where an action's function and globals are in the running game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionAt {
+    pub function: u64,
+    /// The function's return kind.
+    pub ret: ValueKind,
+    /// The places of the globals its arguments name.
+    pub globals: BTreeMap<String, RootAt>,
+}
+
 /// Where a root's object is in the running game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RootAt {
@@ -33,7 +43,7 @@ pub struct Schema {
     pub text_pointers: std::collections::BTreeSet<String>,
     /// Where every action's function and globals are, or why the build
     /// lacks one.
-    pub actions: BTreeMap<String, Result<super::act::ActionAt, String>>,
+    pub actions: BTreeMap<String, Result<ActionAt, String>>,
     /// The ids of every named element of each window the map has a schema
     /// of, by name, or why this build's layout of the window is unknown;
     /// filled by [`Schema::resolve_windows`].
@@ -191,19 +201,6 @@ impl Schema {
         })
     }
 
-    /// The model of `map` resolved through a catalog of the running build.
-    #[must_use]
-    pub fn from_catalog(map: &Map, catalog: &crate::catalog::Catalog, base: u64) -> Self {
-        Self::new(map, base, |name| match catalog.present.get(name) {
-            Some(resolved) => Ok(resolved.value),
-            None => Err(catalog
-                .absent
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| "not resolved".into())),
-        })
-    }
-
     /// The offset of a field entry in this build.
     ///
     /// # Errors
@@ -222,7 +219,7 @@ fn actions_at(
     map: &Map,
     base: u64,
     entry: &dyn Fn(&str) -> Result<Value, String>,
-) -> BTreeMap<String, Result<super::act::ActionAt, String>> {
+) -> BTreeMap<String, Result<ActionAt, String>> {
     map.objects()
         .actions
         .values()
@@ -235,7 +232,7 @@ fn action_at(
     base: u64,
     entry: &dyn Fn(&str) -> Result<Value, String>,
     action: &angelica_map::Action,
-) -> Result<super::act::ActionAt, String> {
+) -> Result<ActionAt, String> {
     let function = match entry(&action.call) {
         Ok(Value::Address(rva)) => base + u64::from(rva),
         Ok(Value::Offset(_)) => return Err(format!("map entry {} is not code", action.call)),
@@ -268,7 +265,7 @@ fn action_at(
         };
         globals.insert(global.clone(), at);
     }
-    Ok(super::act::ActionAt {
+    Ok(ActionAt {
         function,
         ret,
         globals,

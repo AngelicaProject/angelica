@@ -22,15 +22,7 @@ pub const MOST_ARGS: usize = 16;
 /// How long the screen shows a plugin acting after its last action.
 pub const SHOWN_FOR: Duration = Duration::from_secs(3);
 
-/// Where an action's function and globals are in the running game.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionAt {
-    pub function: u64,
-    /// The function's return kind.
-    pub ret: ValueKind,
-    /// The places of the globals its arguments name.
-    pub globals: BTreeMap<String, RootAt>,
-}
+pub use super::schema::ActionAt;
 
 /// One argument of a call, before the moment of the call.
 #[derive(Debug, Clone, PartialEq)]

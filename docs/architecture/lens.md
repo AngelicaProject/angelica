@@ -4,14 +4,28 @@ Lens is how plugins reach the game's objects. The host is an engine with a few v
 
 The plugin API's `lens` interface offers `query`, reading objects by path, `watch`, reading the objects the game's code works on when it reaches an event of the map, `decide`, a rule at a decision point that the host applies itself whenever the game reaches it, `set`, changing a value the map marks changeable until the plugin restores it or stops, and `act`, calling a function of the game for the player as the map's actions describe ([contract](../formats/plugin-api-v1.md#lens)).
 
+## The library
+
+Lens also runs inside the plugin, as the [`angelica-lens`](../../crates/angelica-lens) library, on the core's primitives; the host's own Lens stays for plugin API 1 until it is removed. Both plan with the same code, `angelica-query`. The library holds no privilege: what it reads, intercepts, and changes is checked by the core against the plugin's permissions.
+
+| Verb | In the library |
+| --- | --- |
+| query | the plan of the game map's files ([`game-map`](../formats/plugin-api-v1.md#lens-in-the-plugin)) runs through handles and the core's checked reads: each field of the plan is a field of the converted description, never an offset |
+| watch | an intercept before the event's function, which the core allows with the event's domain in `[lens] read`; the handler runs the plan over the call's arguments in the intercept instance and reports the rows, which the main instance takes |
+| decide | an intercept at the same place; when the rule's plan reaches anything, the handler skips the game's code with the outcome's value, which the core allows with the domain in `[lens] change` |
+| set, restore | the core's change, as today: only the values the map offers, put back when the plugin stops |
+| act | the core's action, as today: its conditions, its rate, and the player's stop key stay in the core |
+
+Derived events (sheet text, letter case) stay the host's until the modules that replace them exist.
+
 ## Parts
 
 | Part | Owns | Code |
 | --- | --- | --- |
 | object model | types, fields, roots, events, actions, enums, domains, and their rules | `angelica-map` (`objects`, `events`, `actions`) |
-| schema | the model resolved for the running build: each root's address, each field's offset, or why the build lacks it | `angelica-host` (`lens::schema`) |
-| query language | the text of a query, parsed without the model | `angelica-host` (`lens::query`) |
-| planner | a query checked against the schema and the plugin's domains, turned into a plan of reads | `angelica-host` (`lens::plan`) |
+| schema | the model resolved for the running build: each root's address, each field's offset, or why the build lacks it | `angelica-query` (`schema`) |
+| query language | the text of a query, parsed without the model | `angelica-query` (`query`) |
+| planner | a query checked against the schema and the plugin's domains, turned into a plan of reads | `angelica-query` (`plan`) |
 | reader | a plan run over the game's memory, from a root or from an event's call | `angelica-host` (`lens::read`) |
 | watches | the points of the game's code that watches use, their subscribers, and the firings kept for the next frame | `angelica-host` (`lens::watch`) |
 | watch hooks | a hook at each watched point that hands the registers to the watches | `angelica-host` (`interop::watch`), `test.fire` of the scripted game in tests |
