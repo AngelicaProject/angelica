@@ -66,6 +66,11 @@ pub enum Permission {
     /// reviewed.
     #[serde(rename = "unreviewed")]
     Unreviewed,
+    /// Call the game's functions that the plugin's own Anatomia entries
+    /// describe and give the game thunks, which may send requests to the
+    /// game's servers.
+    #[serde(rename = "server")]
+    Server,
 }
 
 impl Permission {
@@ -86,6 +91,7 @@ impl Permission {
             Self::HttpWebsocket => "http.websocket",
             Self::LinksOpen => "links.open",
             Self::Unreviewed => "unreviewed",
+            Self::Server => "server",
         }
     }
 
@@ -109,6 +115,7 @@ impl Permission {
             Self::Unreviewed => {
                 "Work inside the game in places only its author describes, which can change how the game behaves"
             }
+            Self::Server => "Take actions in the game that only its author describes",
         }
     }
 
@@ -116,7 +123,7 @@ impl Permission {
     #[must_use]
     pub fn class(self) -> Class {
         match self {
-            Self::Unreviewed => Class::Acts,
+            Self::Unreviewed | Self::Server => Class::Acts,
             Self::HttpGet | Self::HttpSend | Self::HttpWebsocket | Self::LinksOpen => {
                 Class::Network
             }

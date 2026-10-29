@@ -1,7 +1,11 @@
 //! A test plugin that intercepts the scripted game's functions in every way
 //! the host allows. The host's tests click `before:<function>:<handler>` or
 //! `after:<function>:<handler>` to intercept, and each handler number does
-//! one thing to the call; the log tells what happened.
+//! one thing to the call; the log tells what happened. It also calls the
+//! game's functions through the views its `build.rs` generates from its
+//! `anatomia/`: `add:<a>:<b>`, `thunk:<handler>` and
+//! `thunk:<handler>:<fallback>` to make a thunk, `each:<count>` to hand
+//! the last one to `game.each`.
 use angelica_sdk::{
     Plugin,
     intercepts::{self, Call, Phase, Value},
@@ -9,7 +13,15 @@ use angelica_sdk::{
     ui::{Event, Window},
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+
+/// The views of the plugin's own entries.
+mod own {
+    include!(concat!(env!("OUT_DIR"), "/anatomia.rs"));
+}
+
+/// The thunk the plugin made last.
+static THUNK: Mutex<Option<angelica_sdk::calls::Thunk>> = Mutex::new(None);
 
 struct Intercepting;
 
@@ -63,6 +75,10 @@ impl Plugin for Intercepting {
             angelica_sdk::info(&format!("tables: {}", refused(result)));
             return;
         }
+        if let Some(line) = calling(&target.id) {
+            angelica_sdk::info(&line);
+            return;
+        }
         let mut parts = target.id.split(':');
         let (Some(phase), Some(function), Some(Ok(handler))) =
             (parts.next(), parts.next(), parts.next().map(str::parse))
@@ -89,6 +105,20 @@ impl Plugin for Intercepting {
     /// from the snapshot's row table, as a translation does, and 11 looks
     /// a file's path up in its path set, as file replacements do; 12 reads
     /// and writes the fields of an object of the plugin's own structure.
+    /// 0 gives ten times the argument; 1 fails, so the fallback runs; 2
+    /// gives a value of another type.
+    fn thunk(call: angelica_sdk::calls::ThunkCall) -> memory::Value {
+        let first = match call.args.first() {
+            Some(memory::Value::Unsigned(number)) => *number,
+            _ => 0,
+        };
+        match call.handler {
+            0 => memory::Value::Unsigned(first * 10),
+            1 => panic!("the thunk's handler fails"),
+            _ => memory::Value::Boolean(true),
+        }
+    }
+
     fn intercepted(call: Call) {
         let first = unsigned(call.args.first());
         let returned = unsigned(Some(&call.returned));
@@ -163,6 +193,51 @@ impl Plugin for Intercepting {
 }
 
 angelica_sdk::plugin!(Intercepting);
+
+/// Calls of the game and thunks a test asks for by `id`, and what came of
+/// them; none for another id.
+fn calling(id: &str) -> Option<String> {
+    let parts: Vec<&str> = id.split(':').collect();
+    let number = |at: usize| {
+        parts
+            .get(at)
+            .and_then(|part| part.parse::<u32>().ok())
+            .unwrap_or(0)
+    };
+    Some(match parts.first().copied()? {
+        "add" => format!("add: {}", refused_or(own::game::add(number(1), number(2)))),
+        "thunk" => {
+            let fallback = parts.get(2).copied();
+            match angelica_sdk::calls::thunk("fn(u32) -> u32", number(1), fallback) {
+                Ok(thunk) => {
+                    *THUNK
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thunk);
+                    "thunk: accepted".into()
+                }
+                Err(error) => format!("thunk: {:?}", error.kind),
+            }
+        }
+        "each" => {
+            let thunk = *THUNK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match thunk {
+                Some(thunk) => format!("each: {}", refused_or(own::game::each(&thunk, number(1)))),
+                None => "each: no thunk".into(),
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// A number a call gave, or the kind of its error.
+fn refused_or(result: Result<u32, angelica_sdk::Error>) -> String {
+    result.map_or_else(
+        |error| format!("{:?}", error.kind),
+        |number| number.to_string(),
+    )
+}
 
 /// Reads an object of the plugin's own `game.box` through its call handle,
 /// adds one to its count, and tries what a handler may not.

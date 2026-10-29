@@ -40,6 +40,7 @@ pub mod bindings {
     wit_bindgen::generate!({ path: "../../wit", world: "intercepting", pub_export_macro: true, generate_all });
 }
 
+pub mod calls;
 pub mod chat;
 pub mod clipboard;
 pub mod commands;
@@ -65,7 +66,7 @@ pub mod websocket;
 /// The host's interfaces, as generated from `wit/`.
 pub mod api {
     pub use crate::bindings::angelica::plugin::{
-        chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http,
+        calls, chat, clipboard, commands, draw, events, excel, file_replacements, game_files, http,
         intercepts, jobs, lens, links, memory, messages, notifications, runtime, sound, storage,
         types, websocket,
     };
@@ -159,6 +160,15 @@ pub trait Plugin: Sized + 'static {
     /// Why the snapshot cannot be prepared; handlers keep the one they had.
     fn prepare() -> Result<(), String> {
         Ok(())
+    }
+
+    /// Runs in an intercept instance when the game calls a thunk the
+    /// plugin made with [`calls::thunk`], under a handler's rules: gives
+    /// what the thunk returns, `Value::None` for one that returns nothing.
+    /// A value of another type makes the thunk call its fallback.
+    #[must_use]
+    fn thunk(_call: calls::ThunkCall) -> memory::Value {
+        memory::Value::None
     }
 }
 
@@ -261,6 +271,12 @@ macro_rules! plugin {
 
                 fn intercepted(call: $crate::intercepts::Call) {
                     <$plugin as $crate::Plugin>::intercepted(call);
+                }
+            }
+
+            impl $crate::bindings::exports::angelica::plugin::thunk_handler::Guest for Guest {
+                fn called(call: $crate::calls::ThunkCall) -> $crate::memory::Value {
+                    <$plugin as $crate::Plugin>::thunk(call)
                 }
             }
 

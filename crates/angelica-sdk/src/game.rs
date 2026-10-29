@@ -11,6 +11,7 @@
 )]
 pub mod action {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// The kinds of action the player can use, as the game numbers them.
@@ -46,6 +47,7 @@ pub mod action {
 )]
 pub mod camera {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// A camera: how far it is, how far it may zoom, and where it faces.
@@ -211,6 +213,7 @@ pub mod camera {
 )]
 pub mod character {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// A character that can fight, such as the player's.
@@ -689,6 +692,7 @@ pub mod character {
 )]
 pub mod excel {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -985,6 +989,7 @@ pub mod excel {
 )]
 pub mod file {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1161,6 +1166,7 @@ pub mod file {
 )]
 pub mod game {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// The game's main state: zones and transitions between them.
@@ -1211,6 +1217,7 @@ pub mod game {
 )]
 pub mod graphics {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1255,6 +1262,7 @@ pub mod graphics {
 )]
 pub mod inventory {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// The kinds of item container, as the game numbers its inventory types. Kinds without a name here, such as mail, the free company chest, housing, or another player's gear being examined, are never read.
@@ -1587,6 +1595,7 @@ pub mod inventory {
 )]
 pub mod object {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// An object of the game world: a character, a monster, an NPC, or a thing.
@@ -1668,6 +1677,7 @@ pub mod object {
 )]
 pub mod status {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// One status on a character.
@@ -1774,6 +1784,7 @@ pub mod status {
 )]
 pub mod text {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1867,6 +1878,7 @@ pub mod text {
 )]
 pub mod ui {
     use crate::Error;
+    use crate::calls;
     use crate::memory::{self, Array, Field, FromValue, Handle, Pointer, Value, View};
 
     /// What a value of a window holds, as the game numbers it.

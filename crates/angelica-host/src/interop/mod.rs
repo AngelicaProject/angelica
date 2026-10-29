@@ -23,6 +23,7 @@ mod sound;
 mod startup;
 mod system_menu;
 mod text_case;
+mod thunks;
 mod watch;
 mod writes;
 

@@ -83,7 +83,20 @@ pub struct ScriptedGame {
     pub executable: Mutex<Option<(u64, Arc<Vec<u8>>)>>,
     /// The addresses of the functions plugins intercept, in order.
     pub intercepted: Mutex<Vec<u64>>,
+    /// What the game's functions a test defined do when a plugin calls
+    /// them, by address ([`ScriptedGame::define_function`]).
+    functions: Mutex<std::collections::HashMap<u64, ScriptedFunction>>,
+    /// Where thunks' calls go, once a plugin made one.
+    thunks: Mutex<Option<Arc<runtime::intercepts::Intercepts>>>,
 }
+
+/// A function of the scripted game: what it does with its arguments' 64
+/// bits, in the game it runs in.
+pub type ScriptedFunction =
+    Arc<dyn Fn(&ScriptedGame, &[u64]) -> runtime::intercepts::Returned + Send + Sync>;
+
+/// Where the scripted game puts thunks: slot `n` is `16 * n` above it.
+pub const THUNKS: u64 = 0x7FF0_0000_0000;
 
 /// The address and size a watch of writes is on, and where writes came
 /// from.
@@ -113,11 +126,52 @@ impl Default for ScriptedGame {
             writes: Mutex::new((None, Vec::new())),
             executable: Mutex::new(None),
             intercepted: Mutex::new(Vec::new()),
+            functions: Mutex::default(),
+            thunks: Mutex::new(None),
         }
     }
 }
 
 impl ScriptedGame {
+    /// Makes a plugin's call of the function at `address` run `function`.
+    pub fn define_function(
+        &self,
+        address: u64,
+        function: impl Fn(&ScriptedGame, &[u64]) -> runtime::intercepts::Returned
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        self.functions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(address, Arc::new(function));
+    }
+
+    /// The game calls the thunk at `address` with `args`, as a function
+    /// that takes a callback does; zero for an address that is no thunk.
+    pub fn call_thunk(&self, address: u64, args: &[u64]) -> runtime::intercepts::Returned {
+        let intercepts = self
+            .thunks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let slot = address
+            .checked_sub(THUNKS)
+            .filter(|offset| offset % 16 == 0)
+            .and_then(|offset| usize::try_from(offset / 16).ok());
+        match (intercepts, slot) {
+            (Some(intercepts), Some(slot)) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|bits| runtime::intercepts::Arg::both(*bits))
+                    .collect();
+                intercepts.called(slot, &args)
+            }
+            _ => runtime::intercepts::Returned::default(),
+        }
+    }
+
     /// A write to the watched address by an instruction that ended at
     /// `after`, as the processor would report it; nothing while no watch
     /// runs.
@@ -194,6 +248,15 @@ impl Game for ScriptedGame {
     }
 
     fn call(&self, address: u64, args: &[u64]) -> Result<runtime::lens::act::Returned, String> {
+        let defined = self
+            .functions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&address)
+            .cloned();
+        if let Some(function) = defined {
+            return Ok(function(self, args));
+        }
         let entry = self
             .objects
             .lock()
@@ -229,6 +292,15 @@ impl Game for ScriptedGame {
             .unwrap_or_else(PoisonError::into_inner)
             .push(wav);
         true
+    }
+
+    fn thunk(
+        &self,
+        slot: usize,
+        intercepts: &Arc<runtime::intercepts::Intercepts>,
+    ) -> Result<u64, String> {
+        *self.thunks.lock().unwrap_or_else(PoisonError::into_inner) = Some(intercepts.clone());
+        Ok(THUNKS + 16 * slot as u64)
     }
 
     fn executable(&self) -> Option<(u64, Arc<Vec<u8>>)> {

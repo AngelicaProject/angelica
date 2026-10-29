@@ -34,6 +34,17 @@ pub mod bindings {
         },
     });
 }
+
+pub mod thunk_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "thunk-called",
+        with: {
+            "angelica:plugin/types": crate::sandbox::bindings::angelica::plugin::types,
+            "angelica:plugin/memory": crate::sandbox::bindings::angelica::plugin::memory,
+        },
+    });
+}
 use crate::sandbox::bindings::angelica::plugin::intercepts as api;
 
 /// The longest a handler runs.
@@ -134,6 +145,33 @@ impl Own {
 
     fn structure(&self, name: &str) -> Option<&angelica_anatomia::Struct> {
         self.source().structure(name)
+    }
+
+    /// Where the function `name` of these entries is in the running game.
+    ///
+    /// # Errors
+    /// An entry that is not a function, or is absent.
+    pub fn function(&self, name: &str) -> Result<u64> {
+        if !matches!(
+            self.anatomia.get(name).map(|entry| &entry.kind),
+            Some(EntryKind::Function { .. })
+        ) {
+            return Err(Error::new(
+                Kind::NotFound,
+                format!("{name} is not a function of the plugin's entries"),
+            ));
+        }
+        match self.resolution.get(name) {
+            Some(Ok(value)) => Ok(self.base + u64::from(value.get())),
+            Some(Err(absence)) => Err(Error::new(
+                Kind::Unavailable,
+                format!("{name} is absent: {absence}"),
+            )),
+            None => Err(Error::new(
+                Kind::Unavailable,
+                format!("{name} was not resolved"),
+            )),
+        }
     }
 }
 
@@ -287,12 +325,35 @@ pub struct Intercepts {
     plugins: Mutex<HashMap<String, Arc<Registered>>>,
     targets: RwLock<HashMap<u64, Chain>>,
     hooked: Mutex<std::collections::HashSet<u64>>,
+    /// Every thunk made since the game started, by its slot.
+    thunks: RwLock<Vec<Arc<Thunk>>>,
+}
+
+/// The most thunks in the game at once.
+pub const MOST_THUNKS: usize = 256;
+
+/// A thunk: a function of the game's convention that calls a plugin's
+/// handler.
+struct Thunk {
+    plugin: Arc<Registered>,
+    number: u32,
+    /// Its type, as the plugin's own entries give it.
+    ty: angelica_anatomia::FnType,
+    params: Arc<[Shape]>,
+    returns: Option<Shape>,
+    /// Where the game calls it.
+    address: u64,
+    /// The function of the plugin's entries it calls when the handler
+    /// cannot run.
+    fallback: Option<u64>,
 }
 
 /// The call a handler of an intercept instance is in, and what the handler
 /// changed in it.
 pub struct Frame {
     phase: api::Phase,
+    /// Whether the call is of a thunk, whose handler gives what it returns.
+    thunk: bool,
     /// What every handle of the call stands for.
     pub(crate) handles: crate::memory::Handles,
     snapshot: Arc<Vec<u8>>,
@@ -334,15 +395,36 @@ impl Drop for Running {
 struct Instance {
     store: Store<State>,
     bindings: bindings::InterceptHandler,
+    /// Its thunks' handler, when the plugin exports one.
+    thunks: Option<thunk_bindings::ThunkCalled>,
     snapshot: Arc<Vec<u8>>,
+}
+
+/// An intercept instance of `pre` in `store`: its handler, and its thunks'
+/// handler when the component exports one.
+fn instantiate(
+    store: &mut Store<State>,
+    pre: &bindings::InterceptHandlerPre<State>,
+) -> std::result::Result<
+    (
+        bindings::InterceptHandler,
+        Option<thunk_bindings::ThunkCalled>,
+    ),
+    String,
+> {
+    let instance = sandbox::call(store, |store| pre.instance_pre().instantiate(store))
+        .map_err(|e| format!("the intercept instance cannot be made: {e}"))?;
+    let bindings = bindings::InterceptHandler::new(&mut *store, &instance)
+        .map_err(|e| format!("the plugin does not export a handler: {e}"))?;
+    let thunks = thunk_bindings::ThunkCalled::new(&mut *store, &instance).ok();
+    Ok((bindings, thunks))
 }
 
 /// Makes an intercept instance of `plugin` and has it prepare `snapshot`.
 fn prepare(plugin: &Registered, snapshot: Arc<Vec<u8>>) -> std::result::Result<Instance, String> {
     let mut store = sandbox::store_for(&plugin.context, Role::Prepare(snapshot.clone()));
     sandbox::budget(&mut store, PREPARE_TIME, PREPARE_TIME, HANDLER_FUEL);
-    let bindings = sandbox::call(&mut store, |store| plugin.pre.instantiate(store))
-        .map_err(|e| format!("the intercept instance cannot be made: {e}"))?;
+    let (bindings, thunks) = instantiate(&mut store, &plugin.pre)?;
     let prepared = sandbox::call(&mut store, |store| {
         bindings.angelica_plugin_handler().call_prepare(&mut *store)
     })
@@ -352,6 +434,7 @@ fn prepare(plugin: &Registered, snapshot: Arc<Vec<u8>>) -> std::result::Result<I
     Ok(Instance {
         store,
         bindings,
+        thunks,
         snapshot,
     })
 }
@@ -511,12 +594,8 @@ impl Intercepts {
             handler_pre(&component).map_err(|reason| Error::new(Kind::Unavailable, reason))?;
         let mut store = sandbox::store_for(context, Role::Intercept(None));
         sandbox::budget(&mut store, PREPARE_TIME, PREPARE_TIME, HANDLER_FUEL);
-        let bindings = sandbox::call(&mut store, |store| pre.instantiate(store)).map_err(|e| {
-            Error::new(
-                Kind::Unavailable,
-                format!("the intercept instance cannot be made: {e}"),
-            )
-        })?;
+        let (bindings, thunks) = instantiate(&mut store, &pre)
+            .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
         let registered = Arc::new(Registered {
             context: context.clone(),
             pre,
@@ -524,6 +603,7 @@ impl Intercepts {
             instance: RwLock::new(Arc::new(Mutex::new(Instance {
                 store,
                 bindings,
+                thunks,
                 snapshot: Arc::new(Vec::new()),
             }))),
             published: AtomicU64::new(0),
@@ -771,8 +851,8 @@ fn place(chain: &Chain, plugin: &Arc<Registered>, function: &str) -> usize {
 }
 
 /// Links an intercept instance's imports for `component`: `runtime`, this
-/// interface, `memory`, and the WASI the standard library needs;
-/// everything else traps.
+/// interface, `memory`, `calls`, and the WASI the standard library
+/// needs; everything else traps.
 fn handler_pre(
     component: &wasmtime::component::Component,
 ) -> std::result::Result<bindings::InterceptHandlerPre<State>, String> {
@@ -785,6 +865,11 @@ fn handler_pre(
     .map_err(|e| e.to_string())?;
     api::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state).map_err(|e| e.to_string())?;
     crate::sandbox::bindings::angelica::plugin::memory::add_to_linker::<_, HasSelf<_>>(
+        &mut linker,
+        |state| state,
+    )
+    .map_err(|e| e.to_string())?;
+    crate::sandbox::bindings::angelica::plugin::calls::add_to_linker::<_, HasSelf<_>>(
         &mut linker,
         |state| state,
     )
@@ -962,6 +1047,7 @@ fn run(handler: &Handler, args: &[Arg], result: Option<Returned>, skipped: bool)
     let mut instance = instance.lock().unwrap_or_else(PoisonError::into_inner);
     let mut frame = Frame {
         phase: handler.phase,
+        thunk: false,
         handles: crate::memory::Handles::call(serial),
         snapshot: instance.snapshot.clone(),
         params: handler.params.clone(),
@@ -1023,6 +1109,10 @@ impl State {
     /// The call of a handler in `phase`.
     fn frame_in(&mut self, phase: api::Phase) -> Result<&mut Frame> {
         match &mut self.role {
+            Role::Intercept(Some(frame)) if frame.thunk => Err(Error::new(
+                Kind::WrongContext,
+                "a thunk's handler returns its value",
+            )),
             Role::Intercept(Some(frame)) if frame.phase == phase => Ok(frame),
             Role::Intercept(Some(_)) => Err(Error::new(
                 Kind::WrongContext,
@@ -1187,5 +1277,322 @@ impl api::Host for State {
             return Err(error.into());
         }
         crate::sandbox::bindings::angelica::plugin::memory::Host::edit_text(self, of, bytes)
+    }
+}
+
+use crate::sandbox::bindings::angelica::plugin::memory as memory_api;
+
+/// A value of a call as a thunk's handler sees it: a pointer is a handle.
+fn memory_value(value: api::Value) -> memory_api::Value {
+    match value {
+        api::Value::None => memory_api::Value::None,
+        api::Value::Signed(number) => memory_api::Value::Signed(number),
+        api::Value::Unsigned(number) => memory_api::Value::Unsigned(number),
+        api::Value::Boolean(flag) => memory_api::Value::Boolean(flag),
+        api::Value::Float32(number) => memory_api::Value::Float32(number),
+        api::Value::Float64(number) => memory_api::Value::Float64(number),
+        api::Value::Object(handle) => memory_api::Value::Object(handle),
+        api::Value::Text(handle) | api::Value::Pointer(handle) => {
+            memory_api::Value::Pointer(handle)
+        }
+    }
+}
+
+/// What a thunk's handler gave, as a value of a call; text has no place.
+fn call_value(value: &memory_api::Value) -> Option<api::Value> {
+    Some(match value {
+        memory_api::Value::None => api::Value::None,
+        memory_api::Value::Signed(number) => api::Value::Signed(*number),
+        memory_api::Value::Unsigned(number) => api::Value::Unsigned(*number),
+        memory_api::Value::Boolean(flag) => api::Value::Boolean(*flag),
+        memory_api::Value::Float32(number) => api::Value::Float32(*number),
+        memory_api::Value::Float64(number) => api::Value::Float64(*number),
+        memory_api::Value::Object(handle)
+        | memory_api::Value::Array(handle)
+        | memory_api::Value::Pointer(handle) => api::Value::Pointer(*handle),
+        memory_api::Value::Text(_) => return None,
+    })
+}
+
+impl Intercepts {
+    /// Makes a thunk of `context`'s plugin of the type `signature`, of its
+    /// own types, which calls its handler `handler`, or its function
+    /// `fallback` when the handler cannot run. Returns the thunk's slot
+    /// and the address the game calls.
+    ///
+    /// # Errors
+    /// Without the permissions or the plugin's entries, a type a handler
+    /// cannot take, a fallback of another type or absent, a plugin that
+    /// does not export a thunk handler, too many thunks, and a game that
+    /// cannot call plugins back.
+    pub fn thunk(
+        self: &Arc<Self>,
+        context: &Arc<Context>,
+        signature: &str,
+        handler: u32,
+        fallback: Option<&str>,
+    ) -> Result<(usize, u64)> {
+        let own = calling(context)?;
+        let Ok(Ty::Fn(ty)) = Ty::parse(signature) else {
+            return Err(Error::invalid(format!(
+                "`{signature}` is not a function type"
+            )));
+        };
+        let ty = crate::memory::unnamed(&ty);
+        let params: Arc<[Shape]> = ty
+            .params
+            .iter()
+            .map(|param| shape(&param.ty, &own))
+            .collect::<Option<Vec<_>>>()
+            .filter(|params| params.len() <= MAX_ARGS)
+            .ok_or_else(|| {
+                Error::invalid(format!(
+                    "a thunk takes at most {MAX_ARGS} arguments, each an integer, a float, a bool, an enum with a type, or a pointer"
+                ))
+            })?
+            .into();
+        let returns = match &ty.ret {
+            None => None,
+            Some(ret) => Some(shape(ret, &own).ok_or_else(|| {
+                Error::invalid("a thunk returns an integer, a float, a bool, an enum, or a pointer")
+            })?),
+        };
+        let fallback = fallback
+            .map(|name| {
+                let name = own.anatomia.canonical(name);
+                match own.anatomia.get(name).map(|entry| &entry.kind) {
+                    Some(EntryKind::Function { ty: found, .. })
+                        if crate::memory::unnamed(found) == ty => {}
+                    _ => {
+                        return Err(Error::invalid(format!(
+                            "{name} is not a function of the plugin's entries of the type {signature}"
+                        )));
+                    }
+                }
+                own.function(name)
+            })
+            .transpose()?;
+        let plugin = self.registered(context)?;
+        let exported = plugin
+            .instance
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .thunks
+            .is_some();
+        if !exported {
+            return Err(Error::new(
+                Kind::Unavailable,
+                "the plugin does not export a thunk handler",
+            ));
+        }
+        let mut thunks = self.thunks.write().unwrap_or_else(PoisonError::into_inner);
+        let slot = thunks.len();
+        if slot >= MOST_THUNKS {
+            return Err(Error::new(
+                Kind::LimitExceeded,
+                format!("the game has at most {MOST_THUNKS} thunks"),
+            ));
+        }
+        let address = context
+            .services
+            .game
+            .thunk(slot, self)
+            .map_err(|reason| Error::new(Kind::Unavailable, reason))?;
+        thunks.push(Arc::new(Thunk {
+            plugin,
+            number: handler,
+            ty,
+            params,
+            returns,
+            address,
+            fallback,
+        }));
+        Ok((slot, address))
+    }
+
+    /// The thunk in `slot`: the plugin it belongs to, where the game calls
+    /// it, and its type.
+    #[must_use]
+    pub fn thunk_of(&self, slot: usize) -> Option<(String, u64, angelica_anatomia::FnType)> {
+        let thunks = self.thunks.read().unwrap_or_else(PoisonError::into_inner);
+        let thunk = thunks.get(slot)?;
+        Some((
+            thunk.plugin.id().to_owned(),
+            thunk.address,
+            thunk.ty.clone(),
+        ))
+    }
+
+    /// How many arguments the thunk in `slot` takes.
+    #[must_use]
+    pub fn thunk_arity(&self, slot: usize) -> Option<usize> {
+        let thunks = self.thunks.read().unwrap_or_else(PoisonError::into_inner);
+        thunks.get(slot).map(|thunk| thunk.params.len())
+    }
+
+    /// The game called the thunk in `slot` with `args`: what it returns.
+    /// Its handler runs unless the plugin's handlers are disabled or this
+    /// thread is inside a handler already; otherwise, and when the handler
+    /// fails, the fallback function runs, or zero is returned.
+    pub fn called(&self, slot: usize, args: &[Arg]) -> Returned {
+        let Some(thunk) = self
+            .thunks
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(slot)
+            .cloned()
+        else {
+            return Returned::default();
+        };
+        let ran = if IN_HANDLER.with(Cell::get) || !thunk.plugin.enabled.load(Ordering::Acquire) {
+            None
+        } else {
+            let _running = Running::start();
+            run_thunk(&thunk, args)
+        };
+        ran.unwrap_or_else(|| {
+            let Some(address) = thunk.fallback else {
+                return Returned::default();
+            };
+            let bits: Vec<u64> = thunk
+                .params
+                .iter()
+                .zip(args)
+                .map(|(shape, arg)| raw(*arg, shape))
+                .collect();
+            thunk
+                .plugin
+                .context
+                .services
+                .game
+                .call(address, &bits)
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// The plugin's own entries, when it may call the game and make thunks.
+pub(crate) fn calling(context: &Context) -> Result<Arc<Own>> {
+    for permission in [
+        crate::manifest::Permission::Unreviewed,
+        crate::manifest::Permission::Server,
+    ] {
+        if !context.permissions.contains(&permission) {
+            return Err(Error::new(
+                Kind::PermissionDenied,
+                format!(
+                    "calling the game's functions needs the {} permission",
+                    permission.name()
+                ),
+            ));
+        }
+    }
+    context.own.clone().ok_or_else(|| {
+        Error::new(
+            Kind::Unavailable,
+            "the plugin's own entries are not resolved in this game",
+        )
+    })
+}
+
+/// Runs a thunk's handler with `args` in its plugin's intercept instance;
+/// another thread in it is waited for. Returns what the thunk returns, or
+/// none when the handler failed or gave a value of another type, which
+/// disables the plugin's handlers.
+fn run_thunk(thunk: &Thunk, args: &[Arg]) -> Option<Returned> {
+    let plugin = &thunk.plugin;
+    let serial = SERIAL.with(|serial| {
+        let next = serial.get().wrapping_add(1) & ((1 << 56) - 1);
+        serial.set(next);
+        next
+    });
+    let instance = plugin
+        .instance
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let mut instance = instance.lock().unwrap_or_else(PoisonError::into_inner);
+    let Instance {
+        store,
+        thunks,
+        snapshot,
+        ..
+    } = &mut *instance;
+    let handler = thunks.as_ref()?;
+    let mut frame = Frame {
+        phase: api::Phase::Before,
+        thunk: true,
+        handles: crate::memory::Handles::call(serial),
+        snapshot: snapshot.clone(),
+        params: thunk.params.clone(),
+        returns: thunk.returns.clone(),
+        args: args.to_vec(),
+        skip: None,
+        result: Returned::default(),
+    };
+    let values = thunk
+        .params
+        .iter()
+        .zip(args)
+        .map(|(shape, arg)| memory_value(frame.value(raw(*arg, shape), shape)))
+        .collect();
+    let call = thunk_bindings::exports::angelica::plugin::thunk_handler::ThunkCall {
+        handler: thunk.number,
+        args: values,
+    };
+    let started = Instant::now();
+    store.data_mut().role = Role::Intercept(Some(frame));
+    sandbox::budget(store, HANDLER_TIME, HANDLER_TIME, HANDLER_FUEL);
+    let outcome = sandbox::call(store, |store| {
+        handler
+            .angelica_plugin_thunk_handler()
+            .call_called(&mut *store, &call)
+    });
+    let frame = match std::mem::replace(&mut store.data_mut().role, Role::Intercept(None)) {
+        Role::Intercept(frame) => frame,
+        _ => None,
+    };
+    plugin.calls.fetch_add(1, Ordering::Relaxed);
+    plugin.nanos.fetch_add(
+        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+    let returned = outcome
+        .map_err(|trap| sandbox::describe_trap(store, &trap))
+        .and_then(|value| {
+            let frame = frame.ok_or_else(|| "the call's frame is gone".to_owned())?;
+            let Some(shape) = &thunk.returns else {
+                return Ok(Returned::default());
+            };
+            let value =
+                call_value(&value).ok_or_else(|| "the thunk's handler gave text".to_owned())?;
+            let bits = frame.bits(&value, shape).map_err(|error| error.message)?;
+            Ok(if shape.float() {
+                Returned {
+                    integer: 0,
+                    float: bits,
+                }
+            } else {
+                Returned {
+                    integer: bits,
+                    float: 0,
+                }
+            })
+        });
+    match returned {
+        Ok(returned) => Some(returned),
+        Err(reason) => {
+            plugin.enabled.store(false, Ordering::Release);
+            plugin.context.log.push(
+                crate::sandbox::bindings::angelica::plugin::runtime::Level::Error,
+                &format!(
+                    "the handler of thunk {} is disabled: {reason}",
+                    thunk.number
+                ),
+            );
+            None
+        }
     }
 }

@@ -131,6 +131,7 @@ mod tests {
             Permission::HttpWebsocket,
             Permission::LinksOpen,
             Permission::Unreviewed,
+            Permission::Server,
         ];
         for language in Language::ALL {
             texts.push(language.name().into());

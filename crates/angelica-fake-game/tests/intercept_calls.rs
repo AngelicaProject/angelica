@@ -15,51 +15,8 @@ use runtime::{
 use std::sync::OnceLock;
 
 const BASE: u64 = 0x1_4000_0000;
-const FUNCTIONS: &str = r#"
-[function."game.add"]
-type = "fn(u32, u32) -> u32"
-thread = "any"
-find = [{ scan = "48 89 5C 24 08 57 48 83 EC 20" }]
-
-[function."game.mixed"]
-type = "fn(f32, f64, u64, u64, u64) -> f64"
-thread = "any"
-find = [{ scan = "40 53 48 83 EC 30" }]
-
-[function."game.text"]
-type = "fn(u32, ptr<char8>) -> ptr"
-thread = "any"
-find = [{ scan = "48 83 EC 28 4C 8B C2" }]
-
-[function."game.store_row"]
-type = "fn(u32, u32, ptr<char8>)"
-thread = "any"
-find = [{ scan = "48 89 6C 24 10 56 41 54" }]
-
-[function."game.read_file"]
-type = "fn(ptr<char8>) -> u32"
-thread = "any"
-find = [{ scan = "48 89 74 24 18 41 56 48 83 EC 40" }]
-
-[function."game.open_box"]
-type = "fn(ptr<game.box>) -> u32"
-thread = "any"
-find = [{ scan = "55 48 8B EC 48 83 EC 50" }]
-"#;
-const TYPES: &str = r#"
-[struct."game.box"]
-size = 0x20
-text = "label"
-
-[struct."game.box".fields.count]
-type = "u32"
-at = 0x8
-
-[struct."game.box".fields.label]
-type = "char8[16]"
-text = true
-at = 0x10
-"#;
+const FUNCTIONS: &str = include_str!("../intercepting/anatomia/functions/game.toml");
+const TYPES: &str = include_str!("../intercepting/anatomia/types/game.toml");
 
 fn component() -> &'static [u8] {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -74,6 +31,8 @@ fn executable() -> Vec<u8> {
     code[0x80..0x87].copy_from_slice(&[0x48, 0x83, 0xEC, 0x28, 0x4C, 0x8B, 0xC2]);
     code[0xC0..0xC8].copy_from_slice(&[0x48, 0x89, 0x6C, 0x24, 0x10, 0x56, 0x41, 0x54]);
     code[0x60..0x68].copy_from_slice(&[0x55, 0x48, 0x8B, 0xEC, 0x48, 0x83, 0xEC, 0x50]);
+    code[0xA0..0xA8].copy_from_slice(&[0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x48, 0x83]);
+    code[0xB0..0xB8].copy_from_slice(&[0x53, 0x56, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x90]);
     code[0xE0..0xEB].copy_from_slice(&[
         0x48, 0x89, 0x74, 0x24, 0x18, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x40,
     ]);
@@ -84,6 +43,8 @@ fn executable() -> Vec<u8> {
             (0x1040, 0x1060),
             (0x1060, 0x1078),
             (0x1080, 0x10A0),
+            (0x10A0, 0x10B0),
+            (0x10B0, 0x10C0),
             (0x10C0, 0x10D8),
             (0x10E0, 0x10F8),
         ])
@@ -534,4 +495,126 @@ fn a_handler_reads_and_writes_the_plugins_own_object_through_its_handle() {
     let written = test.bytes_at(at, 0x20);
     assert_eq!(written[0x8..0xC], 42u32.to_le_bytes());
     assert_eq!(&written[0x10..0x14], b"BOX\0");
+}
+
+/// Where the plugin's functions are in the synthetic executable.
+const ADD: u64 = BASE + 0x1000;
+const EACH: u64 = BASE + 0x10A0;
+const TWICE: u64 = BASE + 0x10B0;
+
+/// Clicks `id` in the plugin's window and gives the line it logged for it.
+fn click(test: &TestHost, plugin: &str, id: &str) -> String {
+    test.event(
+        plugin,
+        Event::Clicked(WidgetRef {
+            window: "main".into(),
+            id: id.into(),
+        }),
+    );
+    let prefix = format!("{}:", id.split(':').next().unwrap_or(id));
+    log(test, plugin)
+        .into_iter()
+        .rfind(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("nothing logged for {id}"))
+}
+
+/// The game's own functions behind the plugin's entries: `game.add` adds,
+/// `game.each` calls its callback with 0 to `count` and sums, and
+/// `game.twice` doubles.
+fn define_functions(test: &TestHost) {
+    let returned = |integer: u64| Returned { integer, float: 0 };
+    test.game
+        .define_function(ADD, move |_, args| returned(args[0] + args[1]));
+    test.game.define_function(EACH, move |game, args| {
+        let sum = (0..args[1])
+            .map(|index| game.call_thunk(args[0], &[index]).integer)
+            .sum();
+        returned(sum)
+    });
+    test.game
+        .define_function(TWICE, move |_, args| returned(args[0] * 2));
+}
+
+const SERVER: &str = "\"server\" = true\n";
+
+#[test]
+fn a_plugin_calls_a_function_of_its_own_entries() {
+    let test = started(&[("intercepting", SERVER)]);
+    define_functions(&test);
+    assert_eq!(click(&test, "intercepting", "add:2:3"), "add: 5");
+}
+
+#[test]
+fn without_the_server_permission_a_plugin_calls_nothing() {
+    let test = started(&[("intercepting", "")]);
+    define_functions(&test);
+    assert_eq!(
+        click(&test, "intercepting", "add:2:3"),
+        "add: ErrorKind::PermissionDenied"
+    );
+    assert_eq!(
+        click(&test, "intercepting", "thunk:0"),
+        "thunk: ErrorKind::PermissionDenied"
+    );
+}
+
+#[test]
+fn the_game_calls_a_plugins_thunk_back() {
+    let test = started(&[("intercepting", SERVER)]);
+    define_functions(&test);
+    assert_eq!(click(&test, "intercepting", "thunk:0"), "thunk: accepted");
+    assert_eq!(
+        click(&test, "intercepting", "each:4"),
+        "each: 60",
+        "0 + 10 + 20 + 30, each from the thunk's handler"
+    );
+}
+
+#[test]
+fn a_failing_thunk_calls_its_fallback() {
+    let test = started(&[("intercepting", SERVER)]);
+    define_functions(&test);
+    assert_eq!(
+        click(&test, "intercepting", "thunk:1:game.add"),
+        "thunk: ErrorKind::InvalidArgument",
+        "a fallback of another type"
+    );
+    assert_eq!(
+        click(&test, "intercepting", "thunk:1:game.twice"),
+        "thunk: accepted"
+    );
+    assert_eq!(
+        click(&test, "intercepting", "each:4"),
+        "each: 12",
+        "0 + 2 + 4 + 6, from the fallback"
+    );
+    let lines = log(&test, "intercepting");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("the handler of thunk 1 is disabled")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_thunk_of_a_stopped_plugin_returns_zero() {
+    let test = started(&[("intercepting", SERVER)]);
+    define_functions(&test);
+    assert_eq!(click(&test, "intercepting", "thunk:0"), "thunk: accepted");
+    let thunk = runtime::intercepts::Intercepts::thunk_of(&test.host.services().intercepts, 0)
+        .unwrap()
+        .1;
+    assert_eq!(test.game.call_thunk(thunk, &[5]).integer, 50);
+    test.host.queue(Action::Disable("intercepting".into()));
+    test.frames(1);
+    assert_eq!(test.game.call_thunk(thunk, &[5]).integer, 0);
+}
+
+#[test]
+fn a_thunk_that_gives_a_value_of_another_type_returns_zero() {
+    let test = started(&[("intercepting", SERVER)]);
+    define_functions(&test);
+    assert_eq!(click(&test, "intercepting", "thunk:2"), "thunk: accepted");
+    assert_eq!(click(&test, "intercepting", "each:3"), "each: 0");
 }

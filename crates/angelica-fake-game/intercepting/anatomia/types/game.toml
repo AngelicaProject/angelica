@@ -1,0 +1,12 @@
+[struct."game.box"]
+size = 0x20
+text = "label"
+
+[struct."game.box".fields.count]
+type = "u32"
+at = 0x8
+
+[struct."game.box".fields.label]
+type = "char8[16]"
+text = true
+at = 0x10

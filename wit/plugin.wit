@@ -61,17 +61,25 @@ world plugin {
     import websocket;
     import intercepts;
     import memory;
+    import calls;
     export guest;
 }
 
-/// A plugin that may also intercept: what the SDK builds. A component of
-/// the `plugin` world without `handler` runs as before.
+/// A plugin that may also intercept and make thunks: what the SDK builds.
+/// A component of the `plugin` world without `handler` and
+/// `thunk-handler` runs as before.
 world intercepting {
     include plugin;
     export handler;
+    export thunk-handler;
 }
 
 /// What the host calls in an intercept instance.
 world intercept-handler {
     export handler;
+}
+
+/// What the host calls in an intercept instance for a thunk.
+world thunk-called {
+    export thunk-handler;
 }

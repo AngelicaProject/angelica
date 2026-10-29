@@ -55,6 +55,13 @@ pub fn generate(anatomia: &Anatomia, sdk: &str, central: bool) -> String {
         }
     }
     for entry in anatomia.entries() {
+        if let (Kind::Function { ty, .. }, false) = (&entry.kind, central) {
+            areas.entry(area(&entry.name)).or_default().functions.push((
+                &entry.name,
+                ty,
+                entry.doc.as_deref(),
+            ));
+        }
         if let Kind::Global { ty } = &entry.kind {
             let holds = views.object_type(ty);
             if holds || !central {
@@ -75,7 +82,8 @@ pub fn generate(anatomia: &Anatomia, sdk: &str, central: bool) -> String {
         let _ = writeln!(out, "pub mod {} {{", ident(name));
         let _ = writeln!(
             out,
-            "    use {sdk}::memory::{{self, Array, Field, FromValue, Handle, Pointer, Value, View}};"
+            "    use {sdk}::memory::{{self, Array, Field, FromValue, Handle, Pointer, Value, View}};
+    use {sdk}::calls;"
         );
         let _ = writeln!(out, "    use {sdk}::Error;");
         for enumeration in &area.enums {
@@ -86,6 +94,9 @@ pub fn generate(anatomia: &Anatomia, sdk: &str, central: bool) -> String {
         }
         for (global, ty, doc) in &area.globals {
             views.global(&mut out, global, ty, *doc);
+        }
+        for (function, ty, doc) in &area.functions {
+            views.function(&mut out, sdk, function, ty, *doc);
         }
         out.push_str("}\n");
     }
@@ -114,6 +125,7 @@ struct Area<'a> {
     structs: Vec<&'a Struct>,
     enums: Vec<&'a Enum>,
     globals: Vec<(&'a str, &'a Ty, Option<&'a str>)>,
+    functions: Vec<(&'a str, &'a angelica_anatomia::FnType, Option<&'a str>)>,
 }
 
 fn area(name: &str) -> &str {
@@ -396,6 +408,86 @@ impl Views<'_> {
                 "\n        /// Writes the field: see `memory::write`.\n        pub fn set_{name}(&self, value: {write}) -> Result<(), Error> {{\n            static FIELD: Field = Field::new({entry});\n            memory::write(self.0, &FIELD, value)\n        }}"
             );
         }
+    }
+
+    /// The Rust type an argument of a call of `ty` takes.
+    fn argument_type(&self, ty: &Ty) -> Option<String> {
+        if let Some(number) = self.number(ty) {
+            return Some(number.to_owned());
+        }
+        match self.plain(ty) {
+            Ty::Fn(_) => Some("&calls::Thunk".into()),
+            Ty::Ptr(Some(inner)) if matches!(self.plain(inner), Ty::Char8) => Some("&[u8]".into()),
+            _ => self.write_type(ty),
+        }
+    }
+
+    /// The Rust type a call of a function that returns `ty` gives.
+    fn return_type(&self, ty: &Ty) -> Option<String> {
+        if let Some(number) = self.number(ty) {
+            return Some(number.to_owned());
+        }
+        match self.plain(ty) {
+            Ty::Ptr(Some(inner)) => match self.plain(inner) {
+                Ty::Named(name, args) if args.is_empty() && self.structure_of(name).is_some() => {
+                    Some(format!("Option<{}>", Self::path(name)))
+                }
+                _ => Some("Option<Pointer>".into()),
+            },
+            Ty::Ptr(None) | Ty::Fn(_) => Some("Option<Pointer>".into()),
+            _ => None,
+        }
+    }
+
+    fn function(
+        &self,
+        out: &mut String,
+        sdk: &str,
+        name: &str,
+        ty: &angelica_anatomia::FnType,
+        text: Option<&str>,
+    ) {
+        let mut params = Vec::new();
+        let mut values = Vec::new();
+        for (index, param) in ty.params.iter().enumerate() {
+            let Some(rust) = self.argument_type(&param.ty) else {
+                return;
+            };
+            let argument = ident(&param.name.clone().unwrap_or_else(|| format!("arg{index}")));
+            params.push(format!("{argument}: {rust}"));
+            values.push(format!("{sdk}::memory::IntoValue::into_value({argument})"));
+        }
+        let (returns, body) = match &ty.ret {
+            None => (
+                "()".to_owned(),
+                "        calls::call(FUNCTION, &args)?;
+        Ok(())"
+                    .to_owned(),
+            ),
+            Some(ret) => {
+                let Some(rust) = self.return_type(ret) else {
+                    return;
+                };
+                (
+                    rust,
+                    "        FromValue::from_value(calls::call(FUNCTION, &args)?)".to_owned(),
+                )
+            }
+        };
+        let function = ident(&subject(name).replace('.', "_"));
+        let _ = writeln!(out);
+        doc(out, "    ", text);
+        let _ = writeln!(
+            out,
+            "    pub fn {function}({}) -> Result<{returns}, Error> {{
+        const FUNCTION: &str = {};
+        let args = [{}];
+{body}
+    }}",
+            params.join(", "),
+            literal(name),
+            values.join(", ")
+        );
     }
 
     fn global(&self, out: &mut String, name: &str, ty: &Ty, text: Option<&str>) {

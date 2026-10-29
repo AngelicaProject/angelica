@@ -1,0 +1,63 @@
+package angelica:plugin@1.0.0;
+
+/// Calls of the game's functions that the plugin's own Anatomia entries
+/// describe, and thunks: functions of the game's convention that call the
+/// plugin back, for the game to call where it takes a callback.
+///
+/// Both need the `unreviewed` and `server` permissions: a function only
+/// the plugin's author describes may send a request to the game's servers.
+/// A call of a function the game would not make can crash the game, as a
+/// wrong call by the game itself would; the description's checks are what
+/// keeps the call to the function the author meant.
+interface calls {
+    use types.{error};
+    use memory.{handle, value};
+
+    /// Calls `function`, a function of the plugin's own entries that is
+    /// present in this build, with `args` by position, and gives what it
+    /// returns. Each argument has the type the function's entry gives it:
+    /// a number in its range, a `bool`, for a pointer to a structure a
+    /// handle of an object of it or `none`, for a pointer to 8-bit text
+    /// `text` (the host passes it NUL-terminated, valid for the call), for
+    /// a function a thunk of the same type, for other memory a handle of
+    /// the same type. A function whose entry says `thread = "main"` is
+    /// called only from the main instance; `thread = "any"` from a handler
+    /// too. A pointer the function returns is a handle of the frame or the
+    /// call. The function has at most 16 arguments.
+    call: func(function: string, args: list<value>) -> result<value, error>;
+
+    /// Called from the main instance: a thunk of the type `signature`
+    /// (`fn(u32, ptr<game.node>) -> bool`, of the plugin's own types), a
+    /// handle the plugin passes to a call or writes into a pointer field of
+    /// the same type. Each time the game calls it, the host calls
+    /// `thunk-handler.called` with `handler` in the plugin's intercept
+    /// instance, under a handler's rules, and returns what it gives.
+    ///
+    /// When the handler fails, runs past its limit, or the plugin has
+    /// stopped, the thunk calls `fallback`, a function of the plugin's own
+    /// entries of the same type, with the same arguments, or returns zero
+    /// without one; it does the same when the game calls it from inside a
+    /// handler. A thunk is the plugin's until the game exits: the host
+    /// never gives its address to another one. At most 256 thunks exist in
+    /// the game at once.
+    thunk: func(signature: string, handler: u32, fallback: option<string>) -> result<handle, error>;
+}
+
+/// What a plugin that makes thunks exports.
+interface thunk-handler {
+    use memory.{value};
+
+    /// One call of a thunk by the game.
+    record thunk-call {
+        /// The number `calls.thunk` gave the thunk.
+        handler: u32,
+        /// The arguments by position, as the thunk's type gives them; a
+        /// pointer to a structure is a handle of this call.
+        args: list<value>,
+    }
+
+    /// The game called a thunk of the plugin: gives what the thunk
+    /// returns, a value of its type, or `none` for one that returns
+    /// nothing.
+    called: func(call: thunk-call) -> value;
+}

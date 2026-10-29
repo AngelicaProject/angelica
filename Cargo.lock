@@ -194,6 +194,7 @@ name = "angelica-intercepting"
 version = "0.1.0"
 dependencies = [
  "angelica-sdk",
+ "angelica-views",
 ]
 
 [[package]]
