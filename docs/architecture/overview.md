@@ -49,6 +49,8 @@ Each crate owns one boundary:
 - `angelica-sdk`: the Rust crate plugin authors use: bindings for `wit/`, the `Plugin` trait, helpers, and the views of the game map's description (`game`), which `angelica anatomia views` generates.
 - `angelica-views`: the generator of typed views of an Anatomia description for Rust plugins, which a plugin's `build.rs` runs on its own entries. No `unsafe`.
 - `angelica-look`: Angelica's themes, type, and the drawn pieces of its interface for egui, which the host's menu and the interface kit share; its fonts' bytes are a feature the host takes and a plugin leaves out. No `unsafe`.
+- `angelica-query`: the Lens query language, the planner, and the schema of a game build, which the host's Lens and the Lens library share; under the MIT license, as plugins link it. No `unsafe`.
+- `angelica-lens`: Lens as a library in the plugin, on the core's primitives. No `unsafe`.
 - `angelica-kit`: the interface kit, egui with Angelica's look drawn through the `gpu` interface on a plugin's surface; a plugin's dependency. No `unsafe`.
 - `angelica-fake-game`: runs plugins in the real host against a scripted game.
 - `angelica-games`: where the game is installed, for the installer and the `angelica` command. No `unsafe`.

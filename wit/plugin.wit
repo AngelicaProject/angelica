@@ -64,6 +64,7 @@ world plugin {
     import calls;
     import gpu;
     import look;
+    import game-map;
     export guest;
 }
 

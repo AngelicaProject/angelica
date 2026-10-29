@@ -7,6 +7,8 @@ members = [
   "crates/angelica-views",
   "crates/angelica-look",
   "crates/angelica-kit",
+  "crates/angelica-query",
+  "crates/angelica-lens",
   "crates/angelica-hook",
   "crates/angelica-text",
   "crates/angelica-view",
@@ -23,6 +25,7 @@ members = [
   "crates/angelica-fake-game/hostile",
   "crates/angelica-fake-game/intercepting",
   "crates/angelica-fake-game/memory",
+  "crates/angelica-fake-game/lens-library",
   "examples/hello",
   "examples/inventory",
   "examples/typing-fold",
@@ -44,6 +47,8 @@ angelica-anatomia = { path = "crates/angelica-anatomia" }
 angelica-views = { path = "crates/angelica-views" }
 angelica-look = { path = "crates/angelica-look", default-features = false }
 angelica-kit = { path = "crates/angelica-kit" }
+angelica-query = { path = "crates/angelica-query" }
+angelica-lens = { path = "crates/angelica-lens" }
 angelica-pe = { path = "crates/angelica-pe" }
 angelica-text = { path = "crates/angelica-text" }
 angelica-view = { path = "crates/angelica-view" }

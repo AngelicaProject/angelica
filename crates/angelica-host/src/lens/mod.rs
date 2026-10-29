@@ -10,10 +10,10 @@
 pub mod act;
 pub mod decide;
 pub mod derived;
-pub mod plan;
-pub mod query;
+pub use angelica_query::plan;
+pub use angelica_query::query;
 pub mod read;
-pub mod schema;
+pub use angelica_query::schema;
 pub mod set;
 #[cfg(test)]
 mod tests;
@@ -427,4 +427,21 @@ impl Queries {
             .and_then(Option::take)
             .map(|held| held.kind)
     }
+}
+
+/// The model of `map` resolved through a catalog of the running build.
+#[must_use]
+pub fn schema_from_catalog(
+    map: &angelica_map::Map,
+    catalog: &crate::catalog::Catalog,
+    base: u64,
+) -> Schema {
+    Schema::new(map, base, |name| match catalog.present.get(name) {
+        Some(resolved) => Ok(resolved.value),
+        None => Err(catalog
+            .absent
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| "not resolved".into())),
+    })
 }

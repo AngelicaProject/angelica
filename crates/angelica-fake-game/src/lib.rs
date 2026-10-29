@@ -294,6 +294,20 @@ impl Game for ScriptedGame {
         true
     }
 
+    fn code_of(&self, address: u64) -> Option<runtime::intercepts::Code> {
+        // The game map's functions have a place of their own in the
+        // scripted memory, where nothing runs.
+        if (objects::BASE..THUNKS).contains(&address) {
+            let ranges = std::iter::once(address..address + 16).collect();
+            return Some(runtime::intercepts::Code {
+                start: address,
+                ranges,
+                prologue: 0,
+            });
+        }
+        runtime::game::code_in(&self.executable()?, address)
+    }
+
     fn thunk(
         &self,
         slot: usize,

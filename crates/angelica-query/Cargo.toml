@@ -1,0 +1,17 @@
+[package]
+name = "angelica-query"
+description = "Lens queries over the game map's object model, their plans, and the schema of a game build, for the host and for the Lens library."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+angelica-map.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

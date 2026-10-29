@@ -33,6 +33,7 @@ getrandom.workspace = true
 wasmtime.workspace = true
 egui.workspace = true
 angelica-look = { workspace = true, features = ["faces"] }
+angelica-query.workspace = true
 num-traits.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "hlsl-out"] }
 ureq.workspace = true
