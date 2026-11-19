@@ -116,11 +116,21 @@ pub struct Entry {
     pub more: Vec<Action>,
 }
 
+/// The appearance of a compact checkbox. A mixed checkbox toggles on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckState {
+    Unchecked,
+    Checked,
+    Mixed,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Checkbox {
     pub id: String,
     pub label: String,
     pub checked: bool,
+    pub compact: bool,
+    pub mixed: bool,
     /// The plugin's words for checked and not checked, in place of the
     /// host's **On** and **Off**.
     pub words: Option<[String; 2]>,
@@ -185,6 +195,8 @@ pub struct Split {
     pub values: Vec<String>,
     /// A small heading above each section; empty for none.
     pub groups: Vec<String>,
+    /// A checkbox beside each section, when present.
+    pub checks: Vec<Option<CheckState>>,
     pub selected: u32,
     /// The side's width in points.
     pub width: u16,
@@ -254,6 +266,15 @@ pub struct Sparkline {
     pub height: u16,
 }
 
+/// A window into a scrolling list. The rows start at `first`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualList {
+    pub id: String,
+    pub first: u32,
+    pub total: u32,
+    pub epoch: u32,
+}
+
 /// A part of a place. Containers are a `Begin…` and the matching `End…`
 /// around the parts they hold.
 #[derive(Debug, Clone, PartialEq)]
@@ -276,6 +297,8 @@ pub enum Widget {
     EndSection,
     BeginTable(Table),
     EndTable,
+    BeginVirtualList(VirtualList),
+    EndVirtualList,
     /// The chosen section's parts follow up to `EndSplit`.
     BeginSplit(Split),
     EndSplit,

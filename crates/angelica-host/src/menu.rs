@@ -153,6 +153,7 @@ const MIN_BODY: f32 = ROW * 3.0 + AROUND_LIST;
 /// The height of Installed around the list: the search, the link field,
 /// and the footer. Settings take the same height as Installed.
 const AROUND_LIST: f32 = 44.0 + 44.0 + 28.0;
+const STANDBY_BODY: f32 = 120.0;
 
 /// What the player can do with a plugin from its row or its page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +172,7 @@ enum RowAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tone {
     Good,
+    Paused,
     Attention,
     Failed,
 }
@@ -217,6 +219,7 @@ pub struct Menu {
     /// Withdrawn plugins already turned off in this session.
     withdrawn: std::collections::BTreeSet<String>,
     notes: Vec<Note>,
+    standby_since: Option<f64>,
     seen: u64,
     /// The player chose **Arrange panels**.
     arrange: bool,
@@ -333,6 +336,7 @@ impl Menu {
             copied: None,
             withdrawn: std::collections::BTreeSet::new(),
             notes: Vec::new(),
+            standby_since: None,
             seen: 0,
             arrange: false,
             notes_bottom: 0.0,
@@ -351,6 +355,7 @@ impl Menu {
     /// Where the player left the menu and how large, once they moved or
     /// resized it since the last call.
     pub(crate) fn take_place(&mut self, screen: Rect) -> Option<MenuPlace> {
+        let body = self.visible_body();
         let size = &mut self.size;
         if !std::mem::take(&mut size.changed) {
             return None;
@@ -365,7 +370,7 @@ impl Menu {
             x: (rect.left() - screen.left()) / screen.width().max(1.0),
             y: (rect.top() - screen.top()) / screen.height().max(1.0),
             width: size.width,
-            height: rect.height() / k,
+            height: rect.height() / k + size.body - body,
         })
     }
 
@@ -488,6 +493,9 @@ impl Menu {
             time: context.input(|input| input.time),
             p: self.theme.palette(),
         };
+        if host.is_in_standby() {
+            self.standby_since.get_or_insert(view.time);
+        }
         if let Some(installer) = host.plugin_installer() {
             self.collect_notes(installer, view.time);
         }
@@ -502,6 +510,15 @@ impl Menu {
     }
 
     fn draw_menu(&mut self, context: &egui::Context, view: &View<'_>) -> bool {
+        let standby = view.host.is_in_standby();
+        if standby {
+            self.page = None;
+            self.removing = None;
+            self.arrange = false;
+            if self.tab == Tab::Catalog {
+                self.tab = Tab::Installed;
+            }
+        }
         let typing = context.memory(|memory| memory.focused().is_some());
         let escape = !typing && context.input(|input| input.key_pressed(egui::Key::Escape));
         // Esc leaves a plugin's page first, then closes the menu.
@@ -540,7 +557,9 @@ impl Menu {
                 keep = false;
             }
             self.draw_tabs(ui, view);
-            if self.page.is_some() {
+            if standby && self.tab != Tab::Settings {
+                self.draw_standby(ui, view);
+            } else if self.page.is_some() {
                 self.draw_page(ui, view);
             } else {
                 match self.tab {
@@ -549,9 +568,11 @@ impl Menu {
                     Tab::Settings => self.draw_settings(ui, view),
                 }
             }
-            let frame = ui.min_rect();
-            (resized, stopped) =
-                crate::places::resize_edges(ui, Id::new("angelica-menu"), frame, look);
+            if !standby || self.tab == Tab::Settings {
+                let frame = ui.min_rect();
+                (resized, stopped) =
+                    crate::places::resize_edges(ui, Id::new("angelica-menu"), frame, look);
+            }
         });
         if let Some(shown) = shown {
             self.resize(
@@ -572,6 +593,54 @@ impl Menu {
         keep
     }
 
+    fn visible_body(&self) -> f32 {
+        if self.standby_since.is_some() && self.tab != Tab::Settings {
+            STANDBY_BODY
+        } else {
+            self.size.body
+        }
+    }
+
+    fn draw_standby(&self, ui: &mut Ui, view: &View<'_>) {
+        let s = self.strings();
+        let p = view.p;
+        let (body, _) = ui.allocate_exact_size(
+            vec2(ui.available_width(), view.at(STANDBY_BODY)),
+            Sense::hover(),
+        );
+        let card = body.shrink2(vec2(view.at(16.0), view.at(16.0)));
+        let painter = ui.painter();
+        painter.rect_filled(card, CornerRadius::same(6), p.hover);
+        painter.rect_stroke(
+            card,
+            CornerRadius::same(6),
+            Stroke::new(1.0, p.line),
+            egui::StrokeKind::Inside,
+        );
+        let icon = pos2(card.left() + view.at(34.0), card.center().y);
+        painter.circle_filled(icon, view.at(18.0), p.tile);
+        pause_mark(painter, icon, view.at(6.0), p.action);
+
+        let left = icon.x + view.at(34.0);
+        let width = (card.right() - view.at(16.0) - left).max(0.0);
+        let heading = painter.layout(
+            s.standby_title.to_owned(),
+            strong(view.at(17.0)),
+            p.text,
+            width,
+        );
+        let hint = painter.layout(
+            s.standby_hint.to_owned(),
+            sans(view.at(13.5)),
+            p.secondary,
+            width,
+        );
+        let gap = view.at(5.0);
+        let top = card.center().y - (heading.size().y + gap + hint.size().y) / 2.0;
+        painter.galley(pos2(left, top + heading.size().y + gap), hint, p.secondary);
+        painter.galley(pos2(left, top), heading, p.text);
+    }
+
     /// Applies what the player did to the menu's frame this frame: `rect`
     /// is where it was drawn, `resized` the edge dragged and by how much.
     fn resize(
@@ -583,8 +652,8 @@ impl Menu {
         context: &egui::Context,
     ) {
         let k = view.k;
+        let chrome = rect.height() - view.at(self.visible_body());
         let size = &mut self.size;
-        let chrome = rect.height() - view.at(size.body);
         let most_body = ((view.screen.height() * 0.9 - chrome) / k).max(MIN_BODY);
         let most_width = (view.screen.width() * 0.9 / k).clamp(MIN_WIDTH, MAX_WIDTH);
         if let Some(place) = size.restore.take() {
@@ -627,11 +696,16 @@ impl Menu {
     /// player closed the menu.
     fn menu_bar(&mut self, ui: &mut Ui, view: &View<'_>) -> bool {
         let s = self.strings();
+        let standby = view.host.is_in_standby();
         let waiting = view
             .statuses
             .iter()
             .any(|status| Group::of(status) == Group::Attention);
-        let pulse = self.pulse(view.statuses);
+        let pulse = if standby {
+            s.standby_status.to_owned()
+        } else {
+            pulse(self.language, view.statuses)
+        };
         let path: Vec<String> = self
             .page
             .as_ref()
@@ -642,7 +716,9 @@ impl Menu {
             })
             .into_iter()
             .collect();
-        let mark = if waiting {
+        let mark = if standby {
+            Mark::None
+        } else if waiting {
             Mark::Attention
         } else if view.statuses.contains(&Status::Running) {
             Mark::Running
@@ -668,13 +744,14 @@ impl Menu {
         if let Some(button) = &pressed.menu {
             let installer = view.host.plugin_installer();
             egui::Popup::menu(button).show(|ui| {
-                if let Some(installer) = installer
+                if !standby
+                    && let Some(installer) = installer
                     && !installer.checking()
                     && menu_item(ui, view, None, s.menu_check_updates, view.p.text)
                 {
                     installer.check_updates();
                 }
-                if menu_item(ui, view, None, s.arrange_panels, view.p.text) {
+                if !standby && menu_item(ui, view, None, s.arrange_panels, view.p.text) {
                     self.arrange = true;
                 }
                 if menu_item(ui, view, None, s.tab_settings, view.p.text) {
@@ -694,8 +771,17 @@ impl Menu {
 
     fn draw_tabs(&mut self, ui: &mut Ui, view: &View<'_>) {
         let s = self.strings();
-        let tabs = [Tab::Installed, Tab::Catalog, Tab::Settings];
-        let labels = [s.tab_installed, s.tab_catalog, s.tab_settings];
+        let (tabs, labels): (&[Tab], &[&str]) = if view.host.is_in_standby() {
+            (
+                &[Tab::Installed, Tab::Settings],
+                &[s.tab_plugins, s.tab_settings],
+            )
+        } else {
+            (
+                &[Tab::Installed, Tab::Catalog, Tab::Settings],
+                &[s.tab_installed, s.tab_catalog, s.tab_settings],
+            )
+        };
         // A plugin's page belongs to no tab: none is chosen, and any of
         // them leads back.
         let selected = if self.page.is_some() {
@@ -712,7 +798,7 @@ impl Menu {
                     view.p,
                     &|value| view.at(value),
                     Id::new("angelica-tab"),
-                    &labels,
+                    labels,
                     selected,
                 )
             })
@@ -1521,27 +1607,6 @@ impl Menu {
         );
     }
 
-    /// "1 waiting for you, 14 running".
-    fn pulse(&self, statuses: &[Status]) -> String {
-        if statuses.is_empty() {
-            return self.strings().nothing_yet.to_owned();
-        }
-        let waiting = statuses
-            .iter()
-            .filter(|status| Group::of(status) == Group::Attention)
-            .count();
-        let running = statuses
-            .iter()
-            .filter(|status| **status == Status::Running)
-            .count();
-        let running = self.language.running(running);
-        if waiting > 0 {
-            format!("{}, {running}", self.language.waiting(waiting))
-        } else {
-            running
-        }
-    }
-
     /// A plugin's About page, under the tabs in place of their
     /// content and in its height: what the plugin is, its main action and switch, what it may
     /// do, what the plugin installer did with it, and the rare actions. For
@@ -2089,7 +2154,9 @@ impl Menu {
         let s = self.strings();
         let p = view.p;
         self.angelica_updates(ui, view);
-        if let Some(installer) = view.host.plugin_installer() {
+        if !view.host.is_in_standby()
+            && let Some(installer) = view.host.plugin_installer()
+        {
             setting(ui, view, s.setting_check, |ui| {
                 let checking = installer.checking();
                 let label = if checking { s.checking } else { s.check_now };
@@ -2505,28 +2572,22 @@ impl Menu {
         }
     }
 
-    /// The notes at the top right while the menu is closed: how Angelica
-    /// is for the first seconds of the game and while a plugin needs the
-    /// player, then what the plugin installer did. They take no input.
+    /// The notes at the top right while the menu is closed. They take no input.
     fn draw_notes(&mut self, context: &egui::Context, view: &View<'_>) {
-        let waiting = view
-            .statuses
-            .iter()
-            .filter(|status| Group::of(status) == Group::Attention)
-            .count();
         let hint = self.key().name().to_owned();
         let mut notes: Vec<(String, Tone, f32, String)> = Vec::new();
         let mut heads: Vec<Option<String>> = Vec::new();
+        let standby = self.standby_since.is_some();
         let acting = &view.host.services().lens.acting;
         let stop = self.stop_key().name();
-        if acting.stopped() {
+        if !standby && acting.stopped() {
             notes.push((
                 self.strings().note_stopped.to_owned(),
                 Tone::Attention,
                 1.0,
                 fill(self.strings().hint_resume, &[("key", stop)]),
             ));
-        } else if let Some(plugin) = acting.acting(std::time::Instant::now()) {
+        } else if !standby && let Some(plugin) = acting.acting(std::time::Instant::now()) {
             let shown = view
                 .host
                 .plugins()
@@ -2548,20 +2609,12 @@ impl Menu {
             };
             notes.push((text.to_owned(), Tone::Attention, 1.0, hint.clone()));
         }
-        if !view.statuses.is_empty() && (waiting > 0 || view.time < START_TIME) {
-            let fade = if waiting > 0 {
-                1.0
-            } else {
-                fraction((START_TIME - view.time) / 0.5)
-            };
-            let tone = if waiting > 0 {
-                Tone::Attention
-            } else {
-                Tone::Good
-            };
-            notes.push((self.pulse(view.statuses), tone, fade, hint.clone()));
+        if let Some((text, tone, fade)) =
+            status_note(self.language, self.standby_since, view.time, view.statuses)
+        {
+            notes.push((text, tone, fade, hint.clone()));
         }
-        for note in self.notes.iter().rev() {
+        for note in self.notes.iter().rev().filter(|_| !standby) {
             let (text, tone) = self.note_text(view.host, &note.report);
             let age = view.time - note.at;
             notes.push((
@@ -2572,7 +2625,9 @@ impl Menu {
             ));
         }
         heads.resize(notes.len(), None);
-        plugin_notes(view, &mut notes, &mut heads);
+        if !standby {
+            plugin_notes(view, &mut notes, &mut heads);
+        }
         let mut top = view.screen.top() + view.at(24.0);
         if !notes.is_empty() {
             context.request_repaint();
@@ -2591,6 +2646,58 @@ impl Menu {
         }
         self.notes_bottom = top;
     }
+}
+
+/// "1 waiting for you, 14 running".
+fn pulse(language: Language, statuses: &[Status]) -> String {
+    if statuses.is_empty() {
+        return language.strings().nothing_yet.to_owned();
+    }
+    let waiting = statuses
+        .iter()
+        .filter(|status| Group::of(status) == Group::Attention)
+        .count();
+    let running = statuses
+        .iter()
+        .filter(|status| **status == Status::Running)
+        .count();
+    let running = language.running(running);
+    if waiting > 0 {
+        format!("{}, {running}", language.waiting(waiting))
+    } else {
+        running
+    }
+}
+
+fn status_note(
+    language: Language,
+    standby_since: Option<f64>,
+    time: f64,
+    statuses: &[Status],
+) -> Option<(String, Tone, f32)> {
+    if let Some(since) = standby_since {
+        let left = NOTE_TIME - (time - since);
+        return (left > 0.0).then(|| {
+            (
+                language.strings().standby_note.to_owned(),
+                Tone::Paused,
+                fraction(left / 0.5),
+            )
+        });
+    }
+    let waiting = statuses
+        .iter()
+        .filter(|status| Group::of(status) == Group::Attention)
+        .count();
+    if statuses.is_empty() || (waiting == 0 && time >= START_TIME) {
+        return None;
+    }
+    let (tone, fade) = if waiting > 0 {
+        (Tone::Attention, 1.0)
+    } else {
+        (Tone::Good, fraction((START_TIME - time) / 0.5))
+    };
+    Some((pulse(language, statuses), tone, fade))
 }
 
 /// The notifications plugins show, after Angelica's own notes, each
@@ -3477,6 +3584,16 @@ fn setting(ui: &mut Ui, view: &View<'_>, name: &str, value: impl FnOnce(&mut Ui)
     });
 }
 
+fn pause_mark(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
+    for side in [-1.0, 1.0] {
+        let bar = Rect::from_center_size(
+            center + vec2(side * size * 0.46, 0.0),
+            vec2(size * 0.46, size * 2.0),
+        );
+        painter.rect_filled(bar, 1.0, color);
+    }
+}
+
 /// A note over the game: the word `angelica`, or the name of the plugin
 /// that notifies, a mark, one line, and how to open Angelica, when given.
 fn note(ui: &mut Ui, view: &View<'_>, plugin: Option<&str>, text: &str, tone: Tone, hint: &str) {
@@ -3512,6 +3629,7 @@ fn note(ui: &mut Ui, view: &View<'_>, plugin: Option<&str>, text: &str, tone: To
                 let mark = rect.center();
                 match tone {
                     Tone::Good => theme::running(ui.painter(), mark, view.k * 7.0 / 6.0, p),
+                    Tone::Paused => pause_mark(ui.painter(), mark, view.at(3.5), p.action),
                     // Blinks: on for 0.8 s, off for 0.8 s.
                     Tone::Attention => {
                         if view.time % 1.6 < 0.8 {
@@ -3650,6 +3768,21 @@ pub(crate) fn num_u8(value: f32) -> i8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standby_replaces_the_approval_note_and_does_not_bring_it_back() {
+        let waiting = [Status::AwaitingApproval];
+        let language = Language::Russian;
+        let (before, tone, _) = status_note(language, None, 30.0, &waiting).unwrap();
+        assert!(before.contains("ждёт вас"));
+        assert_eq!(tone, Tone::Attention);
+
+        let (paused, tone, _) = status_note(language, Some(30.0), 30.0, &waiting).unwrap();
+        assert_eq!(paused, language.strings().standby_note);
+        assert_eq!(tone, Tone::Paused);
+        assert!(status_note(language, Some(30.0), 30.0 + NOTE_TIME, &waiting).is_none());
+        assert!(status_note(language, Some(0.0), 0.0, &[]).is_some());
+    }
 
     fn entry<'a>(name: &'a str, description: &'a str, group: Group) -> Entry<'a> {
         Entry {

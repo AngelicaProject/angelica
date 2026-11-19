@@ -189,14 +189,21 @@ fn window_id(key: &Key) -> Id {
     Id::new(("angelica-plugin-window", &key.0, &key.1))
 }
 
+struct DrawnWindow {
+    window: Window,
+    state: WindowState,
+    height: f32,
+    opacity: f32,
+}
+
 /// The places of every plugin on the screen.
 pub(crate) struct Places {
     windows: HashMap<Key, WindowState>,
     panels: HashMap<Key, PanelState>,
     /// Windows drawn last frame with their content, to fade out the ones
     /// that went away.
-    drawn: HashMap<Key, Window>,
-    closing: Vec<(Key, Window, WindowState, f64)>,
+    drawn: HashMap<Key, DrawnWindow>,
+    closing: Vec<(Key, DrawnWindow, f64)>,
     /// How many windows opened in this game session, for the step each
     /// next one opens at.
     opened: usize,
@@ -335,12 +342,11 @@ impl Places {
             for window in plugin.windows() {
                 let key = (plugin.manifest.id().to_owned(), window.id.clone());
                 shown.insert(key.clone());
-                self.window(f, plugin, &window);
+                self.window(f, plugin, window);
                 if raised == Some(plugin.manifest.id()) {
                     f.context
                         .move_to_top(LayerId::new(Order::Middle, window_id(&key)));
                 }
-                self.drawn.insert(key, window);
             }
         }
         let gone: Vec<Key> = self
@@ -350,8 +356,8 @@ impl Places {
             .cloned()
             .collect();
         for key in gone {
-            if let (Some(window), Some(state)) = (self.drawn.remove(&key), self.windows.get(&key)) {
-                self.closing.push((key, window, state.clone(), f.now));
+            if let Some(window) = self.drawn.remove(&key) {
+                self.closing.push((key, window, f.now));
             }
         }
         self.fade_closing(f);
@@ -413,7 +419,7 @@ impl Places {
         }
     }
 
-    fn window(&mut self, f: &mut Frame<'_>, plugin: &Plugin, window: &Window) {
+    fn window(&mut self, f: &mut Frame<'_>, plugin: &Plugin, window: Window) {
         let id = plugin.manifest.id();
         let key = (id.to_owned(), window.id.clone());
         if !self.windows.contains_key(&key) {
@@ -463,7 +469,8 @@ impl Places {
         let height =
             f.context
                 .animate_value_with_time(window_id(&key).with("height"), target, ease);
-        let handled = window_area(f, &key, window, &state, height);
+        let opacity = f.opening(state.opened);
+        let handled = window_area(f, &key, &window, &state, height, opacity, false);
         if let Some(state) = self.windows.get_mut(&key) {
             let stopped = apply(state, &handled, &others, f, height);
             match &window.dialog {
@@ -495,35 +502,33 @@ impl Places {
                 self.save(f);
             }
         }
+        self.drawn.insert(
+            key,
+            DrawnWindow {
+                window,
+                state,
+                height,
+                opacity,
+            },
+        );
     }
 
     fn fade_closing(&mut self, f: &mut Frame<'_>) {
         let now = f.now;
         self.closing.retain(|(.., at)| now - at < OPEN);
-        let look = f.look;
-        for (key, window, state, at) in &self.closing {
+        for (key, drawn, at) in &self.closing {
             #[allow(clippy::cast_possible_truncation)]
             let left = 1.0 - ((now - at) / OPEN) as f32;
             f.context.request_repaint();
-            let context = f.context;
-            egui::Area::new(window_id(key).with("closing"))
-                .order(Order::Middle)
-                .interactable(false)
-                .fixed_pos(state.pos + vec2(0.0, look.at(6.0) * (1.0 - left)))
-                .show(context, |ui| {
-                    ui.multiply_opacity(left);
-                    menu::window_frame(context, look.p).show(ui, |ui| {
-                        ui.set_width(state.width - 2.0);
-                        ui.spacing_mut().item_spacing = Vec2::ZERO;
-                        let _ = menu::bar(ui, &look, &Bar::titled(&window.title, f.strings));
-                        if !state.collapsed {
-                            body_frame(look).show(ui, |ui| {
-                                ui.set_max_height(state.height.unwrap_or(state.content));
-                                f.parts(ui, &key.0, &key.1, look, &window.widgets);
-                            });
-                        }
-                    });
-                });
+            window_area(
+                f,
+                key,
+                &drawn.window,
+                &drawn.state,
+                drawn.height,
+                drawn.opacity * left,
+                true,
+            );
         }
     }
 
@@ -734,9 +739,10 @@ fn window_area(
     window: &Window,
     state: &WindowState,
     height: f32,
+    opacity: f32,
+    closing: bool,
 ) -> Handled {
     let look = f.look;
-    let opening = f.opening(state.opened);
     let status = window.status.as_ref().map(|status| {
         let mark = match status.tone {
             Tone::Good => Mark::Running,
@@ -760,10 +766,15 @@ fn window_area(
     let grab = grab_margin(look);
     egui::Area::new(window_id(key))
         .order(Order::Middle)
-        .fixed_pos(state.pos - Vec2::splat(grab) + vec2(0.0, look.at(6.0) * (1.0 - opening)))
+        .interactable(!closing)
+        .fixed_pos(state.pos - Vec2::splat(grab) + vec2(0.0, look.at(6.0) * (1.0 - opacity)))
         .constrain(false)
         .show(context, |ui| {
-            ui.multiply_opacity(opening);
+            ui.multiply_opacity(opacity);
+            if closing {
+                ui.style_mut().visuals.disabled_alpha = 1.0;
+                ui.disable();
+            }
             // Lifted while the player drags it: its shadow grows and deepens.
             let lift = context.animate_bool_with_time(
                 window_id(key).with("lift"),
@@ -797,14 +808,16 @@ fn window_area(
                 }
                 handled.stopped |= drag.drag_stopped();
                 handled.pressed = menu::bar(ui, &look, &bar);
-                window_menu(f, &handled.pressed, &key.0);
+                if !closing {
+                    window_menu(f, &handled.pressed, &key.0);
+                }
                 if !state.collapsed {
-                    handled.measured = Some(window_body(ui, f, key, window));
+                    handled.measured = Some(window_body(ui, f, key, window, width - 2.0));
                 }
             });
             // The frame as drawn, so the edges the player takes are its own.
             let frame_rect = shown.response.rect.shrink(grab);
-            if !state.collapsed {
+            if !closing && !state.collapsed {
                 let (resized, stopped) = resize_edges(ui, window_id(key), frame_rect, look);
                 handled.resized = resized;
                 handled.stopped |= stopped;
@@ -862,7 +875,8 @@ pub(crate) fn draw_example(
                 asked: None,
             };
             let tall = height.clamp(look.at(80.0), f.screen.height() * 0.7);
-            let handled = window_area(f, &key, window, &state, tall);
+            let opacity = f.opening(state.opened);
+            let handled = window_area(f, &key, window, &state, tall, opacity, false);
             if let Some(measured) = handled.measured {
                 *height = measured;
             }
@@ -893,11 +907,20 @@ fn window_menu(f: &Frame<'_>, pressed: &menu::Pressed, plugin: &str) {
 
 /// A window's parts, scrolling when they do not fit; returns the height the
 /// whole window needs for them.
-fn window_body(ui: &mut egui::Ui, f: &mut Frame<'_>, key: &Key, window: &Window) -> f32 {
+fn window_body(
+    ui: &mut egui::Ui,
+    f: &mut Frame<'_>,
+    key: &Key,
+    window: &Window,
+    width: f32,
+) -> f32 {
     let look = f.look;
     let asking = window.dialog.is_some();
     let mut measured = 0.0;
-    let body = body_frame(look).show(ui, |ui| {
+    let frame = body_frame(look);
+    let content_width = (width - frame.inner_margin.sum().x).max(0.0);
+    let body = frame.show(ui, |ui| {
+        ui.set_width(content_width);
         // While the window asks, it waits for the answer: its parts take no
         // input, and the shade below shows it waits.
         if asking {
@@ -911,19 +934,34 @@ fn window_body(ui: &mut egui::Ui, f: &mut Frame<'_>, key: &Key, window: &Window)
             .iter()
             .any(|widget| matches!(widget, Widget::BeginSplit(_)))
         {
-            let top = ui.cursor().min.y;
-            ui.spacing_mut().item_spacing = vec2(look.at(12.0), look.at(8.0));
+            let bounds =
+                Rect::from_min_size(ui.cursor().min, vec2(content_width, ui.available_height()));
+            let mut viewport = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("split-viewport")
+                    .max_rect(bounds)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            viewport.set_clip_rect(ui.clip_rect().intersect(bounds));
+            viewport.spacing_mut().item_spacing = vec2(look.at(12.0), look.at(8.0));
             let needed = f
-                .parts_filling(ui, &key.0, &key.1, look, &window.widgets, true)
-                .map_or(0.0, |(at, tall)| at - top + tall);
+                .parts_filling(&mut viewport, &key.0, &key.1, look, &window.widgets, true)
+                .map_or(0.0, |(at, tall)| at - bounds.top() + tall);
+            ui.allocate_space(bounds.size());
             measured = look.at(32.0) + look.at(12.0) * 2.0 + needed + 4.0;
             return;
         }
-        // Content wider than the window scrolls sideways; the window keeps
-        // the width the player gave it.
+        // The floating scrollbar has its own gutter beside the content.
+        let gutter = ui.spacing().scroll.bar_width + look.at(6.0);
+        let body_width = (content_width - gutter).max(0.0);
+        let content_right = ui.cursor().left() + body_width;
         let body = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_width(body_width);
+                let mut clip = ui.clip_rect();
+                clip.max.x = clip.max.x.min(content_right);
+                ui.set_clip_rect(clip);
                 ui.spacing_mut().item_spacing = vec2(look.at(12.0), look.at(8.0));
                 f.parts(ui, &key.0, &key.1, look, &window.widgets);
             });
@@ -1600,8 +1638,7 @@ fn popup_area(
         .rect
 }
 
-/// Whether the player is in combat, read through Lens with the query
-/// prepared once for each game map; `None` when the map does not say.
+/// Whether the player is in combat. Older maps expose it through Lens.
 #[derive(Default)]
 struct InCombat {
     prepared: Option<(u64, Option<crate::lens::Prepared>)>,
@@ -1610,6 +1647,9 @@ struct InCombat {
 impl InCombat {
     fn now(&mut self, host: &Host) -> Option<bool> {
         let services = host.services();
+        if let Some(in_combat) = services.game.in_combat() {
+            return Some(in_combat);
+        }
         let (schema, generation) = services.lens.schema();
         if self
             .prepared

@@ -396,9 +396,7 @@ pub enum Word {
     Danger,
 }
 
-/// An action word, `k` times its normal size. It is underlined under the
-/// pointer.
-pub fn word(ui: &mut Ui, text: &str, kind: Word, enabled: bool, k: f32) -> egui::Response {
+fn word_galley(ui: &Ui, text: &str, kind: Word, k: f32) -> (std::sync::Arc<egui::Galley>, Color32) {
     let p = current(ui.ctx()).palette();
     let (text, font, color) = match kind {
         Word::Main => (format!("{text}  →"), strong(13.5 * k), p.action),
@@ -406,7 +404,20 @@ pub fn word(ui: &mut Ui, text: &str, kind: Word, enabled: bool, k: f32) -> egui:
         Word::Secondary => (text.to_owned(), sans(13.5 * k), p.secondary),
         Word::Danger => (text.to_owned(), sans(13.5 * k), p.danger),
     };
-    let galley = ui.painter().layout_no_wrap(text, font, color);
+    (ui.painter().layout_no_wrap(text, font, color), color)
+}
+
+/// The space an action word takes, including its hit area.
+#[must_use]
+pub fn word_width(ui: &Ui, text: &str, kind: Word, k: f32) -> f32 {
+    word_galley(ui, text, kind, k).0.size().x + 8.0 * k
+}
+
+/// An action word, `k` times its normal size. It is underlined under the
+/// pointer.
+pub fn word(ui: &mut Ui, text: &str, kind: Word, enabled: bool, k: f32) -> egui::Response {
+    let p = current(ui.ctx()).palette();
+    let (galley, color) = word_galley(ui, text, kind, k);
     let padding = vec2(4.0, 5.0) * k;
     let sense = if enabled {
         Sense::click()
@@ -950,6 +961,23 @@ mod tests {
         let normal = |height| Size::Normal.scale(height);
         assert!(normal(1440.0) / normal(1080.0) < 1440.0 / 1080.0);
         assert!((normal(1080.0) - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_action_can_be_aligned_before_its_first_frame() {
+        let context = egui::Context::default();
+        context.set_fonts(crate::fonts::definitions(Vec::new()));
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            ui.horizontal(|ui| {
+                for kind in [Word::Main, Word::Action, Word::Secondary, Word::Danger] {
+                    let width = word_width(ui, "...", kind, 0.9);
+                    let drawn = word(ui, "...", kind, true, 0.9).rect.width();
+                    // The row leaves an extra point for egui's layout rounding.
+                    assert!((width - drawn).abs() <= 1.0, "{width} vs {drawn}");
+                }
+            });
+        });
+        output.textures_delta.clear();
     }
 
     #[test]

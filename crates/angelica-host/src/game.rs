@@ -153,6 +153,11 @@ pub trait Game: Send + Sync {
         None
     }
 
+    /// The player's combat flag, when the game map locates its test.
+    fn in_combat(&self) -> Option<bool> {
+        None
+    }
+
     /// Plays `wav`, a sound [`crate::sound::prepare`] checked, stopping the
     /// one playing; whether Windows took it.
     fn play_sound(&self, wav: Vec<u8>) -> bool {

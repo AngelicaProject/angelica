@@ -18,8 +18,8 @@ members = [
   "crates/angelica-update",
   "crates/angelica-fake-game",
   "crates/angelica-fake-game/hostile",
-  "examples/hello",
-  "examples/inventory",
+  "crates/angelica-fake-game/hello",
+  "crates/angelica-fake-game/inventory",
 ]
 
 [workspace.package]

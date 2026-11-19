@@ -10,7 +10,7 @@ use runtime::{
 use std::{sync::OnceLock, time::Duration};
 
 const HOSTILE: &str = include_str!("../hostile/angelica.toml");
-const HELLO: &str = include_str!("../../../examples/hello/angelica.toml");
+const HELLO: &str = include_str!("../hello/angelica.toml");
 
 fn component(package: &'static str) -> &'static [u8] {
     static HOSTILE: OnceLock<Vec<u8>> = OnceLock::new();

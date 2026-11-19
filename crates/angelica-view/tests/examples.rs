@@ -30,6 +30,7 @@ fn every_kind_has_an_example_with_its_code() {
 #[test]
 fn every_example_passes_the_hosts_checks() {
     for example in examples(0) {
+        let minor = kinds().find(|(kind, _)| *kind == example.kind).unwrap().1;
         let place = match example.shows {
             Shows::Parts(widgets) => {
                 let mut window = Window::new("example", "Example");
@@ -41,7 +42,7 @@ fn every_example_passes_the_hosts_checks() {
             Shows::Popup(popup) => {
                 let raw = angelica_view::data::encode_popup(&popup);
                 assert!(
-                    angelica_view::data::decode_popup(&raw, 0).is_ok(),
+                    angelica_view::data::decode_popup(&raw, minor).is_ok(),
                     "{}",
                     example.name
                 );
@@ -50,7 +51,7 @@ fn every_example_passes_the_hosts_checks() {
         };
         let raw = encode_places(std::slice::from_ref(&place));
         assert_eq!(
-            angelica_view::data::decode(&raw, 0),
+            angelica_view::data::decode(&raw, minor),
             Ok(vec![place]),
             "{}",
             example.name

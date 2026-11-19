@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Jobs of one plugin that run at once.
@@ -61,17 +61,21 @@ pub struct Jobs {
     sandbox: Arc<Sandbox>,
     pre: PluginPre<State>,
     time: Duration,
+    log: LogSink,
     next: AtomicU64,
     slots: Mutex<BTreeMap<u64, Arc<Slot>>>,
 }
 
+type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
+
 impl Jobs {
     #[must_use]
-    pub fn new(sandbox: Arc<Sandbox>, pre: PluginPre<State>, time: Duration) -> Self {
+    pub fn new(sandbox: Arc<Sandbox>, pre: PluginPre<State>, time: Duration, log: LogSink) -> Self {
         Self {
             sandbox,
             pre,
             time,
+            log,
             next: AtomicU64::new(1),
             slots: Mutex::new(BTreeMap::new()),
         }
@@ -117,13 +121,28 @@ impl Jobs {
             name.to_owned(),
         );
         let thread_slot = slot.clone();
+        let log = self.log.clone();
         std::thread::Builder::new()
             .name(format!("angelica-job-{}", context.id))
             .spawn(move || {
+                let started = Instant::now();
+                let plugin = context.id.clone();
+                log(&format!("plugin {plugin}: job {id} started"));
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run(&sandbox, &pre, time, context, &thread_slot, &name, &input)
                 }))
                 .unwrap_or_else(|_| Err("the job panicked in the host".into()));
+                let outcome = if thread_slot.cancelled() {
+                    "cancelled"
+                } else if result.is_ok() {
+                    "finished"
+                } else {
+                    "failed"
+                };
+                log(&format!(
+                    "plugin {plugin}: job {id} {outcome} elapsed_ms={}",
+                    started.elapsed().as_millis()
+                ));
                 thread_slot.finish(result);
             })
             .map_err(|e| Error::new(Kind::Io, format!("cannot start a job thread: {e}")))?;

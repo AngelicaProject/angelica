@@ -13,9 +13,9 @@ use windows::{
     Win32::{
         Foundation::{HMODULE, HWND},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_WARP,
+            Direct3D::{D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL},
             Direct3D11::{
-                D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11CreateDeviceAndSwapChain,
+                D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, ID3D11Device, ID3D11DeviceContext,
             },
             Dxgi::{
                 Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
@@ -24,7 +24,7 @@ use windows::{
             },
         },
     },
-    core::Interface,
+    core::{HRESULT, Interface},
 };
 use windows_sys::Win32::{
     System::{
@@ -68,11 +68,25 @@ struct Frames {
     panel: Panel,
     started: Instant,
     last: Instant,
+    last_heartbeat: Instant,
     window: usize,
     /// The game's swap chain the painter draws into.
     chain: usize,
     /// Frames Angelica drew into the game's back buffer.
     drawn: u64,
+}
+
+impl Frames {
+    fn log_heartbeat(&mut self, now: Instant, standby: bool) {
+        if now.duration_since(self.last_heartbeat) >= std::time::Duration::from_secs(30) {
+            self.last_heartbeat = now;
+            super::log(&format!(
+                "runtime heartbeat: presents active uptime_s={} drawn_frames={} standby={standby}",
+                now.duration_since(self.started).as_secs(),
+                self.drawn,
+            ));
+        }
+    }
 }
 
 /// Keeps the module that holds `address` loaded until the process exits.
@@ -111,7 +125,13 @@ impl OverlayHooks {
         if frame_message == 0 {
             return Err("cannot register overlay frame message".into());
         }
+        if attach {
+            super::log("overlay: resolving the system shader compiler");
+            super::shader_compiler::check()?;
+        }
+        super::log("overlay: creating the Direct3D 11 WARP bootstrap swap chain");
         let (window, chain) = dummy_chain()?;
+        super::log("overlay: WARP ready; preparing Present and ResizeBuffers hooks");
         let vtable = chain.vtable();
         // The vtable and the functions it names belong to DXGI, which stays
         // loaded once pinned; the bootstrap swap chain goes right after.
@@ -215,9 +235,36 @@ fn dummy_chain() -> Result<(usize, IDXGISwapChain), String> {
     create_chain(D3D_DRIVER_TYPE_WARP)
 }
 
-pub(super) fn create_chain(
-    driver: windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE,
-) -> Result<(usize, IDXGISwapChain), String> {
+type CreateDeviceAndSwapChain = unsafe extern "system" fn(
+    *mut c_void,
+    D3D_DRIVER_TYPE,
+    HMODULE,
+    D3D11_CREATE_DEVICE_FLAG,
+    *const D3D_FEATURE_LEVEL,
+    u32,
+    u32,
+    *const DXGI_SWAP_CHAIN_DESC,
+    *mut Option<IDXGISwapChain>,
+    *mut Option<ID3D11Device>,
+    *mut D3D_FEATURE_LEVEL,
+    *mut Option<ID3D11DeviceContext>,
+) -> HRESULT;
+
+fn system_create_chain() -> Result<CreateDeviceAndSwapChain, String> {
+    static CREATE: OnceLock<Result<CreateDeviceAndSwapChain, String>> = OnceLock::new();
+    CREATE
+        .get_or_init(|| {
+            let address = super::system_dll::export("d3d11.dll", c"D3D11CreateDeviceAndSwapChain")?;
+            // SAFETY: This export has the declared Windows ABI. Its module stays loaded.
+            Ok(unsafe {
+                std::mem::transmute::<super::system_dll::Export, CreateDeviceAndSwapChain>(address)
+            })
+        })
+        .clone()
+}
+
+pub(super) fn create_chain(driver: D3D_DRIVER_TYPE) -> Result<(usize, IDXGISwapChain), String> {
+    let create = system_create_chain()?;
     let class: Vec<_> = "AngelicaOverlayBootstrap\0".encode_utf16().collect();
     // SAFETY: NULL requests the process executable's instance handle.
     let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -273,22 +320,24 @@ pub(super) fn create_chain(
     let mut chain = None;
     let mut device = None;
     let mut context = None;
-    let mut feature = windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL::default();
+    let mut feature = D3D_FEATURE_LEVEL::default();
     // SAFETY: descriptor references our owned window; outputs are valid and no code draws yet.
     let result = unsafe {
-        D3D11CreateDeviceAndSwapChain(
-            None,
+        create(
+            std::ptr::null_mut(),
             driver,
             HMODULE(std::ptr::null_mut()),
             D3D11_CREATE_DEVICE_FLAG(0),
-            None,
+            std::ptr::null(),
+            0,
             D3D11_SDK_VERSION,
-            Some(&raw const desc),
-            Some(&raw mut chain),
-            Some(&raw mut device),
-            Some(&raw mut feature),
-            Some(&raw mut context),
+            &raw const desc,
+            &raw mut chain,
+            &raw mut device,
+            &raw mut feature,
+            &raw mut context,
         )
+        .ok()
     };
     // Request all outputs: some graphics interposers treat a missing device output
     // as a feature-support probe and deliberately do not create the swap chain.
@@ -406,6 +455,7 @@ impl Overlay {
         let now = Instant::now();
         let elapsed = now.duration_since(frame.last).as_secs_f64();
         frame.last = now;
+        frame.log_heartbeat(now, self.host.is_in_standby());
         self.request_frame(frame.window, elapsed);
         // SAFETY: DPI query for the swap-chain window obtained from Windows.
         let dpi = unsafe { GetDpiForWindow(description.OutputWindow.0) };
@@ -525,6 +575,7 @@ impl Overlay {
             panel: Panel::new(&self.host, self.map_status.clone(), system_language()),
             started: Instant::now(),
             last: Instant::now(),
+            last_heartbeat: Instant::now(),
             window,
             chain: chain.as_raw() as usize,
             drawn: 0,
@@ -556,7 +607,7 @@ impl Overlay {
 }
 
 /// The language of the system's interface.
-fn system_language() -> crate::language::Language {
+pub(super) fn system_language() -> crate::language::Language {
     // SAFETY: returns the user's interface language without preconditions.
     let language = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
     crate::language::Language::from_windows(language)

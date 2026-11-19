@@ -1,7 +1,8 @@
 //! What the installer asks of the system. On Windows the registry is
 //! written with the system's `reg.exe`; the only `unsafe` code starts a copy
 //! of the installer with administrator rights, reads the interface language,
-//! opens Windows' folder dialog, and lists the running programs' names. On
+//! opens Windows' folder dialog, lists running programs and creates the
+//! diagnostic report shortcut. On
 //! Linux it reads `/proc` and the locale's variables and starts the
 //! desktop's folder dialog, without `unsafe` code.
 use std::path::{Path, PathBuf};
@@ -60,13 +61,77 @@ pub fn register(uninstaller: &Path, version: &str) -> Result<(), String> {
         ])
         .ok_or_else(|| format!("the registry refused {name}"))?;
     }
+    let _ = report_shortcut(uninstaller);
     Ok(())
+}
+
+#[cfg(windows)]
+fn report_shortcut_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            PathBuf::from(path).join("Microsoft/Windows/Start Menu/Programs/Angelica Report.lnk")
+        })
+}
+
+#[cfg(windows)]
+fn report_shortcut(executable: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows::{
+        Win32::{
+            System::Com::{
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+                CoUninitialize, IPersistFile,
+            },
+            UI::Shell::{IShellLinkW, ShellLink},
+        },
+        core::{Interface, PCWSTR, w},
+    };
+    let path = report_shortcut_path().ok_or("the Start menu folder is unavailable")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let filename: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+    let target: Vec<_> = executable.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: COM is initialized for this installer worker while it creates one local shortcut.
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .map_err(|error| error.to_string())?;
+    // SAFETY: The strings are NUL-terminated and the COM interfaces are dropped before uninitializing.
+    let result = unsafe {
+        (|| -> windows::core::Result<()> {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+            link.SetPath(PCWSTR(target.as_ptr()))?;
+            link.SetArguments(w!("--report"))?;
+            let file: IPersistFile = link.cast()?;
+            file.Save(PCWSTR(filename.as_ptr()), true)
+        })()
+    };
+    // SAFETY: Balances the successful initialization above on this same thread.
+    unsafe { CoUninitialize() };
+    result.map_err(|error| error.to_string())
 }
 
 /// Removes Angelica from the installed apps.
 #[cfg(windows)]
 pub fn unregister() {
     let _ = reg(&["delete", UNINSTALL_KEY, "/f"]);
+    if let Some(path) = report_shortcut_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(windows)]
+pub fn game_events() -> Option<Vec<u8>> {
+    let system = PathBuf::from(std::env::var_os("SystemRoot")?);
+    if !system.is_absolute() {
+        return None;
+    }
+    let output = std::process::Command::new(system.join("System32/wevtutil.exe"))
+        .creation_flags(NO_WINDOW)
+        .args(["qe", "Application", "/q:*[System[(EventID=1000 or EventID=1001 or EventID=1002) and TimeCreated[timediff(@SystemTime) <= 86400000]] and EventData[Data='ffxiv_dx11.exe']]", "/c:5", "/rd:true", "/f:xml", "/uni:false"])
+        .output().ok()?;
+    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
 }
 
 /// The user's home folder.
@@ -124,13 +189,20 @@ pub fn register(uninstaller: &Path, version: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, entry).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(&path, entry).map_err(|e| format!("{}: {e}", path.display()))?;
+    let report = format!(
+        "[Desktop Entry]\nType=Application\nName=Angelica Report\nName[ru]=Отчёт Angelica\nExec={} --report\nTerminal=false\nCategories=Game;\n",
+        exec_argument(uninstaller)
+    );
+    std::fs::write(path.with_file_name("angelica-report.desktop"), report)
+        .map_err(|e| e.to_string())
 }
 
 /// Removes the desktop entry.
 #[cfg(not(windows))]
 pub fn unregister() {
     if let Some(path) = desktop_entry() {
+        let _ = std::fs::remove_file(path.with_file_name("angelica-report.desktop"));
         let _ = std::fs::remove_file(path);
     }
 }
@@ -370,20 +442,19 @@ pub fn prefix_running(prefix: &Path) -> bool {
     })
 }
 
-/// Whether `XIVLauncher.Core`, which starts the game with Dalamud, is
-/// installed.
+/// Whether `XIVLauncher.Core` is installed.
 #[cfg(not(windows))]
 #[must_use]
-pub fn dalamud_installed() -> bool {
+pub fn xivlauncher_installed() -> bool {
     home().is_some_and(|home| {
         home.join(".xlcore").is_dir() || home.join(".var/app/dev.goats.xivlauncher").is_dir()
     })
 }
 
-/// Whether `XIVLauncher`, which starts the game with Dalamud, is installed.
+/// Whether `XIVLauncher` is installed.
 #[cfg(windows)]
 #[must_use]
-pub fn dalamud_installed() -> bool {
+pub fn xivlauncher_installed() -> bool {
     std::env::var_os("APPDATA")
         .is_some_and(|appdata| Path::new(&appdata).join("XIVLauncher").is_dir())
 }

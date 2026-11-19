@@ -41,6 +41,11 @@ macro_rules! strings {
 
 strings! {
     tab_installed: "Installed", "Установленные";
+    tab_plugins: "Plugins", "Плагины";
+    standby_status: "Dalamud is active", "Активен Dalamud";
+    standby_title: "Angelica plugins are paused", "Плагины Angelica приостановлены";
+    standby_hint: "Restart the game without Dalamud to use Angelica plugins.", "Чтобы пользоваться плагинами Angelica, перезапустите игру без Dalamud.";
+    standby_note: "Plugins paused while Dalamud is active", "Плагины на паузе из-за Dalamud";
     tab_catalog: "Catalog", "Каталог";
     catalog_loading: "Loading the catalog…", "Загрузка каталога…";
     catalog_failed: "The catalog did not load: {reason}", "Каталог не загрузился: {reason}";

@@ -4,7 +4,7 @@
 //! kind cannot go undocumented.
 use crate::{
     ActionKind, Countdown, Dialog, Entry, Mark, Meter, Panel, Popup, Readout, Ring, Role, Shown,
-    Sparkline, Split, Tone, Widget, Window,
+    Sparkline, Split, Tone, VirtualList, Widget, Window,
 };
 
 /// What an example shows.
@@ -371,6 +371,31 @@ pub fn examples(now: u64) -> Vec<Example> {
                                 .button("add", "+ Timer")
                         },
                     ), // [/split]
+            ),
+        ),
+        example(
+            "virtual-list",
+            "virtual-list",
+            "A list whose rows arrive as the player scrolls.",
+            Shows::Window(
+                // [virtual-list]
+                Window::new("main", "Places").split(
+                    Split::new("groups", 0).section("Zones"),
+                    |main| {
+                        main.virtual_list(
+                            VirtualList {
+                                id: "zones".into(),
+                                first: 0,
+                                total: 2,
+                                epoch: 0,
+                            },
+                            |list| {
+                                list.row(|row| row.text("Gridania"))
+                                    .row(|row| row.text("Limsa Lominsa"))
+                            },
+                        )
+                    },
+                ), // [/virtual-list]
             ),
         ),
         part(

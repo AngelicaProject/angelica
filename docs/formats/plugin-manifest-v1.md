@@ -33,7 +33,7 @@ change = ["camera"]
 - `plugin.id`: 1–64 lowercase ASCII letters, digits, and hyphens, not starting or ending with a hyphen. Not `angelica`, which is Angelica's own. Unique in the registry; never changes. It names the package folder, the storage folder, and the grant file.
 - `plugin.name`, `plugin.description`: what the player sees; not blank, at most 1024 bytes.
 - `plugin.version`: a semantic version.
-- `plugin.api`: the [plugin API](./plugin-api-v1.md) version the component was built for, `major.minor`. This host runs `1.0`.
+- `plugin.api`: the [plugin API](./plugin-api-v1.md) version the component was built for, `major.minor`. This host runs `1.0` through `1.3`.
 - `plugin.authors`: optional list of names.
 - `plugin.memory_bytes`: optional memory limit of each instance of the plugin, 1 to 1073741824 bytes; the host default (64 MiB) when absent.
 - `permissions`: each [permission](../architecture/permissions.md) the plugin needs, as `"<name>" = true`. `false` and an absent permission are the same; a plugin that needs none leaves the table out or empty. An unknown permission refuses the manifest.

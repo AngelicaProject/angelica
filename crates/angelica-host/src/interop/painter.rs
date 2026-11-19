@@ -12,10 +12,7 @@ use windows::{
     Win32::{
         Foundation::RECT,
         Graphics::{
-            Direct3D::{
-                D3D_PRIMITIVE_TOPOLOGY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::D3DCompile,
-                ID3DBlob,
-            },
+            Direct3D::{D3D_PRIMITIVE_TOPOLOGY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST},
             Direct3D11::{
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER,
                 D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_VERTEX_BUFFER, D3D11_BLEND_DESC,
@@ -323,31 +320,7 @@ fn needed<T>(value: Option<T>, label: &str) -> Result<T, String> {
     value.ok_or_else(|| format!("D3D11 returned no {label}"))
 }
 fn shader(entry: windows::core::PCSTR, target: windows::core::PCSTR) -> Result<Vec<u8>, String> {
-    let mut code: Option<ID3DBlob> = None;
-    let mut error: Option<ID3DBlob> = None;
-    // SAFETY: source, entry and target live for the call; no include handler or external code.
-    unsafe {
-        D3DCompile(
-            SHADER.as_ptr().cast(),
-            SHADER.len(),
-            s!("angelica"),
-            None,
-            None,
-            entry,
-            target,
-            0,
-            0,
-            &raw mut code,
-            Some(&raw mut error),
-        )
-    }
-    .map_err(|e| e.to_string())?;
-    let blob = needed(code, "shader bytecode")?;
-    // SAFETY: ID3DBlob owns readable bytecode for exactly GetBufferSize bytes.
-    Ok(unsafe {
-        std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize())
-    }
-    .to_vec())
+    super::shader_compiler::compile(SHADER, s!("angelica"), entry, target)
 }
 
 impl Painter {
@@ -935,6 +908,28 @@ mod tests {
             D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_USAGE_STAGING,
         },
     };
+
+    #[test]
+    fn graphics_exports_are_not_loader_imports() {
+        let path = std::env::current_exe().unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        let image = angelica_pe::Image::parse(&bytes, angelica_pe::Layout::File).unwrap();
+        assert!(
+            !image
+                .import_slots("kernel32.dll", "GetProcAddress")
+                .is_empty()
+        );
+        assert!(
+            image
+                .import_slots("d3d11.dll", "D3D11CreateDeviceAndSwapChain")
+                .is_empty()
+        );
+        assert!(
+            image
+                .import_slots("d3dcompiler_47.dll", "D3DCompile")
+                .is_empty()
+        );
+    }
 
     fn center_pixel(chain: &IDXGISwapChain, painter: &Painter) -> [u8; 4] {
         // SAFETY: test owns this live swap chain and queries its documented texture buffer.

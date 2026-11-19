@@ -19,10 +19,11 @@
 //!     .meter(Meter::new(hp, max_hp).label("HP").text(format!("{hp} / {max_hp}")));
 //! ```
 pub use angelica_view::{
-    Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Chosen, Countdown, Dialog,
-    Edited, Entry, Event, Fact, Icon, Mark, MenuChosen, MenuEntry, MenuFor, Meter, Navigated,
-    Number, NumberSet, Panel, Popup, PopupAt, Readout, Ring, Role, Section, Shown, Sparkline,
-    Split, Status, Table, Tabs, Text, TextInput, Toggled, Tone, Widget, WidgetRef, Window,
+    Action, ActionKind, Anchor, Backing, Button, CheckState, Checkbox, Choice, Chosen, Countdown,
+    Dialog, Edited, Entry, Event, Fact, Icon, Mark, MenuChosen, MenuEntry, MenuFor, Meter,
+    Navigated, Number, NumberSet, Panel, Popup, PopupAt, Readout, Ring, Role, Section, Shown,
+    Sparkline, Split, Status, Table, Tabs, Text, TextInput, Toggled, Tone, VirtualList, Widget,
+    WidgetRef, Window,
 };
 
 use crate::bindings::angelica::plugin::ui as wit;

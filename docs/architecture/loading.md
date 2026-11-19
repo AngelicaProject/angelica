@@ -26,7 +26,7 @@ Configuration is strict JSON with one field, an absolute installation path:
 
 The release build supplies `ANGELICA_RELEASE_PUBLIC_KEY` as 64 hexadecimal digits. This is a build-time public key, never a configuration-file value. A proxy built without it refuses every host and continues forwarding system exports. `runtime.dll.sig` contains exactly 64 raw signature bytes over the complete DLL file; verification uses strict Ed25519 verification. The DLL is opened without write or delete sharing and held open through verification, loading, and startup. Native dependencies are searched only in the system directory; the host cannot rely on unsigned sibling DLLs.
 
-Diagnostics are appended to `angelica-loader.log` next to the proxy. A logging failure does not prevent game startup.
+Diagnostics are appended to `angelica-loader.log` next to the proxy, or in the installation or per-user log folder if the game folder is read-only. Each line carries UTC time to the millisecond, the game PID and elapsed milliseconds. The loader records configuration selection, signature validation, DLL loading, and the host ABI call and result. It starts logging after process initialization releases the loader lock. Failures before the proxy runs can appear only in external diagnostics. A logging failure does not prevent game startup.
 
 ## Runtime startup ABI
 
@@ -38,9 +38,12 @@ The proxy queues the start only during static process initialization. Loading it
 
 - If the host fails before plugins load, it unloads its hooks and the game runs unmodified.
 - The overlay does not depend on the game map (see [`ui.md`](./ui.md)), so the host can report in the game why it, a plugin, or an entry is disabled.
+- A host load failure after proxy initialization records the Windows error and loaded module paths. The proxy shows a Windows warning for the game process and points to the standalone report tool.
 - A crash in the game process writes a minidump and a report naming the plugins and their states to the log folder.
 
 The host's unhandled-exception filter attempts a normal Windows minidump and a JSON report with the executable and map hashes and each plugin's id, version, and state. Reading a plugin's state never waits on a lock; a state another thread holds is reported as unknown. The filter then forwards to the filter that preceded it, preserving the game's exception handling. The pinned host retains this callback until process exit. Reports are best effort if the filesystem or the crashed process cannot service the write; handled plugin traps do not produce process crash dumps.
+
+`host-bootstrap.log` retains startup phases and `host.log` adds runtime events. Both use UTC timestamps and the game PID. The host logs map, sandbox and overlay initialization, activation policy, plugin lifecycle and background job outcomes. It logs the first game-thread frame and a periodic overlay heartbeat. These diagnostics record transitions and counts rather than frame-by-frame game data.
 
 ## Updates
 
@@ -59,4 +62,10 @@ Wine runs the queued start before the game's entry point, as Windows does. `inst
 
 ## Coexistence
 
-Other tools may load into the same process before or after Angelica. Angelica does not unload, patch, or detect other tools; hook chaining is described in [`hooks.md`](./hooks.md).
+Other tools may load into the same process before or after Angelica. Hook chaining is described in [`hooks.md`](./hooks.md).
+
+Angelica checks for a competing plugin runtime before starting its plugins. It checks the launch environment for the injector's runtime marker and checks for the runtime's modules in the current game process at startup and on the main thread each frame. A launcher that skips the injector for an unsupported game build uses the direct launch path without the marker. Injector launches that leave the marker set are treated as competing launches for the session.
+
+Detection puts Angelica in standby for the rest of the game session. Any running plugins go through the normal stop path, and all starts, reload activations, approvals and enable actions are blocked. Saved permissions and enabled choices carry over to the next launch. The Angelica menu shows the standby reason and keeps host settings available.
+
+When standby is detected at startup, Angelica skips plugin discovery, the plugin installer, the catalog, and the game hooks that add chat and System menu access. The overlay keeps the menu key available. If standby starts later, the host stops polling for package and map reloads.

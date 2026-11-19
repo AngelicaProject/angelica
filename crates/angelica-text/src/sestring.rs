@@ -11,6 +11,8 @@ const STX: u8 = 0x02;
 const ETX: u8 = 0x03;
 const STRING_EXPRESSION: u8 = 0xFF;
 
+pub mod chat_links;
+
 /// Bounds recursion. Game strings reach 46 levels (chains of `<if>`), far
 /// below this.
 pub const MAX_DEPTH: usize = 256;
@@ -104,6 +106,14 @@ fn payload(bytes: &[u8], depth: usize) -> Option<usize> {
     Some(end + 1)
 }
 
+/// The byte length of a valid macro starting at the first byte of `bytes`.
+#[must_use]
+pub fn macro_len(bytes: &[u8]) -> Option<usize> {
+    (bytes.first() == Some(&STX))
+        .then(|| payload(bytes, 0))
+        .flatten()
+}
+
 fn expression(bytes: &[u8], depth: usize) -> Option<usize> {
     if depth > MAX_DEPTH {
         return None;
@@ -165,4 +175,24 @@ fn integer(bytes: &[u8]) -> Option<(u32, usize)> {
 /// fits it.
 fn canonical_integer(bytes: &[u8]) -> Option<(u32, usize)> {
     integer(bytes).filter(|&(value, size)| size == 1 || value >= 0xCF)
+}
+
+/// Appends an integer expression in the game's canonical encoding.
+pub fn push_integer(out: &mut Vec<u8>, value: u32) {
+    if let Ok(value) = u8::try_from(value)
+        && value < 0xCF
+    {
+        out.push(value + 1);
+        return;
+    }
+    let marker = out.len();
+    out.push(0);
+    let mut flags = 0;
+    for (index, byte) in value.to_be_bytes().into_iter().enumerate() {
+        if byte != 0 {
+            flags |= 8 >> index;
+            out.push(byte);
+        }
+    }
+    out[marker] = 0xEF + flags;
 }

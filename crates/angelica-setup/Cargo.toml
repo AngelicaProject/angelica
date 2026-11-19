@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 angelica-games.workspace = true
 angelica-update.workspace = true
+crc32fast = "1.5.2"
 ed25519-dalek.workspace = true
 egui.workspace = true
 eframe = { version = "0.36.2", default-features = false, features = ["glow"] }

@@ -38,7 +38,7 @@ A state field or table often needs no host code at all: only game map data (step
 | What the host needs from the game | the `Game` trait in `crates/angelica-host/src/game.rs`; its Windows adapter in `crates/angelica-host/src/interop/` |
 | Scripted game for tests | `crates/angelica-fake-game/src/lib.rs` (implement the new `Game` method, add a helper the tests call) |
 | SDK module or helper | `crates/angelica-sdk/src/<module>.rs`, exported from `lib.rs` |
-| Example use | `examples/hello/src/lib.rs` and its `angelica.toml` permissions |
+| Integration test | `crates/angelica-fake-game/hello/src/lib.rs` and its `angelica.toml` permissions |
 | Integration tests | `crates/angelica-fake-game/tests/hello.rs`: success, missing permission, absent map entry, wrong instance |
 
 Code in the game process follows `docs/development/rust.md` (`// SAFETY:` on every `unsafe` block) and `docs/architecture/hooks.md`; a failing hook disables itself and the game's code runs.

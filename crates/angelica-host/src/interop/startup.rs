@@ -20,11 +20,13 @@ use std::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use windows_sys::Win32::{
     Foundation::HINSTANCE,
     System::LibraryLoader::{
         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN, GetModuleHandleExW,
+        GetModuleHandleW,
     },
 };
 
@@ -59,7 +61,7 @@ extern "system" fn angelica_start_v1() -> i32 {
             2
         };
     }
-    let status = super::guard(1, || match initialize() {
+    let status = super::guard(3, || match initialize() {
         Ok(()) => {
             super::log("host started");
             0
@@ -69,6 +71,9 @@ extern "system" fn angelica_start_v1() -> i32 {
             1
         }
     });
+    if status == 3 {
+        super::log("startup failed: panic in host initialization");
+    }
     STARTED.store(if status == 0 { 2 } else { 3 }, Ordering::Release);
     status
 }
@@ -152,24 +157,45 @@ fn install_overlay(
     host: &Arc<Host>,
     map_status: Vec<String>,
     diagnostics: crate::config::Diagnostics,
-) -> Option<OverlayHooks> {
+) -> Result<Option<OverlayHooks>, String> {
     use crate::config::OverlayMode;
     if diagnostics.overlay == OverlayMode::Off {
-        return None;
+        return Ok(None);
     }
-    match OverlayHooks::install(
+    let hooks = OverlayHooks::install(
         host.clone(),
         map_status,
         diagnostics.overlay == OverlayMode::On,
-    ) {
-        Ok(hooks) => {
-            super::log("overlay hooks installed");
-            Some(hooks)
+    )?;
+    super::log("overlay hooks installed");
+    Ok(Some(hooks))
+}
+
+fn warn_overlay_startup(host: &Host) {
+    use crate::language::{Language, Settings};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MB_ICONWARNING, MB_SETFOREGROUND, MessageBoxW,
+    };
+    let language = Settings::load(&Settings::path(host.state_directory()))
+        .language
+        .unwrap_or_else(super::overlay::system_language);
+    let message = match language {
+        Language::English => {
+            "Angelica could not start its in-game interface. The game will continue without its plugins. Open Angelica Report from the Start menu or the installer to save the diagnostics."
         }
-        Err(error) => {
-            host.diagnostic(format!("overlay unavailable: {error}"));
-            None
+        Language::Russian => {
+            "Angelica не смогла открыть игровой интерфейс. Игра продолжит запуск без её плагинов. Чтобы сохранить диагностику, откройте «Angelica Report» из меню «Пуск» или «Отчёт Angelica» в установщике."
         }
+    };
+    let message: Vec<u16> = message.encode_utf16().chain([0]).collect();
+    // SAFETY: Both strings are live and NUL-terminated. Game startup has no owner window yet.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            message.as_ptr(),
+            windows::core::w!("Angelica").as_ptr(),
+            MB_ICONWARNING | MB_SETFOREGROUND,
+        );
     }
 }
 
@@ -187,34 +213,87 @@ fn diagnostics(root: &Path) -> crate::config::Diagnostics {
     diagnostics
 }
 
-fn initialize() -> Result<(), String> {
-    let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
+fn installation_root(runtime_path: &Path) -> Result<&Path, String> {
     let root = runtime_path.parent().ok_or("runtime has no directory")?;
-    // `versions/<version>/runtime.dll` is a version `current.json` named.
-    let root = match root.parent() {
+    Ok(match root.parent() {
         Some(versions) if versions.file_name().is_some_and(|name| name == "versions") => versions
             .parent()
             .ok_or("versions has no installation directory")?,
         _ => root,
-    };
+    })
+}
+
+fn startup_logs(root: &Path) -> Result<Config, String> {
     let initial_logs = root.join("logs");
     std::fs::create_dir_all(&initial_logs).map_err(|e| e.to_string())?;
-    let config = Config::load(root).inspect_err(|_| {
-        let _ = LOG_DIRECTORY.set(initial_logs);
+    super::rotate_log(
+        &initial_logs,
+        "host-bootstrap.log",
+        "host-bootstrap.old.log",
+    );
+    super::log_in(
+        &initial_logs,
+        "host-bootstrap.log",
+        "configuration: loading host.json or defaults",
+    );
+    let config = Config::load(root).inspect_err(|error| {
+        super::log_in(
+            &initial_logs,
+            "host-bootstrap.log",
+            &format!("configuration: failed: {error}"),
+        );
+        let _ = LOG_DIRECTORY.set(initial_logs.clone());
     })?;
-    std::fs::create_dir_all(&config.log_directory).map_err(|e| e.to_string())?;
-    super::rotate_log(&config.log_directory);
+    std::fs::create_dir_all(&config.log_directory)
+        .map_err(|e| e.to_string())
+        .inspect_err(|_| {
+            let _ = LOG_DIRECTORY.set(initial_logs);
+        })?;
+    super::rotate_log(&config.log_directory, "host.log", "host.old.log");
+    if config.log_directory != root.join("logs") {
+        super::rotate_log(
+            &config.log_directory,
+            "host-bootstrap.log",
+            "host-bootstrap.old.log",
+        );
+    }
     let _ = LOG_DIRECTORY.set(config.log_directory.clone());
+    super::log("configuration: host configuration accepted; log destination ready");
+    Ok(config)
+}
+
+fn stage<T>(name: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let time = Instant::now();
+    super::log(&format!("startup {name}: begin"));
+    let result = work();
+    let elapsed = time.elapsed().as_millis();
+    match &result {
+        Ok(_) => super::log(&format!("startup {name}: done elapsed_ms={elapsed}")),
+        Err(error) => super::log(&format!(
+            "startup {name}: failed elapsed_ms={elapsed}: {error}"
+        )),
+    }
+    result
+}
+
+fn initialize() -> Result<(), String> {
+    let runtime_path = module_path(MODULE.load(Ordering::Acquire))?;
+    let root = installation_root(&runtime_path)?;
+    let config = startup_logs(root)?;
     super::proxy::use_system_proxy(super::log);
 
-    let (base, snapshot, hash) = executable_snapshot()?;
+    let (base, snapshot, hash) = stage("game executable", executable_snapshot)?;
     log_start(base, &hash)?;
     let diagnostics = diagnostics(root);
     let dev = Arc::new(crate::dev::DevMode::new(root));
-    let (catalog, map, map_status) = load_map(&map_source(&config, &dev), base, &snapshot, hash);
+    let (catalog, map, map_status) = stage("game map", || {
+        Ok(load_map(&map_source(&config, &dev), base, &snapshot, hash))
+    })?;
     let catalog = Arc::new(catalog);
-    let services = services(&config, root, &catalog, map.as_ref(), base)?;
-    let sandbox = Arc::new(Sandbox::new()?);
+    let services = stage("host services", || {
+        services(&config, root, &catalog, map.as_ref(), base, &snapshot)
+    })?;
+    let sandbox = Arc::new(stage("Wasm sandbox", Sandbox::new)?);
     let mut host = Host::new(
         sandbox.clone(),
         config.limits(),
@@ -223,54 +302,24 @@ fn initialize() -> Result<(), String> {
         Arc::new(|line: &str| super::log(line)),
         Box::new(|folder: &Path| super::open_folder(folder)),
     );
-    let (trust, problem) = trust(&config, root);
-    if let Some(problem) = problem {
-        host.diagnostic(problem);
+    // The launcher sets this in the injector's environment before the game
+    // is created. An incompatible build takes the direct launch path.
+    if std::env::var_os("DALAMUD_RUNTIME").is_some_and(|path| !path.is_empty()) {
+        host.enter_standby();
     }
-    let installer = Arc::new(crate::plugin_installer::PluginInstaller::new(
-        runtime_path
-            .parent()
-            .ok_or("runtime has no directory")?
-            .join("plugin-installer.exe"),
-        RELEASE_KEY,
-        root.to_path_buf(),
-        Arc::new(|line: &str| super::log(line)),
-    ));
-    host.set_plugin_installer(installer.clone());
+    host.watch_standby(dalamud_loaded);
     host.set_dev(dev.clone());
     serve_look(&host, root);
+    super::log(&format!(
+        "startup policy: standby={} overlay={:?} plugins={} updates={}",
+        host.is_in_standby(),
+        diagnostics.overlay,
+        diagnostics.plugins,
+        diagnostics.updates
+    ));
     if diagnostics.updates {
         host.set_self_update(self_update(&config, root));
-        if let Some(source) = catalog_source() {
-            host.set_catalog(source);
-        }
     }
-    // Without the program, only what the player asks for reports that.
-    installer.start(
-        (diagnostics.updates && installer.program_exists())
-            .then_some(crate::plugin_installer::UPDATE_INTERVAL),
-    );
-    if diagnostics.plugins {
-        discover_plugins(&config, &sandbox, &trust, &mut host);
-    }
-    let map_data = MapData {
-        directory: config.map_directory.clone(),
-        dev,
-        seen: None,
-        sheets: host.services().sheets.clone(),
-        lens: host.services().lens.clone(),
-        data: host.services().data.clone(),
-    };
-    if diagnostics.plugins {
-        host.watch(Box::new(FolderPackages::new(
-            config.plugin_directory.clone(),
-            sandbox.clone(),
-            trust,
-            installer,
-            map_data,
-        )));
-    }
-
     // Keep code and callbacks mapped even if a later tool retains one of our hooks.
     let mut pinned = std::ptr::null_mut();
     // SAFETY: FROM_ADDRESS identifies this DLL from a known function address; PIN keeps
@@ -286,16 +335,111 @@ fn initialize() -> Result<(), String> {
         return Err("failed to pin the native host".into());
     }
 
-    install_menu_openers(&host, &catalog, base, diagnostics);
-    host.start_all();
     let host = Arc::new(host);
-    super::crash::install(host.clone(), catalog, config.log_directory.clone());
-    let overlay = install_overlay(&host, map_status, diagnostics);
+    super::crash::install(host.clone(), catalog.clone(), config.log_directory.clone());
+    super::log("startup crash reporting: Windows exception filter installed");
+    let (overlay, allow_plugins) = match stage("overlay", || {
+        install_overlay(&host, map_status, diagnostics)
+    }) {
+        Ok(overlay) => (overlay, true),
+        Err(error) => {
+            host.diagnostic(format!("overlay unavailable: {error}"));
+            let diagnostic_mode = diagnostics.overlay != crate::config::OverlayMode::On;
+            if !diagnostic_mode {
+                warn_overlay_startup(&host);
+            }
+            (None, diagnostic_mode)
+        }
+    };
+    if allow_plugins && !host.is_in_standby() {
+        prepare_plugins(
+            &host,
+            &runtime_path,
+            root,
+            &config,
+            &sandbox,
+            dev,
+            diagnostics,
+        );
+        install_menu_openers(&host, &catalog, base, diagnostics);
+        host.start_all();
+    }
+    super::log(&format!(
+        "startup complete: overlay_hooks={} registered_plugins={} plugin_activation_allowed={allow_plugins}",
+        overlay.is_some(),
+        host.plugins().len()
+    ));
     let _ = STATE.set(State {
         host,
         overlay: Mutex::new(overlay),
     });
     Ok(())
+}
+
+fn prepare_plugins(
+    host: &Host,
+    runtime_path: &Path,
+    root: &Path,
+    config: &Config,
+    sandbox: &Arc<Sandbox>,
+    dev: Arc<crate::dev::DevMode>,
+    diagnostics: crate::config::Diagnostics,
+) {
+    super::log("startup plugins: configuring package trust and installer");
+    let (trust, problem) = trust(config, root);
+    if let Some(problem) = problem {
+        host.diagnostic(problem);
+    }
+    let installer = Arc::new(crate::plugin_installer::PluginInstaller::new(
+        runtime_path.with_file_name("plugin-installer.exe"),
+        RELEASE_KEY,
+        root.to_path_buf(),
+        Arc::new(|line: &str| super::log(line)),
+    ));
+    host.set_plugin_installer(installer.clone());
+    if diagnostics.updates
+        && let Some(source) = catalog_source()
+    {
+        host.set_catalog(source);
+    }
+    // Without the program, only what the player asks for reports that.
+    installer.start(
+        (diagnostics.updates && installer.program_exists())
+            .then_some(crate::plugin_installer::UPDATE_INTERVAL),
+    );
+    if diagnostics.plugins {
+        super::log("startup plugins: scanning installed packages");
+        discover_plugins(config, sandbox, &trust, host);
+        let map_data = MapData {
+            directory: config.map_directory.clone(),
+            dev,
+            seen: None,
+            sheets: host.services().sheets.clone(),
+            lens: host.services().lens.clone(),
+            data: host.services().data.clone(),
+        };
+        host.watch(Box::new(FolderPackages::new(
+            config.plugin_directory.clone(),
+            sandbox.clone(),
+            trust,
+            installer,
+            map_data,
+        )));
+    }
+}
+
+fn dalamud_loaded() -> bool {
+    // Only inspect this process. The handles are used as presence flags.
+    for name in [
+        windows::core::w!("Dalamud.Boot.dll"),
+        windows::core::w!("Dalamud.dll"),
+    ] {
+        // SAFETY: The macro supplies a static, NUL-terminated UTF-16 name.
+        if !unsafe { GetModuleHandleW(name.as_ptr()) }.is_null() {
+            return true;
+        }
+    }
+    false
 }
 
 /// `/angelica` and Angelica's entry in the System menu open the menu whether
@@ -325,6 +469,7 @@ fn services(
     catalog: &Arc<Catalog>,
     map: Option<&angelica_map::Map>,
     base: usize,
+    snapshot: &[u8],
 ) -> Result<Arc<Services>, String> {
     let excel = Arc::new(ExcelText::default());
 
@@ -348,12 +493,15 @@ fn services(
         catalog: catalog.clone(),
         base,
         excel: excel.clone(),
+        data: data.clone(),
+        sheets: sheets.clone(),
         case: case.clone(),
         files: files.clone(),
         commands: commands.clone(),
         menus: menus.clone(),
         lens: lens.clone(),
         version: WindowsGame::read_version(&executable),
+        combat_flag: WindowsGame::combat_flag_address(catalog, base, snapshot),
     });
     Ok(Arc::new(Services {
         data,
@@ -560,7 +708,7 @@ fn package_folders(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> 
     Ok(folders)
 }
 
-fn discover_plugins(config: &Config, sandbox: &Sandbox, trust: &Trust, host: &mut Host) {
+fn discover_plugins(config: &Config, sandbox: &Sandbox, trust: &Trust, host: &Host) {
     let mut repairs = Vec::new();
     let folders = match package_folders(&config.plugin_directory) {
         Ok(folders) => folders,

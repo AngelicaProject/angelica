@@ -28,6 +28,11 @@ pub enum LoadError {
     SignatureSize,
     #[error("runtime.dll Ed25519 signature verification failed")]
     Signature,
+    #[error("{call}: {source}")]
+    Windows {
+        call: &'static str,
+        source: std::io::Error,
+    },
     #[error("{0}")]
     Platform(String),
 }

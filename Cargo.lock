@@ -255,6 +255,7 @@ version = "0.1.0"
 dependencies = [
  "angelica-games",
  "angelica-update",
+ "crc32fast",
  "ed25519-dalek",
  "eframe",
  "egui",

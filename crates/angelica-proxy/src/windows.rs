@@ -15,11 +15,13 @@ use std::{
         OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use windows_sys::{
     Win32::{
         Foundation::{FreeLibrary, HINSTANCE},
         System::{
+            Diagnostics::Debug::{GetThreadErrorMode, SEM_FAILCRITICALERRORS, SetThreadErrorMode},
             LibraryLoader::{
                 GetModuleFileNameW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
             },
@@ -34,6 +36,8 @@ static MODULE: AtomicUsize = AtomicUsize::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);
 static STARTUP_FAILED: AtomicBool = AtomicBool::new(false);
 static SYSTEM: OnceLock<Result<usize, String>> = OnceLock::new();
+static LOADER_LOG: OnceLock<Option<PathBuf>> = OnceLock::new();
+static LOADER_START: OnceLock<Instant> = OnceLock::new();
 const E_FAIL: i32 = 0x8000_4005_u32.cast_signed();
 
 fn boundary<T>(fallback: T, work: impl FnOnce() -> T) -> T {
@@ -73,16 +77,63 @@ fn os_error(call: &str) -> LoadError {
 
 fn log(message: &str) {
     boundary((), || {
-        if let Ok(path) = module_path(MODULE.load(Ordering::Acquire))
-            && let Some(directory) = path.parent()
-            && let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(directory.join("angelica-loader.log"))
+        let path = LOADER_LOG.get_or_init(loader_log_path);
+        if let Some(path) = path
+            && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path)
         {
-            let _ = writeln!(file, "{message}");
+            let utc = utc_now();
+            let elapsed = LOADER_START.get_or_init(Instant::now).elapsed().as_millis();
+            let line = format!(
+                "{utc} pid={} elapsed_ms={elapsed} {message}\n",
+                std::process::id()
+            );
+            let _ = file.write_all(line.as_bytes());
         }
     });
+}
+
+fn utc_now() -> String {
+    let mut time = windows_sys::Win32::Foundation::SYSTEMTIME::default();
+    // SAFETY: Windows only writes the owned SYSTEMTIME.
+    unsafe { windows_sys::Win32::System::SystemInformation::GetSystemTime(&raw mut time) };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        time.wYear,
+        time.wMonth,
+        time.wDay,
+        time.wHour,
+        time.wMinute,
+        time.wSecond,
+        time.wMilliseconds
+    )
+}
+
+fn loader_log_path() -> Option<PathBuf> {
+    let proxy = module_path(MODULE.load(Ordering::Acquire)).ok();
+    let game = proxy.as_deref().and_then(Path::parent);
+    let installation = game
+        .and_then(|folder| Config::read(folder).ok())
+        .map(|config| config.installation_dir.join("logs"));
+    let local = std::env::var_os("LOCALAPPDATA")
+        .filter(|path| !path.is_empty())
+        .map(|path| PathBuf::from(path).join("Angelica/logs"));
+    game.map(Path::to_owned)
+        .into_iter()
+        .chain(installation)
+        .chain(local)
+        .find_map(|folder| {
+            std::fs::create_dir_all(&folder).ok()?;
+            let path = folder.join("angelica-loader.log");
+            if std::fs::metadata(&path).is_ok_and(|file| file.len() > 1024 * 1024) {
+                let _ = std::fs::rename(&path, folder.join("angelica-loader.old.log"));
+            }
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .ok()?;
+            Some(path)
+        })
 }
 
 fn system_module() -> Result<usize, LoadError> {
@@ -106,6 +157,7 @@ fn system_module() -> Result<usize, LoadError> {
         if module.is_null() {
             Err(os_error("load system dinput8.dll").to_string())
         } else {
+            log("system-dinput8: loaded system module for forwarding");
             Ok(module as usize)
         }
     });
@@ -172,22 +224,149 @@ unsafe extern "system" fn after_initialization(_: usize) {
         return;
     }
     let completed = boundary(false, || {
+        log(&format!(
+            "bootstrap: begin version={} architecture={}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::ARCH
+        ));
         if let Err(error) = load_host() {
-            log(&error.to_string());
+            startup_failure(&error);
         }
         true
     });
     if !completed {
-        log("runtime startup panicked; Angelica disabled");
+        boundary((), || {
+            startup_failure(&LoadError::Platform(
+                "runtime startup panicked; Angelica disabled".into(),
+            ));
+        });
     }
 }
 
+fn startup_failure(error: &LoadError) {
+    use windows_sys::Win32::{
+        Globalization::GetUserDefaultUILanguage,
+        UI::WindowsAndMessaging::{MB_ICONWARNING, MB_SETFOREGROUND, MessageBoxW},
+    };
+    log(&error.to_string());
+    let Ok(game) = module_path(0) else { return };
+    if !game
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("ffxiv_dx11.exe"))
+    {
+        return;
+    }
+    let Some(directory) = game.parent() else {
+        return;
+    };
+    let config = Config::read(directory).ok();
+    let root = config
+        .as_ref()
+        .map(|config| config.installation_dir.join("reports"));
+    let fallback = std::env::var_os("LOCALAPPDATA")
+        .filter(|path| !path.is_empty())
+        .map(|path| PathBuf::from(path).join("Angelica/reports"));
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let file = format!("loader-{stamp}-{}.json", std::process::id());
+    let (call, code) = match error {
+        LoadError::Windows { call, source } => (Some(*call), source.raw_os_error()),
+        LoadError::Io { source, .. } => (None, source.raw_os_error()),
+        _ => (None, None),
+    };
+    let report = serde_json::json!({
+        "stage": "load-runtime",
+        "time_unix_ms": stamp,
+        "process_id": std::process::id(),
+        "loader_version": env!("CARGO_PKG_VERSION"),
+        "runtime_path": config.and_then(|config| config.runtime_path().ok()),
+        "windows_call": call,
+        "windows_error": code,
+        "error": error.to_string(),
+        "modules": loaded_modules(),
+    });
+    if let Ok(bytes) = serde_json::to_vec_pretty(&report) {
+        for folder in root
+            .into_iter()
+            .chain(fallback)
+            .chain([directory.join("angelica-reports")])
+        {
+            if std::fs::create_dir_all(&folder)
+                .and_then(|()| std::fs::write(folder.join(&file), &bytes))
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
+    // SAFETY: This runs after process initialization, outside the loader lock.
+    let russian = unsafe { GetUserDefaultUILanguage() } & 0x3ff == 0x19;
+    let message = if russian {
+        "Angelica не запустилась. Игра продолжит запуск без плагинов. Чтобы сохранить диагностику, откройте «Angelica Report» из меню «Пуск» или «Отчёт Angelica» в установщике."
+    } else {
+        "Angelica could not start. The game will continue without its plugins. Open Angelica Report from the Start menu to save the diagnostics."
+    };
+    let message: Vec<_> = message.encode_utf16().chain([0]).collect();
+    // SAFETY: The title and message are NUL-terminated, and startup has no owner window.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            message.as_ptr(),
+            windows_sys::w!("Angelica"),
+            MB_ICONWARNING | MB_SETFOREGROUND,
+        )
+    };
+}
+
+fn loaded_modules() -> Vec<String> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW,
+            TH32CS_SNAPMODULE,
+        },
+    };
+    // SAFETY: Zero selects the current process. The snapshot is read-only.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut module = MODULEENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<MODULEENTRY32W>())
+            .expect("Windows module structure fits DWORD"),
+        ..Default::default()
+    };
+    let mut paths = Vec::new();
+    // SAFETY: The handle is live and the structure is sized and writable.
+    let mut more = unsafe { Module32FirstW(snapshot, &raw mut module) };
+    while more != 0 && paths.len() < 512 {
+        let end = module
+            .szExePath
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(module.szExePath.len());
+        paths.push(String::from_utf16_lossy(&module.szExePath[..end]));
+        // SAFETY: The snapshot and output structure remain live.
+        more = unsafe { Module32NextW(snapshot, &raw mut module) };
+    }
+    // SAFETY: This is the owned snapshot handle, closed once after enumeration.
+    unsafe { CloseHandle(snapshot) };
+    paths
+}
+
 fn load_host() -> Result<(), LoadError> {
+    log("configuration: resolving proxy directory and installation configuration");
     let proxy = module_path(MODULE.load(Ordering::Acquire))?;
     let directory = proxy
         .parent()
         .ok_or_else(|| LoadError::Platform("proxy has no parent directory".into()))?;
     let runtime = Config::read(directory)?.runtime_path()?;
+    log(&format!(
+        "configuration: selected runtime {}",
+        runtime.display()
+    ));
     let runtime = std::fs::canonicalize(&runtime).map_err(|source| LoadError::Io {
         path: runtime,
         source,
@@ -202,6 +381,7 @@ fn load_host() -> Result<(), LoadError> {
             source,
         })?;
     let mut bytes = Vec::new();
+    log("verification: reading locked runtime and detached signature");
     locked
         .read_to_end(&mut bytes)
         .map_err(|source| LoadError::Io {
@@ -210,7 +390,20 @@ fn load_host() -> Result<(), LoadError> {
         })?;
     let signature = trust::read(&runtime.with_extension("dll.sig"))?;
     trust::verify(&bytes, &signature, RELEASE_KEY.as_ref())?;
+    log(&format!(
+        "verification: Ed25519 passed runtime_bytes={}",
+        bytes.len()
+    ));
     let path = wide(&runtime)?;
+    let mut previous = 0;
+    // SAFETY: The error mode is local to this thread and the previous value is writable.
+    let changed = unsafe {
+        SetThreadErrorMode(
+            GetThreadErrorMode() | SEM_FAILCRITICALERRORS,
+            &raw mut previous,
+        )
+    };
+    log("windows-loader: LoadLibraryExW(runtime.dll) begin; dependency search=System32");
     // SAFETY: the locked file's exact bytes have passed strict signature verification.
     // Non-system sibling dependency search is deliberately excluded.
     let module = unsafe {
@@ -220,9 +413,18 @@ fn load_host() -> Result<(), LoadError> {
             LOAD_LIBRARY_SEARCH_SYSTEM32,
         )
     };
-    if module.is_null() {
-        return Err(os_error("LoadLibraryExW(runtime.dll)"));
+    let error = module.is_null().then(std::io::Error::last_os_error);
+    if changed != 0 {
+        // SAFETY: Restore the exact previous mode on the same thread.
+        unsafe { SetThreadErrorMode(previous, std::ptr::null_mut()) };
     }
+    if let Some(source) = error {
+        return Err(LoadError::Windows {
+            call: "LoadLibraryExW(runtime.dll)",
+            source,
+        });
+    }
+    log("windows-loader: runtime mapped; resolving angelica_start_v1");
     // SAFETY: module is loaded and export name is NUL terminated.
     let start = unsafe { GetProcAddress(module, c"angelica_start_v1".as_ptr().cast()) };
     let Some(start) = start else {
@@ -234,8 +436,12 @@ fn load_host() -> Result<(), LoadError> {
     };
     // SAFETY: the signed host's documented ABI is a no-argument system function returning status.
     let start: unsafe extern "system" fn() -> i32 = unsafe { std::mem::transmute(start) };
+    log("runtime-abi: calling angelica_start_v1");
     // SAFETY: signature-verified host implements the versioned startup ABI and catches its panics.
     let status = unsafe { start() };
+    log(&format!(
+        "runtime-abi: angelica_start_v1 returned status={status}"
+    ));
     if status != 0 {
         // SAFETY: a nonzero result guarantees the host removed all callbacks and hooks.
         unsafe { FreeLibrary(module) };

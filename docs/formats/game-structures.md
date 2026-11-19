@@ -48,7 +48,7 @@ The game loads every resource file as a job on a file thread. A job's descriptor
 | `file.texture_handle.flags` (`u8`), `file.resource_handle.category` (`u16`) | fields of a texture handle | the texture's flags and the resource's category |
 | `graphics.config.instance` (`ptr`), `graphics.config.texture_detail` (`u8`) | global and field | the graphics settings and their texture detail level |
 
-The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The checks on `file.file_thread.do_job` confirm the mode byte at the descriptor's start and the cases below 9, 9, 10, and 11. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
+The game path is a `std::string`: 16 bytes holding the text when its capacity is below 16, otherwise a pointer to it, then the length and capacity as `u64`. Paths longer than 255 bytes are never replaced. The checks on `file.file_thread.do_job` confirm the mode byte and the cases below 9, 9, 10, and 11. The descriptor field locators use the dispatcher and its disk reader, `file.file_thread.read_disk`. The game's file object uses its first 0x22 bytes; the adapter's is 256 bytes and zeroed, so the reader opens the file into it. The detour stays installed until the process exits; without replacements it only passes jobs on, and a failure inside it leaves the job as the game made it.
 
 A texture is the exception to the game's disk reader: the texture load takes a texture read from disk only from the game's protected file list, and refuses any other with 0xF1 (load state 13) before it sets the handle's flags, so the texture's glyphs or pixels are missing. The adapter detours the texture load. When the original refuses a disk job whose path is a file in the host's cache, it calls the game's loader for plain `.tex` files, which reads the header and the texture from the job's file, and returns its result. It passes the detail level the refused load chose: 0 unless flag bit 0 is set, then the settings' texture detail, 2 when that is 0xFF. Then it sets the flags the refused load left unset: bit 1 when the category is 1 or 2, and bit 2, 3, or 4 when the letter before the game path's extension is `d`, `n`, or `s`. Every other result, and every file outside the cache, is the original's. The checks on `file.texture_handle.load` confirm the detail level it chooses, the game path as a `std::string` at 0x48 of the resource handle with its capacity at 0x60, the refusal with 0xF1, which lies in a chunk of the function chained to its first range, and the flags it sets: bit 1 for the categories 1 and 2, and bits 2, 3, and 4 for the letter `d`, `n`, or `s` before the game path's extension. All entries of this section are needed; without one, file replacements are unavailable.
 
@@ -100,6 +100,12 @@ Choosing an entry runs the UI module's `ExecuteMainCommand` with its command. Th
 
 Without one of these entries, the System menu has no Angelica entry, and the menu key and `/angelica` still open the menu. Both detours stay installed until the process exits; the command's is enabled first, so an entry the menu shows is always answered.
 
+## Panel visibility and world projection
+
+`character.conditions.combat_test` locates the game's comparison of the combat flag with zero. The host reads the flag at the address named by that instruction. Its RIP-relative displacement is measured from the end of the instruction, including the trailing immediate byte.
+
+`camera.projection.matrix` locates the 16-component view-projection matrix. Two call sites that pass it to the game's world-to-screen transform must resolve to the same address.
+
 ## Chat
 
 The game runs a line the player sends from the chat box or a macro with the command module's `ExecuteCommandInner`, which looks the first word up in its command list. The adapter detours it: when the line's first word is a plugin's command, the host takes the line and the original is not called; every other line, and every line while no plugin has commands, goes to the original unchanged. Plugin messages are added to the chat log with the log module's `PrintMessage`, on the game's main thread.
@@ -146,6 +152,33 @@ The game shows the item's tooltip when the player clicks the link, as for its ow
 The adapter does not detour `PrintMessage`: plugins see the messages the log receives through a Lens watch of the map's `chat_message_added` event at the same function. While the adapter prints, watches on its thread record nothing, so a plugin never hears its own message.
 
 Without one of the command entries, `commands.define` returns `unavailable`; without one of the printing entries, `chat.print` and the host's answers to commands are unavailable. The detour stays installed until the process exits.
+
+### Outgoing links with translated sheet text
+
+The host installs an outgoing link adapter when the first Excel text rule is enabled. It calls the native encoder before restoring the original labels in wire `Fixed(200, ...)` item, key item, and quest links. Original names come from the installed game archives in the client's Excel language, using the map's `name` columns of `Item`, `EventItem`, and `Quest`. Custom status payloads become links by status ID, which the recipient's client resolves in its language. Numeric item and quest fields, unknown macros, and ordinary text are copied byte for byte.
+
+| Entry | Kind | Use |
+| --- | --- | --- |
+| `chat.pronoun_module.encode_links` | function `(ptr module, ptr input, u32 byte_limit, u8 flags) -> ptr` | the encoder branch of the pronoun dispatcher, detoured after its call |
+| `ui.ui_module.excel_module` | field `ptr` | the Excel interface used by the UI module |
+| `excel.module_interface.get_language` | function `(ptr excel) -> ptr` | pointer to the zero-based client language as a 32-bit value |
+| `text.utf8_string.set_string` | function `(ptr string, ptr bytes)` | copies replacement bytes into the initialized game string |
+
+The adapter runs on the game's main thread and only edits the encoder's output buffer. It hands the game its original result when the map or a name is unavailable, the line is malformed, or the complete replacement exceeds the encoder's byte limit. The adapter logs installation failures and a bounded number of restoration failures without recording message text. The operation is internal to the host, so plugins receive no access to outgoing chat.
+
+### Quest Say phrases
+
+The command detour also handles quest Say phrases when Excel translation rules are enabled and the map resolves the quest and object state. It uses the same shell entry as plugin commands. The shell's `current_channel` string supplies the channel for lines without a command. The `TextCommand` schema supplies the client's Say spellings.
+
+When binding a quest text sheet, the host reads the quest's Lua 5.1 chunk from the installed archives. It recognizes the game's `IsAcceptSayEvent` comparisons with a text row and resolves each comparison's sequence and target parameters through `QuestSystemDefine` and `Quest`. A guarded translation for a recognized phrase is kept as a match for the shell, and the row retains its original text. Unknown scripts and unresolved rows keep the normal translation rules.
+
+When a line goes to Say, the adapter checks the accepted quest records and loaded object IDs. The map verifies the 30 quest records and their 24-byte stride through `game.quest_manager.get_sequence`, and the limit of 819 object slots through `object.interaction.construct`. A matching line is sent through the native command function as a temporary `Utf8String`. Only the matched phrase is substituted for inclusion comparisons. If two active quests require different substitutions or the result would exceed the game's 500-byte limit, the shell receives the original line.
+
+### Original names in game commands
+
+`shell.command_module.match_sheet_name` takes `(ptr module, ptr name, ptr out_row, ptr descriptor, i32 start, i32 end)` and returns a success byte. Its descriptor begins with the sheet name as a `Utf8String` and includes the mapped sheet pointer and searched column. The adapter first calls the game's matcher with the player's name. After a failed match, it tries the translations of that name from the current Excel rules for `Action`, `CraftAction`, `GeneralAction`, `Pet`, or `PetMirage`. It uses the original sheet's language and the map's verified `name` column.
+
+The native retry keeps the same descriptor and search bounds. A successful retry only returns a row that provided the original-to-translated name pair. This preserves the game's priority for names it already matched and prevents a duplicate translation from resolving to an unrelated row.
 
 ## Item menus
 

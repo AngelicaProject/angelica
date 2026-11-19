@@ -10,7 +10,7 @@ use angelica_hook::Detour;
 use angelica_map::ValueKind::{I32, I64, Ptr, U8, U16, U32, U64, Void};
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 const EXECUTE: &str = "shell.command_module.execute_command_inner";
@@ -31,6 +31,7 @@ struct Lines {
 
 static LINES: OnceLock<Lines> = OnceLock::new();
 static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 type Execute = unsafe extern "system" fn(usize, usize, usize);
 
@@ -41,7 +42,11 @@ pub fn install_commands(
     commands: Arc<Commands>,
 ) -> Result<(), String> {
     if LINES.get().is_some() {
-        return Ok(());
+        return if INSTALLED.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err("the command hook did not install".into())
+        };
     }
     let entries = Entries { catalog, base };
     let lines = Lines {
@@ -71,6 +76,7 @@ fn install_resolved(lines: Lines, function: &Function) -> Result<(), String> {
     // SAFETY: the adapter and the trampoline are published; nothing else in
     // this process changes these bytes meanwhile.
     unsafe { detour.enable() }.map_err(|e| format!("command detour: {e}"))?;
+    INSTALLED.store(true, Ordering::Release);
     // Installed until the process exits; without plugin commands it only
     // passes lines on.
     std::mem::forget(detour);
@@ -83,11 +89,15 @@ unsafe extern "system" fn execute(module: usize, line: usize, ui: usize) {
     {
         return;
     }
-    // SAFETY: the trampoline runs the game's function with its own ABI and
-    // the game's arguments.
-    unsafe {
-        std::mem::transmute::<usize, Execute>(ORIGINAL.load(Ordering::Acquire))(module, line, ui);
-    }
+    super::quest_say::with_line(module, line, ui, |line| {
+        // SAFETY: the trampoline has the game's ABI and receives the original
+        // arguments or a live temporary game string in place of the line.
+        unsafe {
+            std::mem::transmute::<usize, Execute>(ORIGINAL.load(Ordering::Acquire))(
+                module, line, ui,
+            );
+        }
+    });
 }
 
 impl Lines {

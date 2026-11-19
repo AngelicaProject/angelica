@@ -342,6 +342,82 @@ impl GameData {
         let rows = sheet.rows();
         decode(&sheet, &rows[order[position].1], key.0, key.1).map(Some)
     }
+
+    /// Reads one original string without decoding the row's other cells.
+    #[cfg(windows)]
+    pub(crate) fn text_cell(
+        &self,
+        name: &str,
+        code: u8,
+        row: u32,
+        column: u16,
+    ) -> Result<Option<Vec<u8>>> {
+        let (sheet, order) = self.cached(name, code)?;
+        let Ok(position) = order.binary_search_by_key(&(row, 0), |&(key, _)| key) else {
+            return Ok(None);
+        };
+        sheet.rows()[order[position].1]
+            .string(usize::from(column))
+            .map(|text| Some(text.to_vec()))
+            .map_err(|error| Error::invalid(format!("{name} row {row}, column {column}: {error}")))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn visit_text(
+        &self,
+        name: &str,
+        code: u8,
+        column: u16,
+        mut visit: impl FnMut(u32, &[u8]),
+    ) -> Result<()> {
+        let (sheet, order) = self.cached(name, code)?;
+        let rows = sheet.rows();
+        for &((row, subrow), index) in order.iter() {
+            if subrow == 0 {
+                let text = rows[index]
+                    .string(usize::from(column))
+                    .map_err(|e| Error::invalid(format!("{name} row {row}: {e}")))?;
+                visit(row, text);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn text_binding(
+        &self,
+        name: &str,
+        code: u8,
+        excel: &crate::excel_text::ExcelText,
+    ) -> Result<crate::excel_text::SheetBinding> {
+        use angelica_text::table::{Column, Variant};
+        let sheet = self.sheet(name)?;
+        let columns = sheet
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &(kind, offset))| {
+                (kind == ColumnKind::String).then_some(Column {
+                    index: u16::try_from(index).ok()?,
+                    offset,
+                })
+            })
+            .collect();
+        Ok(excel.bind(&crate::excel_text::SheetInfo {
+            name: sheet.name,
+            variant: if sheet.subrows {
+                Variant::Subrows
+            } else {
+                Variant::Rows
+            },
+            language: if sheet.languages.contains(&code) {
+                code
+            } else {
+                0
+            },
+            columns,
+        }))
+    }
 }
 
 fn decode(sheet: &Sheet, row: &excel::Row<'_>, id: u32, subrow: u16) -> Result<Row> {

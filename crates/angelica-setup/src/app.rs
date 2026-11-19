@@ -95,7 +95,7 @@ pub fn run(mode: Mode) {
     );
 }
 
-fn fonts() -> egui::FontDefinitions {
+pub(crate) fn fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::empty();
     for (name, bytes) in [
         (
@@ -407,6 +407,7 @@ impl App {
 
     fn start(&mut self, ui: &mut egui::Ui) {
         let w = self.words;
+        Self::report_button(ui, self.game().as_deref());
         if payload::PAYLOAD.is_none() || payload::release_key().is_none() {
             heading(ui, w.development);
             text(ui, w.development_text, SECONDARY);
@@ -468,18 +469,17 @@ impl App {
         let game = self.game();
         let neighbors = game
             .as_deref()
-            .map(|game| Neighbors::find(game, system::dalamud_installed()));
-        let compatible = neighbors
-            .as_ref()
-            .map(Neighbors::compatible)
-            .unwrap_or_default();
-        if !compatible.is_empty() {
+            .map(|game| Neighbors::find(game, system::xivlauncher_installed()));
+        if let Some(found) = &neighbors
+            && (found.xivlauncher || found.reshade)
+        {
             field(ui, w.beside, |ui| {
-                text(
-                    ui,
-                    &w.beside_value.replace("{names}", &compatible.join(", ")),
-                    GOOD,
-                );
+                if found.xivlauncher {
+                    text(ui, w.dalamud_pause, SECONDARY);
+                }
+                if found.reshade {
+                    text(ui, w.reshade_compatible, GOOD);
+                }
             });
         }
         let conflict = neighbors.as_ref().is_some_and(|found| found.other_proxy);
@@ -496,6 +496,21 @@ impl App {
                 self.begin_install(game);
             }
         });
+    }
+
+    fn report_button(ui: &mut egui::Ui, game: Option<&std::path::Path>) {
+        let label = if system::russian() {
+            "Отчёт Angelica"
+        } else {
+            "Angelica report"
+        };
+        if word(ui, label, ACTION, false, true)
+            && let Ok(program) = std::env::current_exe()
+        {
+            let mut command = std::process::Command::new(program);
+            command.arg("--report").args(game);
+            let _ = command.spawn();
+        }
     }
 
     fn busy(&self, ui: &mut egui::Ui, step: &str, fraction: f32) {

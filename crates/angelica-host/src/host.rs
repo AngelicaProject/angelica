@@ -195,6 +195,9 @@ pub struct Host {
     /// What changes on disk while the game runs.
     updates: Mutex<Option<Box<dyn Updates>>>,
     main_thread: ThreadId,
+    standby: AtomicBool,
+    first_frame: AtomicBool,
+    standby_probe: Option<fn() -> bool>,
     actions: Mutex<VecDeque<Action>>,
     events: Mutex<VecDeque<(String, Event)>>,
     diagnostics: Mutex<VecDeque<String>>,
@@ -236,6 +239,9 @@ impl Host {
             plugins: std::sync::RwLock::new(BTreeMap::new()),
             updates: Mutex::new(None),
             main_thread: std::thread::current().id(),
+            standby: AtomicBool::new(false),
+            first_frame: AtomicBool::new(true),
+            standby_probe: None,
             actions: Mutex::new(VecDeque::new()),
             events: Mutex::new(VecDeque::new()),
             diagnostics: Mutex::new(VecDeque::new()),
@@ -403,16 +409,22 @@ impl Host {
     /// # Errors
     /// Refuses a repeated id, imports the host does not provide, and an
     /// unreadable grant or settings file.
-    pub fn install(&mut self, manifest: Manifest, component: &Component) -> Result<(), String> {
+    pub fn install(&self, manifest: Manifest, component: &Component) -> Result<(), String> {
         let id = manifest.id().to_owned();
-        if self.plugin(&id).is_some() {
+        let mut plugins = self.plugins.write().unwrap_or_else(PoisonError::into_inner);
+        if plugins.contains_key(&id) {
             return Err(format!("{id}: installed twice"));
         }
         let plugin = self.create(manifest, component)?;
-        self.plugins
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, plugin);
+        let record = format!(
+            "plugin {id}: registered version={} status={:?} enabled={}",
+            plugin.manifest.plugin.version,
+            plugin.status(),
+            plugin.enabled.load(Ordering::Acquire)
+        );
+        plugins.insert(id, plugin);
+        drop(plugins);
+        (self.log_sink)(&record);
         Ok(())
     }
 
@@ -519,9 +531,41 @@ impl Host {
         Ok(plugin)
     }
 
+    /// Installs the main-thread probe for another runtime in this process.
+    pub fn watch_standby(&mut self, probe: fn() -> bool) {
+        self.standby_probe = Some(probe);
+        self.check_standby();
+    }
+
+    /// Whether plugin activation is blocked for this game session.
+    #[must_use]
+    pub fn is_in_standby(&self) -> bool {
+        self.standby.load(Ordering::Acquire)
+    }
+
+    /// Blocks plugin activation for the rest of the session without saving
+    /// changes to the player's plugin settings.
+    pub(crate) fn enter_standby(&self) {
+        debug_assert!(self.on_main_thread());
+        if !self.standby.swap(true, Ordering::AcqRel) {
+            self.stop_all();
+            self.diagnostic("Dalamud detected. Angelica is in standby for this session.");
+        }
+    }
+
+    fn check_standby(&self) {
+        if !self.is_in_standby() && self.standby_probe.is_some_and(|probe| probe()) {
+            self.enter_standby();
+        }
+    }
+
     /// Starts every approved and enabled plugin, before the game's code
     /// runs: `runtime.started-with-game` is true during these starts.
     pub fn start_all(&self) {
+        self.check_standby();
+        if self.is_in_standby() {
+            return;
+        }
         self.services.starting.store(true, Ordering::Release);
         for plugin in self.plugins() {
             if plugin.status() == Status::Disabled && plugin.enabled.load(Ordering::Acquire) {
@@ -532,7 +576,9 @@ impl Host {
     }
 
     fn start(&self, plugin: &Arc<Plugin>) {
-        let id = plugin.manifest.id().to_owned();
+        if self.is_in_standby() {
+            return;
+        }
         let Some(grants) = plugin
             .grants
             .lock()
@@ -542,14 +588,34 @@ impl Host {
             plugin.set_status(Status::AwaitingApproval);
             return;
         };
+        let started = std::time::Instant::now();
+        let id = plugin.manifest.id();
+        (self.log_sink)(&format!(
+            "plugin {id}: starting version={} with_game={}",
+            plugin.manifest.plugin.version,
+            self.services.starting.load(Ordering::Acquire)
+        ));
         if let Err(error) = self.open_cache(plugin, &grants) {
+            self.diagnostic(format!("plugin {id}: cache unavailable: {error}"));
             plugin.set_status(Status::Faulted(error));
             return;
         }
+        self.start_approved(plugin, &grants);
+        if plugin.status() == Status::Running {
+            (self.log_sink)(&format!(
+                "plugin {id}: running elapsed_ms={}",
+                started.elapsed().as_millis()
+            ));
+        }
+    }
+
+    fn start_approved(&self, plugin: &Arc<Plugin>, grants: &Grants) {
+        let id = plugin.manifest.id().to_owned();
         let jobs = Arc::new(Jobs::new(
             self.sandbox.clone(),
             plugin.pre.clone(),
             self.limits.job_time,
+            self.log_sink.clone(),
         ));
         let context = Arc::new(Context {
             id: id.clone(),
@@ -563,7 +629,7 @@ impl Host {
             lens_read: held(plugin.manifest.lens_read(), &grants.lens_read),
             lens_act: held(plugin.manifest.lens_act(), &grants.lens_act),
             lens_change: held(plugin.manifest.lens_change(), &grants.lens_change),
-            link_hosts: link_hosts(&plugin.manifest, &grants),
+            link_hosts: link_hosts(&plugin.manifest, grants),
             message_to: if grants.permissions.contains(&Permission::MessagesSend) {
                 held(plugin.manifest.message_to(), &grants.message_to)
             } else {
@@ -633,6 +699,8 @@ impl Host {
     /// Stops a running plugin: its `stop`, then removal of its tables,
     /// letters, jobs, and windows.
     fn stop(&self, plugin: &Plugin, status: Status) {
+        let id = plugin.manifest.id();
+        (self.log_sink)(&format!("plugin {id}: stopping"));
         let running = plugin
             .running
             .lock()
@@ -680,6 +748,7 @@ impl Host {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
         plugin.set_status(status);
+        (self.log_sink)(&format!("plugin {id}: stopped; effects removed"));
     }
 
     /// Keeps a plugin's item menu entries for the game's menus, installing
@@ -778,11 +847,16 @@ impl Host {
             self.diagnostic("a frame was requested outside the game's main thread");
             return;
         }
+        if self.first_frame.swap(false, Ordering::AcqRel) {
+            (self.log_sink)("runtime: first game-thread frame");
+        }
+        self.check_standby();
         let (map, changed) = self
             .updates
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_mut()
+            .filter(|_| !self.is_in_standby())
             .map(|updates| (updates.map(), updates.packages()))
             .unwrap_or_default();
         match map {
@@ -1166,25 +1240,28 @@ impl Host {
         let message = crate::chat::encode(&context.name, &kept);
         if let Err(reason) = self.services.game.print(&message) {
             self.diagnostic(format!(
-                "{}: {reason}: {}",
-                context.id,
-                crate::chat::plain(&message)
+                "{}: could not print command reply: {reason}",
+                context.id
             ));
         }
     }
 
     fn apply(&self, action: &Action) -> Result<(), String> {
-        let id = match action {
-            Action::Approve(id)
-            | Action::Enable(id)
-            | Action::Disable(id)
-            | Action::OpenFolder(id)
-            | Action::Remove { id, .. } => id,
+        if self.is_in_standby() && matches!(action, Action::Approve(_) | Action::Enable(_)) {
+            return Err("Plugin activation is blocked while Angelica is in standby.".into());
+        }
+        let (id, operation) = match action {
+            Action::Approve(id) => (id, "approve"),
+            Action::Enable(id) => (id, "enable"),
+            Action::Disable(id) => (id, "disable"),
+            Action::OpenFolder(id) => (id, "open storage folder"),
+            Action::Remove { id, .. } => (id, "remove"),
         };
         let plugin = self
             .plugin(id)
             .ok_or_else(|| format!("{id}: not installed"))?;
         let plugin = &plugin;
+        (self.log_sink)(&format!("plugin {id}: requested action={operation}"));
         match action {
             Action::Approve(_) => {
                 let grants =
