@@ -395,6 +395,7 @@ impl ExcelText {
             generation: snapshot.generation,
             columns: sheet.columns.clone(),
             parts,
+            kept_rows: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -419,6 +420,7 @@ pub struct SheetBinding {
     generation: u64,
     columns: Vec<Column>,
     parts: Vec<Part>,
+    kept_rows: std::collections::BTreeSet<u32>,
 }
 
 /// What [`SheetBinding::rewrite`] did with a row.
@@ -447,6 +449,38 @@ enum Listed<'a> {
 }
 
 impl SheetBinding {
+    #[cfg(windows)]
+    pub(crate) fn keep_rows(&mut self, rows: std::collections::BTreeSet<u32>) {
+        self.kept_rows = rows;
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn shown(&self, row: u32, column: u16, original: &[u8]) -> Option<&[u8]> {
+        for part in &self.parts {
+            match (part, &part.entry().rules) {
+                (Part::Table(_, index), Rules::Table { table, .. }) => {
+                    let table = table.table();
+                    if let Some(cell) = table
+                        .sheet_by_index(*index)?
+                        .row(row, 0)
+                        .into_iter()
+                        .find(|cell| cell.column == column)
+                        && angelica_text::guard(table.domain(), original) == cell.guard
+                    {
+                        return Some(cell.text);
+                    }
+                }
+                (Part::Rule(_), Rules::Single(rule))
+                    if rule.lists(row, 0) && rule.holds(column, original) =>
+                {
+                    return Some(&rule.text);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// A binding without rules, for a sheet that cannot be read.
     #[must_use]
     pub fn none(generation: u64) -> Self {
@@ -454,6 +488,7 @@ impl SheetBinding {
             generation,
             columns: Vec::new(),
             parts: Vec::new(),
+            kept_rows: std::collections::BTreeSet::new(),
         }
     }
 
@@ -483,19 +518,20 @@ impl SheetBinding {
     /// row's text only then.
     #[must_use]
     pub fn lists(&self, row: u32, subrow: u16) -> bool {
-        self.parts.iter().any(|part| match part {
-            Part::Table(entry, index) => match &entry.rules {
-                Rules::Table { table, .. } => table
-                    .table()
-                    .sheet_by_index(*index)
-                    .is_some_and(|sheet| !sheet.row(row, subrow).is_empty()),
-                Rules::Single(_) => false,
-            },
-            Part::Rule(entry) => match &entry.rules {
-                Rules::Single(rule) => rule.lists(row, subrow),
-                Rules::Table { .. } => false,
-            },
-        })
+        !self.kept_rows.contains(&row)
+            && self.parts.iter().any(|part| match part {
+                Part::Table(entry, index) => match &entry.rules {
+                    Rules::Table { table, .. } => table
+                        .table()
+                        .sheet_by_index(*index)
+                        .is_some_and(|sheet| !sheet.row(row, subrow).is_empty()),
+                    Rules::Single(_) => false,
+                },
+                Part::Rule(entry) => match &entry.rules {
+                    Rules::Single(rule) => rule.lists(row, subrow),
+                    Rules::Table { .. } => false,
+                },
+            })
     }
 
     /// The parts with rules for the row, and those rules.
@@ -520,6 +556,9 @@ impl SheetBinding {
     /// its terminator, in column order. It may extend past the last string.
     #[must_use]
     pub fn rewrite(&self, row: u32, subrow: u16, buffer: &[u8], fixed_size: usize) -> Rewrite {
+        if self.kept_rows.contains(&row) {
+            return Rewrite::Unchanged;
+        }
         let candidates = self.candidates(row, subrow);
         if candidates.is_empty() {
             return Rewrite::Unchanged;

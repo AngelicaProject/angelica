@@ -1,13 +1,11 @@
-//! What else is installed beside the game, so the installer can say what
-//! Angelica works with and what stops it.
+//! The launcher and other tools found by the installer.
 use std::path::Path;
 
 /// Tools the installer names beside the game.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Neighbors {
-    /// `XIVLauncher` or `XIVLauncher.Core`, which start the game with
-    /// Dalamud.
-    pub dalamud: bool,
+    /// `XIVLauncher` or `XIVLauncher.Core` is installed.
+    pub xivlauncher: bool,
     /// `ReShade` in the game folder.
     pub reshade: bool,
     /// A `dinput8.dll` of another program, which Angelica will not replace.
@@ -15,10 +13,9 @@ pub struct Neighbors {
 }
 
 impl Neighbors {
-    /// Looks beside `game`, the game's `game` folder; `dalamud` says
-    /// whether the launcher that loads Dalamud is installed.
+    /// Looks beside `game`, the game's `game` folder.
     #[must_use]
-    pub fn find(game: &Path, dalamud: bool) -> Self {
+    pub fn find(game: &Path, xivlauncher: bool) -> Self {
         let reshade = ["dxgi.dll", "d3d11.dll"].iter().any(|name| {
             std::fs::read(game.join(name)).is_ok_and(|bytes| {
                 bytes
@@ -29,23 +26,10 @@ impl Neighbors {
         let other_proxy = std::fs::read(game.join("dinput8.dll"))
             .is_ok_and(|bytes| !crate::install::is_angelica_proxy(&bytes));
         Self {
-            dalamud,
+            xivlauncher,
             reshade,
             other_proxy,
         }
-    }
-
-    /// The tools that work beside Angelica, by name.
-    #[must_use]
-    pub fn compatible(&self) -> Vec<&'static str> {
-        let mut names = Vec::new();
-        if self.dalamud {
-            names.push("Dalamud");
-        }
-        if self.reshade {
-            names.push("ReShade");
-        }
-        names
     }
 }
 
@@ -63,7 +47,8 @@ mod tests {
         std::fs::write(game.join("dxgi.dll"), b"MZ...ReShade...").unwrap();
         std::fs::write(game.join("dinput8.dll"), b"MZ another tool").unwrap();
         let found = Neighbors::find(&game, true);
-        assert_eq!(found.compatible(), vec!["Dalamud", "ReShade"]);
+        assert!(found.xivlauncher);
+        assert!(found.reshade);
         assert!(found.other_proxy);
 
         std::fs::write(game.join("dinput8.dll"), b"angelica-loader.log").unwrap();

@@ -15,7 +15,7 @@ use runtime::{
 };
 use std::sync::OnceLock;
 
-const MANIFEST: &str = include_str!("../../../examples/hello/angelica.toml");
+const MANIFEST: &str = include_str!("../hello/angelica.toml");
 
 fn component() -> &'static [u8] {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -152,6 +152,58 @@ fn a_plugin_runs_only_after_approval() {
     assert_eq!(plugin.status(), Status::Running);
     assert!(test.folder.path().join("grants/hello.json").exists());
     assert!(plugin.log.lines()[0].text.contains("2026.09.15.0000.0000"));
+}
+
+#[test]
+fn standby_blocks_approval_without_saving_it() {
+    let mut test = TestHost::new(Limits::default());
+    test.install(MANIFEST, component()).unwrap();
+    test.host.watch_standby(|| true);
+    test.host.start_all();
+    test.host.queue(Action::Approve("hello".into()));
+    test.frames(1);
+
+    assert!(test.host.is_in_standby());
+    assert_eq!(
+        test.host.plugin("hello").unwrap().status(),
+        Status::AwaitingApproval
+    );
+    assert!(!test.folder.path().join("grants/hello.json").exists());
+    assert!(!test.folder.path().join("state/hello.json").exists());
+}
+
+#[test]
+fn standby_stops_and_blocks_plugins_until_the_next_game_start() {
+    thread_local! {
+        static DETECTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    let mut test = approved(MANIFEST);
+    test.host
+        .watch_standby(|| DETECTED.with(std::cell::Cell::get));
+    let running = test.host.plugin("hello").unwrap();
+    assert!(!running.windows().is_empty());
+    let state = test.folder.path().join("state/hello.json");
+    let saved = std::fs::read(&state).unwrap();
+
+    DETECTED.with(|detected| detected.set(true));
+    test.frames(1);
+    DETECTED.with(|detected| detected.set(false));
+    assert!(test.host.is_in_standby());
+    assert_eq!(running.status(), Status::Disabled);
+    assert!(running.windows().is_empty());
+
+    test.host.start_all();
+    test.host.queue(Action::Enable("hello".into()));
+    let update = MANIFEST.replace("version = \"0.1.0\"", "version = \"0.1.1\"");
+    test.reload(&update, component()).unwrap();
+    let paused = test.host.plugin("hello").unwrap();
+    assert_eq!(paused.manifest.plugin.version, "0.1.0");
+    assert_eq!(paused.status(), Status::Disabled);
+    assert_eq!(std::fs::read(state).unwrap(), saved);
+
+    let next = test.restart().unwrap();
+    assert!(!next.host.is_in_standby());
+    assert_eq!(next.host.plugin("hello").unwrap().status(), Status::Running);
 }
 
 #[test]

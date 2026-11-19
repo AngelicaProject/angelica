@@ -1,8 +1,8 @@
-# Plugin API 1.0
+# Plugin API 1.x
 
 The plugin API is the WIT package `angelica:plugin@1.0.0` in [`wit/`](../../wit). A plugin is a WebAssembly component of its `plugin` world: it imports the host's interfaces and exports `guest`. The WIT files carry the doc comment of every function; this document states the rules they share. [`angelica-sdk`](../../crates/angelica-sdk) provides Rust bindings, a `Plugin` trait, and helpers for every interface.
 
-A manifest declares the API version it was built for in `plugin.api` ([manifest](./plugin-manifest-v1.md)). This host runs `1.0`.
+A manifest declares the API version it was built for in `plugin.api` ([manifest](./plugin-manifest-v1.md)). This host runs `1.0` through `1.3`.
 
 ## Interfaces
 
@@ -78,7 +78,7 @@ Shapes: *text*, *number* (`f64`), *integer* (`s64`), *flag* (`bool`), *texts*, a
 
 A window's status tone chooses its mark: `good` the mark of something running, `warning` and `bad` the mark of something that needs the player. When the player presses the back arrow, the title, or an earlier part of the path, the plugin receives `navigated` with the number of parts that stay (0 for the top level) and returns the window with that path; the host does not change the path itself. The title bar's other controls — collapse, the window's menu, and close — are the host's. `closed` arrives when the player closes a window.
 
-A dialog is a question its window asks: the window waits under it, dimmed and taking no input, until the plugin stops returning the dialog. A window has at most one dialog, and its only parts that take input are buttons; its clicks name the dialog's id as their place, and when the player closes it without an answer the plugin receives `closed` with the dialog's id. Return the dialog every frame while the question stands, and stop once the player answered or closed it.
+A dialog is a question its window asks: the window waits under it, dimmed and taking no input, until the plugin stops returning the dialog. A window has at most one dialog. Buttons and, since 1.3, compact checkboxes take input in a dialog. Their `clicked` and `toggled` events name the dialog's id as their place. Closing the dialog sends `closed` with the dialog's id. Return the dialog every frame while the question stands, and stop once the player answered or closed it.
 
 A menu entry is the plugin's line in one of the game's own menus: with `for = item`, the menu the game opens for an item the player carries, such as in the inventory or the armoury chest. The game draws the menu; the host adds each entry after the game's own, in the color of plugin names, so the player tells it from the game's entries. While the plugin returns the entry, every such menu shows it; when the player chooses it, the game closes the menu as for its own entries, and the plugin receives `menu-chosen` with the entry's id as its place and the item's row of `Item`, without its quality. A plugin returns at most 4 menu entries, and a menu shows at most 8 entries of plugins, by plugin id, and no more than the game's 32 entries in all. A game build whose map lacks the menu's entries shows none, and the host notes it under **For developers**.
 
@@ -95,6 +95,7 @@ A panel's clicks pass to the game except on parts that take input. The player ca
 | `grid` | 1.0 | `columns` integer, 2–8, *required*: equal columns, filled left to right, row by row |
 | `section` | 1.0 | id; `title` text, *required*; `open` flag, true by default: under a heading the player can collapse |
 | `table` | 1.0 | `columns` texts, 1–16, *required*: column headings; each cell is one part, or one `row`, left to right, row by row; holds no sections or tables |
+| `virtual-list` | 1.2 | id; `first` integer: index of the first supplied row; `total` integer, 0–100000: number of rows in the list; `epoch` integer: change it when the list should scroll to the start. One per split's main pane. Contains consecutive `row` parts, 34 points tall. Sends `chosen` with the first row the host needs as the player scrolls. |
 | `end` | 1.0 | closes the innermost container |
 | `spacer` | 1.0 | takes the free room of its row or column, pushing what follows to its end |
 | `separator` | 1.0 | a thin line |
@@ -138,6 +139,10 @@ The host reads an icon from the game's archives, the high-resolution texture fir
 | `entry` | 1.0 | id; `title` text, *required*; `note` text; `value` text; `mark` text, `none` (default), `on`, `off`, or `attention`; `chosen` flag; `progress` number, 0–1: a thin line in place of the note; `icon` integer: one of the game's icons, as for `icon`, in place of the letter tile; `plain` flag: no tile, and the note under the title. A container: a `button` in it with `in-row` flag true is one of up to 4 actions always shown at the right of the row, before its value; under a chosen entry, its `fact`s (up to 16) and other `button`s (up to 8) are shown under the row. Sends `clicked` |
 
 A checkbox or choice among parts under each other is a setting: its label on the left, its value at the right edge of its place, its hint under them in small muted text, and a thin line between it and a setting right above it. In a row it is its label followed by its value.
+
+Since 1.1 a checkbox can set the `compact` flag to draw a single box. It accepts an empty label and takes no `words`. An unchecked compact checkbox with the `mixed` flag shows a dash and toggles on.
+
+Since 1.1 a split can set `checks`, a list of texts, with one entry per section. The values are empty, `off`, `on`, or `mixed`. The checkbox sends `toggled` with the split id followed by `/` and the zero-based section index. Toggling a checkbox leaves the selection unchanged.
 
 An entry is drawn like the rows of Angelica's own list: a tile with the first letter of its title, or the game's icon it names, the title, the note after it, the value at the right, and the mark — `on` for what is in use or running, `off` for what is not (the row is drawn muted), `attention` for what needs the player. A `plain` entry has no tile; with a note or progress it is taller, the note under the title, for rows that a letter or an icon would not tell apart, such as languages. A click on the row sends `clicked` with the entry's id, and a pressed button `clicked` with its own; the plugin decides which entry is chosen. A `button` takes `in-row` only inside an entry.
 

@@ -103,6 +103,18 @@ fn signed_host_starts_before_game_and_failures_leave_game_running() {
     )
     .unwrap();
     assert_eq!(game(dir, 0), "load\nhost\ngame\n");
+    let startup = std::fs::read_to_string(dir.join("angelica-loader.log")).unwrap();
+    let first = startup.lines().next().unwrap();
+    assert_eq!(first.split_whitespace().next().unwrap().len(), 24);
+    assert!(first.contains("Z pid=") && first.contains(" elapsed_ms="));
+    for stage in [
+        "bootstrap: begin",
+        "verification: Ed25519 passed",
+        "windows-loader: LoadLibraryExW(runtime.dll) begin",
+        "runtime-abi: angelica_start_v1 returned status=0",
+    ] {
+        assert!(startup.contains(stage), "missing {stage}: {startup}");
+    }
     assert_eq!(game(dir, 5), "load\nhost\ngame\n");
     assert!(
         std::fs::read_to_string(dir.join("angelica-loader.log"))
@@ -111,6 +123,10 @@ fn signed_host_starts_before_game_and_failures_leave_game_running() {
     );
     std::fs::write(dir.join("runtime.dll.sig"), [0; 64]).unwrap();
     assert_eq!(game(dir, 0), "game\n");
+    let failure = std::fs::read_to_string(dir.join("angelica-loader.log")).unwrap();
+    let failed_start = failure.rsplit("bootstrap: begin").next().unwrap();
+    assert!(failed_start.contains("signature verification failed"));
+    assert!(!failed_start.contains("LoadLibraryExW(runtime.dll) begin"));
     std::fs::remove_file(dir.join("runtime.dll.sig")).unwrap();
     assert_eq!(game(dir, 0), "game\n");
     std::fs::write(dir.join("runtime.dll.sig"), signature).unwrap();

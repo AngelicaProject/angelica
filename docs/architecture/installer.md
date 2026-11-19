@@ -4,11 +4,17 @@
 
 ## What the player sees
 
-1. **Installation.** The game it found (the launcher and the installation's folder; several are a choice), with **Choose another folder**, which opens Windows' folder dialog; when no game is found, only **Choose the game folder**. A chosen folder counts when it is the game's `game` folder or holds one. Then what is installed beside the game that works with Angelica (Dalamud through XIVLauncher, ReShade), and, at the bottom, Angelica's version and **Install →**. A `dinput8.dll` of another program in the game folder is said in red and keeps **Install** off; a game folder that needs administrator rights is said in one line.
+1. **Installation.** The game it found (the launcher and the installation's folder; several are a choice), with **Choose another folder**, which opens Windows' folder dialog; when no game is found, only **Choose the game folder**. A chosen folder counts when it is the game's `game` folder or holds one. If the installer finds a launcher that can start another plugin runtime, it explains [standby](./loading.md#coexistence). A detected graphics injector gets a separate compatibility message. At the bottom are Angelica's version and **Install →**. A `dinput8.dll` of another program in the game folder is said in red and keeps **Install** off; a game folder that needs administrator rights is said in one line.
 2. **Installation in progress.** A thin progress line and the current step.
 3. **Done.** The menu key, and that updates are installed automatically when the game starts; **Close**.
 
 It offers no plugins: the player installs them from the Angelica menu in the game. A failure shows what happened and what to do, with **Try again**.
+
+## Diagnostic reports
+
+The installer's **Angelica report** action and the installed **Angelica Report** shortcut open the same standalone tool. The tool can also run as `angelica-setup --report`, optionally with a game folder argument. It works without a running game or loadable host. The player opens the tool after a failure. Its window explains what it collects and identifies the latest recorded loader failure or game crash when a record exists.
+
+**Save ZIP** writes a local archive with a summary, recent loader and host logs, and the latest available startup and crash records. On Windows it also includes recent application error, crash-report and hang events for the game when the Windows event log has them. The archive includes the latest readable minidump up to 32 MiB by default. The player can clear the minidump checkbox before saving. **Copy summary** copies the JSON summary. The tool reads specific diagnostic files and never scans plugin storage or transmits an archive. Logs and dumps may still contain personal data.
 
 ## What it does
 

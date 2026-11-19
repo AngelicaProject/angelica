@@ -310,20 +310,8 @@ fn macro_with(out: &mut Vec<u8>, code: u8, value: u32) {
 /// 0xCF, otherwise a marker whose low bits, plus one, flag which of four
 /// big-endian bytes follow; zero bytes are left out.
 fn integer(value: u32) -> Vec<u8> {
-    if value < 0xCF {
-        return vec![u8::try_from(value + 1).unwrap_or(0)];
-    }
-    let bytes = value.to_be_bytes();
-    let mut flags = 0u8;
-    let mut present = Vec::new();
-    for (index, &byte) in bytes.iter().enumerate() {
-        if byte != 0 {
-            flags |= 8 >> index;
-            present.push(byte);
-        }
-    }
-    let mut out = vec![0xF0 + flags - 1];
-    out.extend(present);
+    let mut out = Vec::new();
+    angelica_text::sestring::push_integer(&mut out, value);
     out
 }
 

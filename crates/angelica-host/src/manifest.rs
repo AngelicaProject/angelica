@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The API versions this host runs.
-pub const API_VERSIONS: &[&str] = &["1.0"];
+pub const API_VERSIONS: &[&str] = &["1.0", "1.1", "1.2", "1.3"];
 /// The largest memory a plugin instance may request.
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 /// Hosts a manifest lists for `http.get`.

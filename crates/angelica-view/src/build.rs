@@ -11,9 +11,10 @@
 //!     .meter(Meter::new(hp, max_hp).label("HP").text(format!("{hp} / {max_hp}")));
 //! ```
 use crate::{
-    Action, ActionKind, Anchor, Backing, Button, Checkbox, Choice, Countdown, Dialog, Entry, Fact,
-    Icon, Mark, MenuEntry, Meter, Number, Panel, Popup, PopupAt, Readout, Ring, Role, Section,
-    Shown, Sparkline, Split, Status, Table, Tabs, Text, TextInput, Tone, Widget, Window,
+    Action, ActionKind, Anchor, Backing, Button, CheckState, Checkbox, Choice, Countdown, Dialog,
+    Entry, Fact, Icon, Mark, MenuEntry, Meter, Number, Panel, Popup, PopupAt, Readout, Ring, Role,
+    Section, Shown, Sparkline, Split, Status, Table, Tabs, Text, TextInput, Tone, VirtualList,
+    Widget, Window,
 };
 
 impl MenuEntry {
@@ -40,6 +41,7 @@ impl Split {
             labels: Vec::new(),
             values: Vec::new(),
             groups: Vec::new(),
+            checks: Vec::new(),
             selected,
             width: crate::data::SPLIT_WIDTH,
             action: String::new(),
@@ -62,6 +64,15 @@ impl Split {
         }
         self.labels.push(label.into());
         self
+    }
+
+    /// Adds a section with a checkbox. Toggling it uses the split id
+    /// followed by `/` and the zero-based section index.
+    #[must_use]
+    pub fn section_checked(mut self, label: impl Into<String>, check: CheckState) -> Self {
+        self.checks.resize(self.labels.len(), None);
+        self.checks.push(Some(check));
+        self.section(label)
     }
 
     /// A small heading above the next section.
@@ -475,6 +486,33 @@ macro_rules! parts {
                     id: id.into(),
                     label: label.into(),
                     checked,
+                    compact: false,
+                    mixed: false,
+                    words: None,
+                    hint: String::new(),
+                }))
+            }
+
+            /// A compact checkbox for lists and tables.
+            #[must_use]
+            pub fn tick_box(self, id: impl Into<String>, state: CheckState) -> Self {
+                self.tick_box_labeled(id, "", state)
+            }
+
+            /// A compact checkbox with a clickable label.
+            #[must_use]
+            pub fn tick_box_labeled(
+                self,
+                id: impl Into<String>,
+                label: impl Into<String>,
+                state: CheckState,
+            ) -> Self {
+                self.with(Widget::Checkbox(Checkbox {
+                    id: id.into(),
+                    label: label.into(),
+                    checked: state == CheckState::Checked,
+                    compact: true,
+                    mixed: state == CheckState::Mixed,
                     words: None,
                     hint: String::new(),
                 }))
@@ -495,6 +533,8 @@ macro_rules! parts {
                     id: id.into(),
                     label: label.into(),
                     checked,
+                    compact: false,
+                    mixed: false,
                     words: Some([on.into(), off.into()]),
                     hint: String::new(),
                 }))
@@ -714,6 +754,13 @@ macro_rules! parts {
             #[must_use]
             pub fn column(self, build: impl FnOnce(Self) -> Self) -> Self {
                 build(self.with(Widget::BeginColumn)).with(Widget::EndColumn)
+            }
+
+            /// A scrolling list of fixed-height rows in a split's main pane.
+            /// The host requests a new first row with `Event::Chosen`.
+            #[must_use]
+            pub fn virtual_list(self, list: VirtualList, build: impl FnOnce(Self) -> Self) -> Self {
+                build(self.with(Widget::BeginVirtualList(list))).with(Widget::EndVirtualList)
             }
 
             /// Parts in a grid of 2 to 8 equal columns, left to right, row

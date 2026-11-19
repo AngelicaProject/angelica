@@ -9,6 +9,8 @@ mod app;
 mod install;
 mod neighbors;
 mod payload;
+mod report;
+mod report_zip;
 #[allow(unsafe_code)]
 mod system;
 #[cfg(not(windows))]
@@ -35,6 +37,7 @@ fn main() {
             std::process::exit(code(&install::remove_from_game(&PathBuf::from(&args[1]))));
         }
         Some("--uninstall") => app::run(app::Mode::Uninstall),
+        Some("--report") => report::run(args.get(1).map(PathBuf::from)),
         _ => app::run(app::Mode::Install),
     }
 }

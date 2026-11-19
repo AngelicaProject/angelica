@@ -106,6 +106,11 @@ const KINDS: &[Kind] = &[
             ("plain", 0),
         ],
     ),
+    (
+        "virtual-list",
+        2,
+        &[("first", 2), ("total", 2), ("epoch", 2)],
+    ),
     ("end", 0, &[]),
     ("spacer", 0, &[]),
     ("separator", 0, &[]),
@@ -117,6 +122,7 @@ const KINDS: &[Kind] = &[
             ("labels", 0),
             ("values", 0),
             ("groups", 0),
+            ("checks", 1),
             ("selected", 0),
             ("width", 0),
             ("action", 0),
@@ -173,7 +179,14 @@ const KINDS: &[Kind] = &[
     (
         "checkbox",
         0,
-        &[("label", 0), ("checked", 0), ("words", 0), ("hint", 0)],
+        &[
+            ("label", 0),
+            ("checked", 0),
+            ("words", 0),
+            ("hint", 0),
+            ("compact", 1),
+            ("mixed", 1),
+        ],
     ),
     ("text-field", 0, &[("label", 0), ("value", 0), ("hint", 0)]),
     (
@@ -206,6 +219,7 @@ const ID_KINDS: &[&str] = &[
     "entry",
     "tabs",
     "split",
+    "virtual-list",
     "readout",
     "button",
     "checkbox",
@@ -448,6 +462,8 @@ fn encode_input(widget: &Widget) -> Option<RawPart> {
             let mut props = p()
                 .required("label", &c.label)
                 .flag("checked", c.checked, false)
+                .flag("compact", c.compact, false)
+                .flag("mixed", c.mixed, false)
                 .text("hint", &c.hint);
             if let Some(words) = &c.words {
                 props = props.texts("words", words);
@@ -510,6 +526,11 @@ fn encode_widget(widget: &Widget, parts: &mut Vec<RawPart>) {
             .flag("open", s.open_by_default, true)
             .part("section", &s.id),
         Widget::BeginTable(t) => p().texts("columns", &t.columns).part("table", &t.id),
+        Widget::BeginVirtualList(list) => p()
+            .integer("first", i64::from(list.first), 0)
+            .integer("total", i64::from(list.total), 0)
+            .integer("epoch", i64::from(list.epoch), 0)
+            .part("virtual-list", &list.id),
         Widget::BeginSplit(s) => {
             let mut props = p().texts("labels", &s.labels);
             if !s.values.is_empty() {
@@ -517,6 +538,23 @@ fn encode_widget(widget: &Widget, parts: &mut Vec<RawPart>) {
             }
             if !s.groups.is_empty() {
                 props = props.texts("groups", &s.groups);
+            }
+            if !s.checks.is_empty() {
+                props = props.texts(
+                    "checks",
+                    &s.checks
+                        .iter()
+                        .map(|state| {
+                            match state {
+                                None => "",
+                                Some(crate::CheckState::Unchecked) => "off",
+                                Some(crate::CheckState::Checked) => "on",
+                                Some(crate::CheckState::Mixed) => "mixed",
+                            }
+                            .to_owned()
+                        })
+                        .collect::<Vec<_>>(),
+                );
             }
             props
                 .integer("selected", i64::from(s.selected), 0)
@@ -529,6 +567,7 @@ fn encode_widget(widget: &Widget, parts: &mut Vec<RawPart>) {
         | Widget::EndGrid
         | Widget::EndSection
         | Widget::EndTable
+        | Widget::EndVirtualList
         | Widget::EndSplit => p().part("end", ""),
         Widget::Spacer => p().part("spacer", ""),
         Widget::Tooltip(text) => p().required("text", text).part("tooltip", ""),
@@ -971,6 +1010,7 @@ enum Open {
     Grid,
     Section,
     Table,
+    VirtualList,
     Split,
     Entry,
 }
@@ -1036,6 +1076,15 @@ fn read_container(
                 columns: r.texts("columns")?.ok_or_else(|| r.missing("columns"))?,
             })
         }
+        "virtual-list" => {
+            open.push(Open::VirtualList);
+            Widget::BeginVirtualList(crate::VirtualList {
+                id: id.into(),
+                first: r.ranged("first", 0..=100_000, 0)?,
+                total: r.ranged("total", 0..=100_000, 0)?,
+                epoch: r.ranged("epoch", 0..=i64::from(u32::MAX), 0)?,
+            })
+        }
         "split" => {
             open.push(Open::Split);
             Widget::BeginSplit(Split {
@@ -1043,6 +1092,25 @@ fn read_container(
                 labels: r.texts("labels")?.ok_or_else(|| r.missing("labels"))?,
                 values: r.texts("values")?.unwrap_or_default(),
                 groups: r.texts("groups")?.unwrap_or_default(),
+                checks: r
+                    .texts("checks")?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|state| {
+                        Ok(match state.as_str() {
+                            "" => None,
+                            "off" => Some(crate::CheckState::Unchecked),
+                            "on" => Some(crate::CheckState::Checked),
+                            "mixed" => Some(crate::CheckState::Mixed),
+                            _ => {
+                                return Err(format!(
+                                    "{}: invalid split checkbox state {state:?}",
+                                    r.what
+                                ));
+                            }
+                        })
+                    })
+                    .collect::<Result<_, String>>()?,
                 selected: r.ranged("selected", 0..=i64::from(u32::MAX), 0)?,
                 width: r.ranged("width", 96..=320, SPLIT_WIDTH)?,
                 action: r.text_or("action", "")?,
@@ -1054,6 +1122,7 @@ fn read_container(
             Some(Open::Grid) => Widget::EndGrid,
             Some(Open::Section) => Widget::EndSection,
             Some(Open::Table) => Widget::EndTable,
+            Some(Open::VirtualList) => Widget::EndVirtualList,
             Some(Open::Split) => Widget::EndSplit,
             Some(Open::Entry) | None => return Err(format!("{}: an end closes nothing", r.what)),
         },
@@ -1168,6 +1237,8 @@ fn read_input(kind: &str, r: &mut Reader<'_>, id: &str) -> Result<Option<Widget>
                 id,
                 label,
                 checked,
+                compact: r.flag("compact", false)?,
+                mixed: r.flag("mixed", false)?,
                 words,
                 hint: r.text_or("hint", "")?,
             })
@@ -1393,7 +1464,7 @@ pub fn decode(places: &[RawPlace], minor: u16) -> Result<Vec<Place>, String> {
         r.done()?;
     }
     attach_dialogs(&mut decoded, dialogs)?;
-    crate::check::places(&decoded)?;
+    crate::check::places(&decoded, minor)?;
     Ok(decoded)
 }
 

@@ -13,7 +13,7 @@ use runtime::{
 };
 use std::sync::OnceLock;
 
-const MANIFEST: &str = include_str!("../../../examples/inventory/angelica.toml");
+const MANIFEST: &str = include_str!("../inventory/angelica.toml");
 
 fn component() -> &'static [u8] {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();

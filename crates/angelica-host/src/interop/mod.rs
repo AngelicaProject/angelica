@@ -1,5 +1,6 @@
 //! Windows calls and game-memory access are confined to this module.
 mod act;
+mod action_names;
 mod chat;
 mod clipboard;
 mod component;
@@ -12,14 +13,19 @@ mod file_reads;
 #[cfg(test)]
 mod gallery;
 mod game;
+mod game_string;
 mod input;
 pub mod memory;
 mod menus;
+mod outgoing_chat;
 mod overlay;
 mod painter;
 pub mod proxy;
+mod quest_say;
+mod shader_compiler;
 mod sound;
 mod startup;
+mod system_dll;
 mod system_menu;
 mod text_case;
 mod watch;
@@ -34,28 +40,37 @@ pub(super) fn guard<T>(fallback: T, work: impl FnOnce() -> T) -> T {
         }
     }
 }
-/// Appends a line to `host.log`, after the local time.
+/// Appends a line to `host.log` with UTC time and process ID.
 pub(super) fn log(message: &str) {
+    if let Some(directory) = startup::LOG_DIRECTORY.get() {
+        log_in(directory, "host.log", message);
+        if message.starts_with("startup ") || message.starts_with("start:") {
+            log_in(directory, "host-bootstrap.log", message);
+        }
+    }
+}
+
+pub(super) fn log_in(directory: &std::path::Path, name: &str, message: &str) {
     guard((), || {
         use std::io::Write;
-        if let Some(directory) = startup::LOG_DIRECTORY.get()
-            && let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(directory.join("host.log"))
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join(name))
         {
-            let _ = writeln!(file, "{} {message}", now());
+            let line = format!("{} pid={} {message}\n", now(), std::process::id());
+            let _ = file.write_all(line.as_bytes());
         }
     });
 }
 
-/// The local time to the millisecond, as `2026-10-13 17:54:03.120`.
+/// UTC time to the millisecond.
 fn now() -> String {
     let mut time = windows_sys::Win32::Foundation::SYSTEMTIME::default();
-    // SAFETY: GetLocalTime only writes the owned SYSTEMTIME.
-    unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&raw mut time) };
+    // SAFETY: GetSystemTime only writes the owned SYSTEMTIME.
+    unsafe { windows_sys::Win32::System::SystemInformation::GetSystemTime(&raw mut time) };
     format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
         time.wYear,
         time.wMonth,
         time.wDay,
@@ -66,13 +81,12 @@ fn now() -> String {
     )
 }
 
-/// Keeps `host.log` small: a log over `LOG_LIMIT` bytes at start becomes
-/// `host.old.log`, replacing the one before.
-pub(super) fn rotate_log(directory: &std::path::Path) {
+/// Keeps a previous copy of a log that exceeds the size limit at launch.
+pub(super) fn rotate_log(directory: &std::path::Path, name: &str, previous: &str) {
     const LOG_LIMIT: u64 = 2 * 1024 * 1024;
-    let log = directory.join("host.log");
+    let log = directory.join(name);
     if std::fs::metadata(&log).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
-        let _ = std::fs::rename(&log, directory.join("host.old.log"));
+        let _ = std::fs::rename(&log, directory.join(previous));
     }
 }
 

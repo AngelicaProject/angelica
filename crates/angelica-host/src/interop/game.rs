@@ -6,12 +6,15 @@ pub struct WindowsGame {
     pub catalog: Arc<Catalog>,
     pub base: usize,
     pub excel: Arc<ExcelText>,
+    pub data: Arc<crate::game_data::GameData>,
+    pub sheets: Arc<crate::sheets::Sheets>,
     pub case: Arc<TextCase>,
     pub files: Arc<crate::file_replacements::FileReplacements>,
     pub commands: Arc<crate::commands::Commands>,
     pub menus: Arc<crate::menus::Menus>,
     pub lens: Arc<crate::lens::Lens>,
     pub version: String,
+    pub combat_flag: Option<usize>,
 }
 
 impl WindowsGame {
@@ -22,6 +25,31 @@ impl WindowsGame {
             .map(|text| text.trim().to_owned())
             .unwrap_or_default()
     }
+
+    /// Locates the flag tested by `cmp byte ptr [rip + disp32], 0`.
+    pub(super) fn combat_flag_address(
+        catalog: &Catalog,
+        base: usize,
+        executable: &[u8],
+    ) -> Option<usize> {
+        let test = catalog.present.get("character.conditions.combat_test")?;
+        let angelica_map::Value::Address(rva) = test.value else {
+            return None;
+        };
+        base.checked_add(combat_flag_rva(executable, rva as usize)?)
+    }
+}
+
+fn combat_flag_rva(executable: &[u8], test: usize) -> Option<usize> {
+    let [0x80, 0x3d, a, b, c, d, 0, ..] = executable.get(test..)? else {
+        return None;
+    };
+    let displacement = i32::from_le_bytes([*a, *b, *c, *d]);
+    // RIP is after both the displacement and the comparison's immediate byte.
+    let flag = test
+        .checked_add(7)?
+        .checked_add_signed(displacement as isize)?;
+    (flag < executable.len()).then_some(flag)
 }
 
 /// Logs whether the hooks of `what` are in place, and passes `result` on.
@@ -61,7 +89,11 @@ impl Game for WindowsGame {
         hooked(
             "game text",
             super::excel_rows::install(&self.catalog, self.base, self.excel.clone()),
-        )
+        )?;
+        super::outgoing_chat::install(self);
+        super::action_names::install(self);
+        super::quest_say::install(self);
+        Ok(())
     }
 
     fn enable_text_case(&self) -> Result<(), String> {
@@ -112,14 +144,23 @@ impl Game for WindowsGame {
     }
 
     fn view_projection(&self) -> Option<[f32; 16]> {
-        let control = self.catalog.present.get("camera.control.instance")?;
-        let matrix = self.catalog.present.get("camera.control.view_projection")?;
-        let (angelica_map::Value::Address(rva), angelica_map::Value::Offset(offset)) =
-            (control.value, matrix.value)
-        else {
-            return None;
+        let present = &self.catalog.present;
+        let rva = if let Some(angelica_map::Value::Address(rva)) = present
+            .get("camera.projection.matrix")
+            .map(|entry| entry.value)
+        {
+            rva as usize
+        } else {
+            let control = present.get("camera.control.instance")?;
+            let matrix = present.get("camera.control.view_projection")?;
+            let (angelica_map::Value::Address(rva), angelica_map::Value::Offset(offset)) =
+                (control.value, matrix.value)
+            else {
+                return None;
+            };
+            (rva as usize).checked_add(offset as usize)?
         };
-        let address = self.base + rva as usize + offset as usize;
+        let address = self.base.checked_add(rva)?;
         let bytes = super::memory::read(address, 64).ok()?;
         let mut values = [0f32; 16];
         for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
@@ -129,6 +170,11 @@ impl Game for WindowsGame {
             .iter()
             .all(|value| value.is_finite())
             .then_some(values)
+    }
+
+    fn in_combat(&self) -> Option<bool> {
+        let bytes = super::memory::read(self.combat_flag?, 1).ok()?;
+        Some(bytes[0] != 0)
     }
 
     fn play_sound(&self, wav: Vec<u8>) -> bool {
@@ -222,6 +268,15 @@ fn image_size(base: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn combat_flag_displacement_is_relative_to_the_end_of_the_comparison() {
+        let code = [0x90, 0x80, 0x3d, 4, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert_eq!(super::combat_flag_rva(&code, 1), Some(12));
+        assert_eq!(super::combat_flag_rva(&code, 0), None);
+        assert_eq!(super::combat_flag_rva(&code[..7], 1), None);
+        assert_eq!(super::combat_flag_rva(&code[..12], 1), None);
+    }
+
     #[test]
     fn the_image_base_comes_from_the_file_headers() {
         let file = angelica_pe::testing::PeBuilder::new()

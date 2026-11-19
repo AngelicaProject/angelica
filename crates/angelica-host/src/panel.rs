@@ -9,9 +9,9 @@ use crate::{
     menu::{self, Look, Menu},
 };
 use angelica_view::{
-    Action as EntryAction, ActionKind, Checkbox, Choice, Chosen, Edited, Entry, Fact, Icon,
-    Mark as EntryMark, Number, NumberSet, Split, Table, Tabs, TextInput, Toggled, Widget,
-    WidgetRef,
+    Action as EntryAction, ActionKind, CheckState, Checkbox, Choice, Chosen, Edited, Entry, Fact,
+    Icon, Mark as EntryMark, Number, NumberSet, Split, Table, Tabs, TextInput, Toggled,
+    VirtualList, Widget, WidgetRef,
 };
 use std::{
     collections::HashMap,
@@ -288,9 +288,29 @@ impl Drawer<'_> {
             if matches!(widget, Widget::Spacer) {
                 self.index = *position - 1;
                 let id = self.id("spacer");
-                let rest = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
-                ui.add_space((ui.available_width() - rest - 1.0).max(0.0));
-                spacer = Some((id, ui.cursor().left()));
+                // For a single trailing action its width is known before drawing,
+                // including the first frame after a different set of rows arrives.
+                let button = match widgets.get(*position..) {
+                    Some(
+                        [Widget::Button(button), Widget::EndRow, ..]
+                        | [
+                            Widget::Button(button),
+                            Widget::Tooltip(_),
+                            Widget::EndRow,
+                            ..,
+                        ],
+                    ) => Some(button),
+                    _ => None,
+                };
+                if let Some(button) = button {
+                    let width =
+                        theme::word_width(ui, &button.label, word_of(button.kind), self.look.k);
+                    ui.add_space((ui.available_width() - width - 1.0).max(0.0));
+                } else {
+                    let rest = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
+                    ui.add_space((ui.available_width() - rest - 1.0).max(0.0));
+                    spacer = Some((id, ui.cursor().left()));
+                }
                 self.last = None;
                 continue;
             }
@@ -365,9 +385,16 @@ impl Drawer<'_> {
                 self.table(ui, widgets, table, position);
                 self.last = None;
             }
+            Widget::BeginVirtualList(list) => {
+                self.virtual_list(ui, widgets, list, position);
+                self.last = None;
+            }
             Widget::BeginSplit(split) => {
                 self.split(ui, widgets, split, position);
                 self.last = None;
+            }
+            Widget::Checkbox(checkbox) if checkbox.compact => {
+                self.last = self.widget(ui, widget);
             }
             Widget::Checkbox(_) | Widget::Choice(_) if !ui.layout().is_horizontal() => {
                 let above = widgets[..*position - 1]
@@ -468,7 +495,10 @@ impl Drawer<'_> {
         let look = self.look;
         let p = look.p;
         let fill = self.fill;
-        let side = look.at(f32::from(split.width));
+        let width = ui.available_width();
+        let side = look.at(f32::from(split.width)).min(width * 0.4);
+        let gap = look.at(16.0).min(width - side);
+        let main_width = width - side - gap;
         let height = if fill {
             ui.available_height().max(look.at(48.0))
         } else {
@@ -477,56 +507,70 @@ impl Drawer<'_> {
         // The column is painted under both sides once their height is known.
         let backdrop = ui.painter().add(egui::Shape::Noop);
         let top = ui.cursor().min;
-        let mut tall: f32 = 0.0;
-        let row = ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-            let shrink = [false, !fill];
-            let sections = ui.allocate_ui_with_layout(
-                egui::vec2(side, height.min(1.0e6)),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(side);
-                    egui::ScrollArea::vertical()
-                        .id_salt(("angelica-split-side", self.plugin, self.window, &split.id))
-                        .max_height(height)
-                        .auto_shrink(shrink)
-                        .show(ui, |ui| self.split_sections(ui, split))
-                        .content_size
-                        .y
-                },
-            );
-            tall = tall.max(sections.inner);
-            ui.add_space(look.at(16.0));
-            let rest = ui.available_width().max(look.at(48.0));
-            let main = ui.allocate_ui_with_layout(
-                egui::vec2(rest, height.min(1.0e6)),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt(("angelica-split-main", self.plugin, self.window, &split.id))
-                        .max_height(height)
-                        .auto_shrink(shrink)
-                        .show(ui, |ui| {
-                            ui.set_width(rest);
-                            ui.add_space(look.at(6.0));
-                            ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(8.0));
-                            self.widgets(ui, widgets, position);
-                            ui.add_space(look.at(6.0));
-                        })
-                        .content_size
-                        .y
-                },
-            );
-            tall = tall.max(main.inner);
-        });
+        let reset_main = self.split_scroll_changed(ui, &widgets[*position..], split);
+        let viewport_height = height.min(1.0e6);
+        let shrink = [false, !fill];
+        let pane = |name: &str, x: f32, width: f32| {
+            let rect =
+                egui::Rect::from_min_size(egui::pos2(x, top.y), egui::vec2(width, viewport_height));
+            (
+                rect,
+                egui::UiBuilder::new()
+                    .id_salt(name)
+                    .max_rect(rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            )
+        };
+        let (side_rect, side_builder) = pane("sections", top.x, side);
+        let mut sections = ui.new_child(side_builder);
+        sections.set_clip_rect(ui.clip_rect().intersect(side_rect));
+        let left_height = egui::ScrollArea::both()
+            .max_width(side)
+            .id_salt(("angelica-split-side", self.plugin, self.window, &split.id))
+            .max_height(height)
+            .auto_shrink(shrink)
+            .show(&mut sections, |ui| {
+                ui.set_width(side);
+                self.split_sections(ui, split);
+            })
+            .content_size
+            .y;
+
+        let (main_rect, main_builder) = pane("main", top.x + side + gap, main_width);
+        let mut main = ui.new_child(main_builder);
+        main.set_clip_rect(ui.clip_rect().intersect(main_rect));
+        let scroll_gutter = main.spacing().scroll.bar_width;
+        let mut scroll = egui::ScrollArea::both()
+            .max_width(main_width)
+            .id_salt(("angelica-split-main", self.plugin, self.window, &split.id))
+            .max_height(height)
+            .auto_shrink(shrink);
+        if reset_main {
+            scroll = scroll.vertical_scroll_offset(0.0);
+        }
+        let right_height = scroll
+            .show(&mut main, |ui| {
+                // Keep actions clear of the floating thumb, including on hover.
+                ui.set_width(
+                    ui.available_width()
+                        .min(main_width - scroll_gutter)
+                        .max(0.0),
+                );
+                ui.add_space(look.at(6.0));
+                ui.spacing_mut().item_spacing = egui::vec2(look.at(12.0), look.at(8.0));
+                self.widgets(ui, widgets, position);
+                ui.add_space(look.at(6.0));
+            })
+            .content_size
+            .y;
+        let tall = left_height.max(right_height);
+        let shown_height = if fill { viewport_height } else { tall };
+        ui.allocate_space(egui::vec2(width, shown_height));
         self.needed = Some((top.y, tall));
         // Filling a window, the column reaches the window's left and bottom
         // edges, as Angelica's own section column does.
         let (left, bottom) = if fill {
-            (
-                top.x - look.at(16.0),
-                row.response.rect.bottom() + look.at(12.0),
-            )
+            (top.x - look.at(16.0), top.y + shown_height + look.at(12.0))
         } else {
             (top.x, top.y + tall)
         };
@@ -550,33 +594,125 @@ impl Drawer<'_> {
         );
     }
 
+    /// Draw the supplied rows in their positions within the whole scroll area.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    fn virtual_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        widgets: &[Widget],
+        list: &VirtualList,
+        position: &mut usize,
+    ) {
+        let stride = self.look.at(34.0).max(1.0);
+        let (space, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), stride * list.total as f32),
+            egui::Sense::hover(),
+        );
+        let clip = ui.clip_rect();
+        let first_visible = ((clip.top() - space.top()).max(0.0) / stride) as u32;
+        let chunk = 32;
+        // Keep the preceding chunk so a change in scroll direction can paint at once.
+        let first = first_visible
+            .min(list.total.saturating_sub(1))
+            .saturating_sub(chunk)
+            / chunk
+            * chunk;
+        let key = egui::Id::new(("angelica-virtual-range", self.plugin, self.window, &list.id));
+        let wanted = (list.epoch, first);
+        if ui.is_enabled() {
+            let previous = ui.data_mut(|data| {
+                let previous = data.get_temp::<(u32, u32)>(key);
+                data.insert_temp(key, wanted);
+                previous
+            });
+            if previous.map_or(first != list.first, |previous| previous != wanted) {
+                self.host.queue_event(
+                    self.plugin,
+                    Event::Chosen(Chosen {
+                        window: self.window.into(),
+                        id: list.id.clone(),
+                        index: first,
+                    }),
+                );
+            }
+        }
+
+        let mut index = list.first;
+        while matches!(widgets.get(*position), Some(Widget::BeginRow)) {
+            let row = *position;
+            let next = skip(widgets, row + 1);
+            let top = space.top() + stride * index as f32;
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(space.left(), top),
+                egui::vec2(space.width(), stride),
+            );
+            if clip.intersects(rect) {
+                let mut cell = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt((list.id.as_str(), index))
+                        .max_rect(rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                cell.set_clip_rect(clip.intersect(rect));
+                cell.set_width(rect.width());
+                *position += 1;
+                self.item(&mut cell, widgets, &widgets[row], position);
+            }
+            *position = next;
+            index += 1;
+        }
+        *position += 1;
+    }
+
     /// The sections of a split, with their group headings and its action.
+    fn split_scroll_changed(&self, ui: &egui::Ui, widgets: &[Widget], split: &Split) -> bool {
+        widgets
+            .iter()
+            .find_map(|widget| match widget {
+                Widget::BeginVirtualList(list) => Some(list.epoch),
+                _ => None,
+            })
+            .is_some_and(|epoch| {
+                let id = egui::Id::new((
+                    "angelica-virtual-scroll",
+                    self.plugin,
+                    self.window,
+                    &split.id,
+                ));
+                ui.data_mut(|data| {
+                    let changed = data.get_temp::<u32>(id) != Some(epoch);
+                    data.insert_temp(id, epoch);
+                    changed
+                })
+            })
+    }
+
     fn split_sections(&mut self, ui: &mut egui::Ui, split: &Split) {
         let look = self.look;
         let p = look.p;
         ui.add_space(look.at(6.0));
         for (index, label) in split.labels.iter().enumerate() {
             if let Some(group) = split.groups.get(index).filter(|group| !group.is_empty()) {
-                ui.add_space(look.at(6.0));
-                let (line, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), look.at(20.0)),
-                    egui::Sense::hover(),
-                );
-                ui.painter().text(
-                    egui::pos2(line.left() + look.at(14.0), line.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    group,
-                    theme::sans(look.at(11.5)),
-                    p.secondary,
-                );
+                self.split_group_heading(ui, group);
             }
-            let at = u32::try_from(index).unwrap_or(u32::MAX);
-            let (row, response) = ui.allocate_exact_size(
+            let check = split.checks.get(index).copied().flatten();
+            let check_width = if check.is_some() { look.at(25.0) } else { 0.0 };
+            let (row, space) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), look.at(30.0)),
-                egui::Sense::click(),
+                egui::Sense::hover(),
             );
-            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-            let chosen = split.selected == at;
+            let mut select = row;
+            if check.is_some() {
+                select.max.x = (row.right() - check_width - look.at(6.0)).max(row.left());
+            }
+            let response = ui
+                .interact(select, space.id.with("section"), egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let chosen = split.selected as usize == index;
             let plate = row.shrink2(egui::vec2(look.at(6.0), look.at(1.0)));
             let painter = ui.painter();
             if chosen {
@@ -602,7 +738,7 @@ impl Drawer<'_> {
                 let width = galley.size().x;
                 painter.galley(
                     egui::pos2(
-                        plate.right() - look.at(8.0) - width,
+                        plate.right() - look.at(8.0) - check_width - width,
                         row.center().y - galley.size().y / 2.0,
                     ),
                     galley,
@@ -615,7 +751,7 @@ impl Drawer<'_> {
             } else {
                 theme::sans(look.at(13.0))
             };
-            let room = (plate.width() - look.at(16.0) - value_width).max(0.0);
+            let room = (plate.width() - look.at(16.0) - check_width - value_width).max(0.0);
             let mut job = egui::text::LayoutJob::simple_singleline(label.clone(), font, p.text);
             job.wrap = egui::text::TextWrapping::truncate_at_width(room);
             let galley = painter.layout_job(job);
@@ -627,18 +763,56 @@ impl Drawer<'_> {
                 galley,
                 p.text,
             );
+            if let Some(check) = check {
+                let mut checked = check == CheckState::Checked;
+                let rect = egui::Rect::from_center_size(
+                    egui::pos2(plate.right() - look.at(13.0), row.center().y),
+                    egui::Vec2::splat(look.at(23.0)),
+                );
+                let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(
+                    egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                ));
+                let response = self
+                    .checkbox_control(&mut cell, &mut checked, check == CheckState::Mixed, "")
+                    .on_hover_text(label);
+                if response.changed() {
+                    self.toggled(&format!("{}/{index}", split.id), checked);
+                }
+            }
             if response.clicked() && !chosen {
                 self.host.queue_event(
                     self.plugin,
                     Event::Chosen(Chosen {
                         window: self.window.into(),
                         id: split.id.clone(),
-                        index: at,
+                        index: u32::try_from(index).unwrap_or(u32::MAX),
                     }),
                 );
             }
             ui.add_space(look.at(2.0));
         }
+        self.split_action(ui, split);
+    }
+
+    fn split_group_heading(&self, ui: &mut egui::Ui, group: &str) {
+        let look = self.look;
+        let p = look.p;
+        ui.add_space(look.at(6.0));
+        let (line, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), look.at(20.0)),
+            egui::Sense::hover(),
+        );
+        ui.painter().text(
+            egui::pos2(line.left() + look.at(14.0), line.center().y),
+            egui::Align2::LEFT_CENTER,
+            group,
+            theme::sans(look.at(11.5)),
+            p.secondary,
+        );
+    }
+
+    fn split_action(&self, ui: &mut egui::Ui, split: &Split) {
+        let look = self.look;
         if !split.action.is_empty() {
             ui.add_space(look.at(4.0));
             ui.horizontal(|ui| {
@@ -680,6 +854,7 @@ impl Drawer<'_> {
                 }
                 response
             }
+            Widget::Checkbox(checkbox) if checkbox.compact => self.compact_checkbox(ui, checkbox),
             Widget::Checkbox(checkbox) => {
                 ui.horizontal(|ui| {
                     ui.label(self.rich(&checkbox.label, self.look.p.text));
@@ -731,7 +906,9 @@ impl Drawer<'_> {
             | Widget::BeginSection(_)
             | Widget::EndSection
             | Widget::BeginTable(_)
+            | Widget::BeginVirtualList(_)
             | Widget::EndTable
+            | Widget::EndVirtualList
             | Widget::BeginSplit(_)
             | Widget::EndSplit
             | Widget::Spacer
@@ -775,33 +952,37 @@ impl Drawer<'_> {
     /// A name in the secondary color and its value.
     fn fact(&self, ui: &mut egui::Ui, fact: &Fact) -> egui::Response {
         let look = self.look;
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = look.at(8.0);
-            let (name, _) = ui.allocate_exact_size(
-                egui::vec2(look.at(130.0), look.at(20.0)),
-                egui::Sense::hover(),
-            );
-            let galley = ui.painter().layout(
-                fact.name.clone(),
-                theme::sans(look.at(13.0)),
-                look.p.secondary,
-                name.width(),
-            );
-            ui.painter().galley(
-                egui::pos2(name.left(), name.center().y - look.at(8.5)),
-                galley,
-                look.p.secondary,
-            );
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(&fact.value)
-                        .font(theme::sans(look.at(13.0)))
-                        .color(look.p.text),
-                )
-                .wrap(),
-            )
-        })
-        .inner
+        let font = theme::sans(look.at(13.0));
+        let width = ui.available_width().min(ui.clip_rect().width()).max(0.0);
+        let name_width = (width * 0.43).min(look.at(130.0));
+        let gap = look.at(8.0).min(width - name_width);
+        let painter = ui.painter();
+        let name = painter.layout(
+            fact.name.clone(),
+            font.clone(),
+            look.p.secondary,
+            name_width,
+        );
+        let value = painter.layout(
+            fact.value.clone(),
+            font,
+            look.p.text,
+            width - name_width - gap,
+        );
+        let height = name.size().y.max(value.size().y) + look.at(4.0);
+        let (row, response) = ui.allocate_exact_size(
+            egui::vec2(width, height.max(look.at(20.0))),
+            egui::Sense::hover(),
+        );
+        let top = row.top() + look.at(2.0);
+        ui.painter()
+            .galley(egui::pos2(row.left(), top), name, look.p.secondary);
+        ui.painter().galley(
+            egui::pos2(row.left() + name_width + gap, top),
+            value,
+            look.p.text,
+        );
+        response
     }
 
     fn act(&self, action: &EntryAction) {
@@ -1113,7 +1294,14 @@ impl Drawer<'_> {
         let selected = usize::try_from(tabs.selected).unwrap_or(usize::MAX);
         let id = egui::Id::new(("angelica-tabs", self.plugin, self.window, &tabs.id));
         let strip = ui.horizontal(|ui| {
-            theme::tab_strip(ui, p, &|value| look.at(value), id, &labels, selected)
+            egui::ScrollArea::horizontal()
+                .id_salt(id)
+                .max_width(ui.available_width())
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    theme::tab_strip(ui, p, &|value| look.at(value), id, &labels, selected)
+                })
+                .inner
         });
         if let Some(index) = strip.inner.and_then(|index| u32::try_from(index).ok()) {
             self.host.queue_event(
@@ -1156,7 +1344,7 @@ impl Drawer<'_> {
             }
             let (field, _) = ui.allocate_exact_size(
                 egui::vec2(
-                    ui.available_width().clamp(look.at(120.0), look.at(320.0)),
+                    ui.available_width().clamp(0.0, look.at(320.0)),
                     look.at(26.0),
                 ),
                 egui::Sense::hover(),
@@ -1187,6 +1375,112 @@ impl Drawer<'_> {
         .inner
     }
 
+    fn toggled(&self, id: &str, checked: bool) {
+        self.host.queue_event(
+            self.plugin,
+            Event::Toggled(Toggled {
+                window: self.window.into(),
+                id: id.into(),
+                checked,
+            }),
+        );
+    }
+
+    fn compact_checkbox(&self, ui: &mut egui::Ui, checkbox: &Checkbox) -> egui::Response {
+        let mut checked = checkbox.checked;
+        let response = self.checkbox_control(ui, &mut checked, checkbox.mixed, &checkbox.label);
+        if response.changed() {
+            self.toggled(&checkbox.id, checked);
+        }
+        response
+    }
+
+    fn checkbox_control(
+        &self,
+        ui: &mut egui::Ui,
+        checked: &mut bool,
+        mixed: bool,
+        label: &str,
+    ) -> egui::Response {
+        let look = self.look;
+        let p = look.p;
+        let hit_size = look.at(22.0);
+        let gap = look.at(5.0);
+        let label = (!label.is_empty()).then(|| {
+            ui.painter().layout(
+                label.to_owned(),
+                theme::sans(look.at(13.5)),
+                p.text,
+                (ui.available_width() - hit_size - gap).max(0.0),
+            )
+        });
+        let size = label.as_ref().map_or(egui::Vec2::splat(hit_size), |label| {
+            egui::vec2(
+                hit_size + gap + label.size().x,
+                hit_size.max(label.size().y),
+            )
+        });
+        let (hit, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+        if response.clicked() {
+            *checked = !*checked;
+            response.mark_changed();
+        }
+        let label_text = label.as_ref().map_or("", |label| label.text());
+        response.widget_info(|| {
+            if mixed {
+                egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, ui.is_enabled(), label_text)
+            } else {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    *checked,
+                    label_text,
+                )
+            }
+        });
+
+        let center = egui::pos2(hit.left() + hit_size / 2.0, hit.center().y);
+        let square = egui::Rect::from_center_size(center, egui::Vec2::splat(look.at(16.0)));
+        let selected = *checked || mixed;
+        let border = if selected || response.hovered() || response.has_focus() {
+            p.action
+        } else {
+            p.secondary
+        };
+        let painter = ui.painter();
+        painter.rect(
+            square,
+            look.at(3.0),
+            if selected { p.action } else { p.field },
+            egui::Stroke::new(look.at(1.0), border),
+            egui::StrokeKind::Inside,
+        );
+        if selected {
+            let fill = egui::Rgba::from(p.action);
+            let luminance = 0.2126 * fill.r() + 0.7152 * fill.g() + 0.0722 * fill.b();
+            let ink = if luminance > 0.18 {
+                egui::Color32::BLACK
+            } else {
+                egui::Color32::WHITE
+            };
+            let stroke = egui::Stroke::new(look.at(1.8), ink);
+            let point = |x, y| center + egui::vec2(look.at(x), look.at(y));
+            if mixed {
+                painter.line_segment([point(-3.6, 0.0), point(3.6, 0.0)], stroke);
+            } else {
+                painter.add(egui::Shape::line(
+                    vec![point(-3.8, -0.1), point(-1.1, 2.7), point(4.0, -3.0)],
+                    stroke,
+                ));
+            }
+        }
+        if let Some(label) = label {
+            let position = egui::pos2(hit.left() + hit_size + gap, center.y - label.size().y / 2.0);
+            painter.galley(position, label, p.text);
+        }
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
     /// A checkbox's two words.
     fn checkbox_value(&mut self, ui: &mut egui::Ui, checkbox: &Checkbox) {
         let words = match &checkbox.words {
@@ -1195,14 +1489,7 @@ impl Drawer<'_> {
         };
         let chosen = usize::from(!checkbox.checked);
         if let Some(picked) = theme::choice(ui, &words, chosen, self.look.k) {
-            self.host.queue_event(
-                self.plugin,
-                Event::Toggled(Toggled {
-                    window: self.window.into(),
-                    id: checkbox.id.clone(),
-                    checked: picked == 0,
-                }),
-            );
+            self.toggled(&checkbox.id, picked == 0);
         }
     }
 
@@ -1401,6 +1688,7 @@ fn is_end(widget: &Widget) -> bool {
             | Widget::EndGrid
             | Widget::EndSection
             | Widget::EndTable
+            | Widget::EndVirtualList
             | Widget::EndSplit
     )
 }
@@ -1416,6 +1704,7 @@ fn skip(widgets: &[Widget], mut position: usize) -> usize {
             | Widget::BeginGrid(_)
             | Widget::BeginSection(_)
             | Widget::BeginTable(_)
+            | Widget::BeginVirtualList(_)
             | Widget::BeginSplit(_) => depth += 1,
             end if is_end(end) => {
                 depth -= 1;
@@ -1440,12 +1729,14 @@ fn row_has_spacer(widgets: &[Widget], position: usize) -> bool {
             | Widget::BeginGrid(_)
             | Widget::BeginSection(_)
             | Widget::BeginTable(_)
+            | Widget::BeginVirtualList(_)
             | Widget::BeginSplit(_) => depth += 1,
             Widget::EndRow
             | Widget::EndColumn
             | Widget::EndGrid
             | Widget::EndSection
             | Widget::EndTable
+            | Widget::EndVirtualList
             | Widget::EndSplit => {
                 if depth == 0 {
                     return false;

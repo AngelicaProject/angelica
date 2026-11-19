@@ -193,6 +193,8 @@ fn window() -> Place {
                     id: "daily".into(),
                     label: "Daily".into(),
                     checked: true,
+                    compact: false,
+                    mixed: false,
                     words: None,
                     hint: "Every day at the same time.".into(),
                 }),
@@ -200,6 +202,8 @@ fn window() -> Place {
                     id: "names".into(),
                     label: "Names".into(),
                     checked: false,
+                    compact: false,
+                    mixed: false,
                     words: Some(["Translated".into(), "Original".into()]),
                     hint: String::new(),
                 }),
@@ -207,6 +211,7 @@ fn window() -> Place {
                     id: "groups".into(),
                     labels: vec!["Items".into(), "Places".into(), "Crafting".into()],
                     values: vec!["½".into()],
+                    checks: Vec::new(),
                     groups: vec![String::new(), String::new(), "Mine".into()],
                     selected: 1,
                     width: 180,
@@ -747,4 +752,62 @@ fn a_dialog_belongs_to_a_window_of_the_same_ui_and_takes_only_buttons() {
         let error = decode(&places, 0).unwrap_err();
         assert!(error.contains(says), "{error}");
     }
+}
+
+#[test]
+fn compact_checkboxes_and_split_checks_require_api_1_1() {
+    use angelica_view::CheckState;
+    let window = Place::Window(
+        Window::new("main", "Coverage").split(
+            Split::new("groups", 0)
+                .section("All")
+                .section_checked("Items", CheckState::Mixed),
+            |pane| pane.tick_box("item", CheckState::Checked),
+        ),
+    );
+    let encoded = encode_places(std::slice::from_ref(&window));
+    assert!(decode(&encoded, 0).is_err());
+    assert_eq!(decode(&encoded, 1).unwrap(), vec![window]);
+}
+
+#[test]
+fn virtual_lists_round_trip_and_validate_their_row_range() {
+    let list = angelica_view::VirtualList {
+        id: "coverage".into(),
+        first: 128,
+        total: 129,
+        epoch: 3,
+    };
+    let view = |rows| {
+        Place::Window(Window::new("main", "Coverage").split(
+            Split::new("groups", 0).section("All"),
+            |pane| {
+                pane.virtual_list(list.clone(), |mut content| {
+                    for _ in 0..rows {
+                        content = content.row(|row| row.text("Example"));
+                    }
+                    content
+                })
+            },
+        ))
+    };
+    let valid = view(1);
+    let raw = encode_places(std::slice::from_ref(&valid));
+    assert!(decode(&raw, 1).is_err());
+    assert_eq!(decode(&raw, 2).unwrap(), vec![valid]);
+    assert!(decode(&encode_places(&[view(2)]), 2).is_err());
+}
+
+#[test]
+fn compact_checkboxes_in_dialogs_require_api_1_3() {
+    let window = Place::Window(Window::new("main", "Coverage").dialog(
+        Dialog::new("groups", "Groups").tick_box_labeled(
+            "items",
+            "Items",
+            angelica_view::CheckState::Checked,
+        ),
+    ));
+    let raw = encode_places(std::slice::from_ref(&window));
+    assert!(decode(&raw, 2).is_err());
+    assert_eq!(decode(&raw, 3).unwrap(), vec![window]);
 }

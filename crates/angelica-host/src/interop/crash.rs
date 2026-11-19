@@ -93,6 +93,11 @@ impl Writer {
             .map(|(id, version, status)| serde_json::json!({"id": id, "version": version, "status": status}))
             .collect();
         let report = serde_json::json!({
+            "stage": "unhandled-exception",
+            "time_unix_ms": stamp,
+            "process_id": std::process::id(),
+            "runtime_version": env!("CARGO_PKG_VERSION"),
+            "exception": exception_summary(exception),
             "executable_sha256": self.catalog.executable_sha256,
             "entries_sha256": self.catalog.entries_sha256,
             "plugins": plugins,
@@ -106,6 +111,17 @@ impl Writer {
         }
         Ok(())
     }
+}
+
+fn exception_summary(exception: *const EXCEPTION_POINTERS) -> Option<serde_json::Value> {
+    // SAFETY: Capture supplies either NULL or the live exception pointer from Windows.
+    let exception = unsafe { exception.as_ref()? };
+    // SAFETY: Windows owns the optional exception record for the duration of the filter call.
+    let record = unsafe { exception.ExceptionRecord.as_ref()? };
+    Some(serde_json::json!({
+        "code": format!("{:#010x}", record.ExceptionCode),
+        "address": format!("{:p}", record.ExceptionAddress),
+    }))
 }
 
 /// # Safety

@@ -34,6 +34,7 @@ enum Group {
     Grid,
     Section,
     Table,
+    VirtualList,
     Split,
 }
 
@@ -41,7 +42,7 @@ enum Group {
 ///
 /// # Errors
 /// Names the first rule they break.
-pub fn places(places: &[Place]) -> Result<(), String> {
+pub fn places(places: &[Place], minor: u16) -> Result<(), String> {
     let windows = places
         .iter()
         .filter(|p| matches!(p, Place::Window(_)))
@@ -105,13 +106,18 @@ pub fn places(places: &[Place]) -> Result<(), String> {
                         return Err(format!("more than {MAX_PARTS} parts"));
                     }
                     count(&dialog.title, "a dialog's title")?;
-                    if let Some(input) = dialog
-                        .widgets
-                        .iter()
-                        .find(|w| takes_input(w) && !matches!(w, Widget::Button(_)))
-                    {
+                    if let Some(input) = dialog.widgets.iter().find(|w| {
+                        takes_input(w)
+                            && !matches!(w, Widget::Button(_))
+                            && !(minor >= 3 && matches!(w, Widget::Checkbox(c) if c.compact))
+                    }) {
+                        let allowed = if minor >= 3 {
+                            "buttons and compact checkboxes"
+                        } else {
+                            "buttons"
+                        };
                         return Err(format!(
-                            "dialog {dialog_id}: only buttons take input in a dialog, so it holds no {}",
+                            "dialog {dialog_id}: only {allowed} take input in a dialog, so it holds no {}",
                             name(input)
                         ));
                     }
@@ -176,6 +182,7 @@ fn takes_input(widget: &Widget) -> bool {
             | Widget::BeginSection(_)
             | Widget::Tooltip(_)
             | Widget::BeginTable(_)
+            | Widget::BeginVirtualList(_)
             | Widget::BeginSplit(_)
     )
 }
@@ -207,13 +214,36 @@ fn widgets(
     let mut open: Vec<Group> = Vec::new();
     let mut previous: Option<&Widget> = None;
     let mut split_ended = false;
+    let mut virtual_rows = None;
     for widget in widgets {
         if split_ended {
             return Err("a split is the last part of its window".into());
         }
         let id = widget_rules(widget, count)?;
         let in_table = open.contains(&Group::Table);
+        if open.last() == Some(&Group::VirtualList) {
+            match widget {
+                Widget::BeginRow => {
+                    virtual_rows = virtual_rows.and_then(|rows: u32| rows.checked_sub(1));
+                    if virtual_rows.is_none() {
+                        return Err("virtual list rows exceed its total".into());
+                    }
+                }
+                Widget::EndVirtualList => {}
+                _ => return Err("a virtual list directly contains only rows".into()),
+            }
+        }
         match widget {
+            Widget::BeginVirtualList(list) => {
+                if open.as_slice() != [Group::Split] || virtual_rows.is_some() {
+                    return Err("a split can hold one virtual list in its main pane".into());
+                }
+                if list.total > 100_000 || list.first > list.total {
+                    return Err("virtual list range is outside its total".into());
+                }
+                virtual_rows = Some(list.total - list.first);
+                open.push(Group::VirtualList);
+            }
             Widget::BeginSplit(_) if !splits => {
                 return Err("only a window holds a split".into());
             }
@@ -234,6 +264,7 @@ fn widgets(
             | Widget::EndGrid
             | Widget::EndSection
             | Widget::EndTable
+            | Widget::EndVirtualList
             | Widget::EndSplit => {
                 let expected = match widget {
                     Widget::EndRow => Group::Row,
@@ -241,6 +272,7 @@ fn widgets(
                     Widget::EndGrid => Group::Grid,
                     Widget::EndSection => Group::Section,
                     Widget::EndSplit => Group::Split,
+                    Widget::EndVirtualList => Group::VirtualList,
                     _ => Group::Table,
                 };
                 if open.pop() != Some(expected) {
@@ -291,6 +323,7 @@ fn shows_something(widget: &Widget) -> bool {
             | Widget::BeginSection(_)
             | Widget::EndSection
             | Widget::BeginTable(_)
+            | Widget::BeginVirtualList(_)
             | Widget::EndTable
             | Widget::BeginSplit(_)
             | Widget::EndSplit
@@ -370,6 +403,9 @@ fn checkbox(
     count: &mut impl FnMut(&str, &str) -> Result<(), String>,
 ) -> Result<(), String> {
     count(&value.label, "a label")?;
+    if value.mixed && (!value.compact || value.checked) || value.compact && value.words.is_some() {
+        return Err(format!("checkbox {} has incompatible properties", value.id));
+    }
     for word in value.words.iter().flatten() {
         let length = word.chars().count();
         if word.trim().is_empty() || length > MAX_WORD {
@@ -394,11 +430,17 @@ fn split(
             value.id
         ));
     }
-    if value.values.len() > sections || value.groups.len() > sections {
+    if value.values.len() > sections
+        || value.groups.len() > sections
+        || value.checks.len() > sections
+    {
         return Err(format!(
-            "split {} has more values or groups than sections",
+            "split {} has more values, groups, or checkboxes than sections",
             value.id
         ));
+    }
+    if !value.checks.is_empty() && value.id.len() > MAX_ID - 3 {
+        return Err(format!("split {} has no room for checkbox ids", value.id));
     }
     if value.selected as usize >= sections {
         return Err(format!("split {} selects a missing section", value.id));
@@ -512,6 +554,7 @@ fn widget_rules<'a>(
             tabs(value, count)?;
             Some(&value.id)
         }
+        Widget::BeginVirtualList(value) => Some(&value.id),
         Widget::BeginSplit(value) => {
             split(value, count)?;
             Some(&value.id)
@@ -559,6 +602,7 @@ fn widget_rules<'a>(
         | Widget::EndGrid
         | Widget::EndSection
         | Widget::EndTable
+        | Widget::EndVirtualList
         | Widget::EndSplit => None,
     }
     .map(String::as_str))

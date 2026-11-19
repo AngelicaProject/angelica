@@ -43,6 +43,10 @@ pub mod panel;
 pub(crate) mod parts;
 pub(crate) mod places;
 pub mod plugin_installer;
+#[cfg(windows)]
+mod quest_say;
+#[cfg(windows)]
+mod quest_say_script;
 pub mod sandbox;
 pub mod self_update;
 pub mod sheets;

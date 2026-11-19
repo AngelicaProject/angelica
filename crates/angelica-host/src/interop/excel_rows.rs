@@ -301,7 +301,11 @@ impl ExcelRows {
         // A sheet the adapter cannot read is remembered as having no tables,
         // so its rows are not read again.
         let (binding, info) = match self.sheet_info(sheet, name, column_count) {
-            Ok(info) => (Arc::new(self.text.bind(&info)), Some(info)),
+            Ok(info) => {
+                let mut binding = self.text.bind(&info);
+                super::quest_say::protect(&info, &mut binding);
+                (Arc::new(binding), Some(info))
+            }
             Err(error) => {
                 note(&format!("a sheet is left untouched: {error}"));
                 (Arc::new(SheetBinding::none(generation)), None)
